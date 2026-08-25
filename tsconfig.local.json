@@ -1,0 +1,10 @@
+// 本机验证用 tsconfig:对齐 harness 构建配置,使 rolldown/oxc 与 SWC
+// 均按 stage-3 语义处理 Cordis 装饰器(与官方发布产物一致)。
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler"
+  }
+}

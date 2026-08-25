@@ -1,0 +1,314 @@
+/**
+ * dsh-opencli host 半:登录态浏览器代理。
+ * - browser_* 工具族:包装 `opencli browser <session> …` 原语(open/state/click/type/fill/extract/screenshot/scroll/wait + browser_do 透传)
+ * - site 工具:`opencli <adapter> <command> …` 适配器桥
+ * - systemPrompt:适配器目录(缓存 + TTL)与使用要点
+ * - TypertRemoteService RPC:status / adapters / refresh(面板用)
+ * 全部调用经 ctx.shell;不打包 OpenCLI(doctor 缺失引导)。
+ * @module dsh-opencli
+ */
+
+import { Context, Service } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
+import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
+import type { AdaptersResult, OpencliStatus } from './types.ts'
+import { buildAdapterDirectory, normalizeAdapterList, parseDaemonStatus } from './parsers.ts'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    opencli: OpencliService
+  }
+}
+
+/** browser_do 允许透传的子命令白名单(其余高危命令不允许盲调)。 */
+const BROWSER_DO_ALLOW = new Set([
+  'analyze', 'back', 'bind', 'check', 'close', 'console', 'dblclick', 'dialog',
+  'drag', 'eval', 'find', 'focus', 'frames', 'get', 'hover', 'init', 'keys',
+  'network', 'select', 'tab', 'unbind', 'uncheck', 'upload', 'verify',
+])
+
+const OUTPUT_LIMIT = 16000
+const ADAPTER_TTL_MS = 60 * 60 * 1000
+
+interface ToolArgs {
+  session?: string
+  url?: string
+  target?: string
+  text?: string
+  source?: string
+  direction?: string
+  type?: string
+  value?: string
+  path?: string
+  tab?: string
+  command?: string
+  args?: string[]
+  adapter?: string
+}
+
+export class OpencliService extends TypertRemoteService {
+  static inject = ['shell', 'tools', 'systemPrompt']
+
+  private readonly bin: string
+  private adapterCache: { at: number; json: unknown } | null = null
+  private lastShellError: string | null = null
+
+  constructor(ctx: Context) {
+    super(ctx, 'opencli')
+    this.bin = process.env.DSH_OPENCLI_BIN ?? 'opencli'
+  }
+
+  protected async [Service.init](): Promise<void> {
+    this.registerBrowserTools()
+    this.registerSiteTool()
+    void this.injectSystemPrompt()
+  }
+
+  // ── 模型工具 ──────────────────────────────────────────────
+
+  private registerBrowserTools(): void {
+    const t = this.ctx.tools
+    const run = async (session: string | undefined, argv: string[]): Promise<{ text: string }> => {
+      const out = await this.runOpencli(['browser', session ?? 'dsh', ...argv])
+      return { text: this.renderOut(out) }
+    }
+    const s = '浏览器会话名(默认 dsh;bind 过的会话复用登录态)'
+
+    t.register(defineTool({
+      name: 'browser_open',
+      description: '在用户已登录的真实 Chrome 中打开 URL(daemon+扩展桥接,登录态天然可用)',
+      parameters: {
+        url: { type: 'string', description: '要打开的完整 URL' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['open', String(a.url)]),
+    }))
+    t.register(defineTool({
+      name: 'browser_state',
+      description: '获取当前页状态快照:URL、标题、带 [N] 索引的交互元素清单——后续 click/type/fill 的 target 直接用 [N] 索引或文本',
+      parameters: {
+        session: { type: 'string', description: s },
+        source: { type: 'string', enum: ['dom', 'ax'], description: '快照后端,默认 dom;ax 为无障碍树' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['state', ...(a.source !== undefined ? ['--source', a.source] : [])]),
+    }))
+    t.register(defineTool({
+      name: 'browser_click',
+      description: '点击元素。target 用 browser_state 里的 [N] 索引(如 "12")或可见文本/CSS',
+      parameters: {
+        target: { type: 'string', description: '[N] 索引 / 文本 / CSS 选择器' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['click', String(a.target)]),
+    }))
+    t.register(defineTool({
+      name: 'browser_type',
+      description: '点击元素并输入文本(适合搜索框等)',
+      parameters: {
+        target: { type: 'string', description: '[N] 索引 / 文本 / CSS' },
+        text: { type: 'string', description: '要输入的内容' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['type', String(a.target), String(a.text)]),
+    }))
+    t.register(defineTool({
+      name: 'browser_fill',
+      description: '精确设置输入框内容并校验(不清除其他字段)',
+      parameters: {
+        target: { type: 'string', description: '[N] 索引 / 文本 / CSS' },
+        text: { type: 'string', description: '要设置的值' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['fill', String(a.target), String(a.text)]),
+    }))
+    t.register(defineTool({
+      name: 'browser_extract',
+      description: '把当前页正文提取为 Markdown(长页自动分段),适合读文章/帖子/文档',
+      parameters: { session: { type: 'string', description: s } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['extract']),
+    }))
+    t.register(defineTool({
+      name: 'browser_screenshot',
+      description: '对当前页截图保存到本地路径(仅在确需视觉信息时使用,优先 browser_state/extract)',
+      parameters: {
+        path: { type: 'string', description: '保存路径(绝对路径)' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['screenshot', ...(a.path !== undefined ? [a.path] : [])]),
+    }))
+    t.register(defineTool({
+      name: 'browser_scroll',
+      description: '滚动页面(up/down/left/right)',
+      parameters: {
+        direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: '滚动方向,默认 down' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['scroll', a.direction ?? 'down']),
+    }))
+    t.register(defineTool({
+      name: 'browser_wait',
+      description: '等待条件成立:selector(如 ".loaded") / text / time(秒) / xhr(如 "/api/search") / download(文件名)',
+      parameters: {
+        type: { type: 'string', enum: ['selector', 'text', 'time', 'xhr', 'download'], description: '等待类型' },
+        value: { type: 'string', description: '对应的值' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['wait', String(a.type), ...(a.value !== undefined ? [a.value] : [])]),
+    }))
+    t.register(defineTool({
+      name: 'browser_do',
+      description: `opencli browser 通用子命令透传(白名单:${[...BROWSER_DO_ALLOW].join(' ')})。常用:analyze(侦察站点反爬/API)、init(生成适配器脚手架)、verify(验证适配器)、tab/find/network/keys/select/hover 等`,
+      parameters: {
+        command: { type: 'string', description: `子命令,允许值:${[...BROWSER_DO_ALLOW].join('|')}` },
+        args: { type: 'array', items: { type: 'string' }, description: '子命令参数(按 opencli browser 文档顺序)' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const cmd = String(a.command)
+        if (!BROWSER_DO_ALLOW.has(cmd)) return { text: `不允许的子命令:${cmd}(白名单见工具说明)` }
+        return run(a.session, [cmd, ...(a.args ?? [])])
+      },
+    }))
+  }
+
+  private registerSiteTool(): void {
+    this.ctx.tools.register(defineTool({
+      name: 'site',
+      description: '调用站点适配器(在用户登录态上返回结构化结果,比逐页点击快且稳)。adapter/command 见 systemPrompt 里的适配器目录;示例:site bilibili search 关键词=罗翔',
+      parameters: {
+        adapter: { type: 'string', description: '适配器名(如 bilibili/zhihu/arxiv)' },
+        command: { type: 'string', description: '适配器子命令(如 search/hot/top)' },
+        args: { type: 'array', items: { type: 'string' }, description: '子命令参数' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs): Promise<{ text: string }> => {
+        const adapter = String(a.adapter)
+        const command = String(a.command)
+        if (!/^[\w@.-]+$/.test(adapter) || !/^[\w-]+$/.test(command)) {
+          return { text: `非法 adapter/command:${adapter} ${command}` }
+        }
+        const out = await this.runOpencli([adapter, command, ...(a.args ?? [])])
+        return { text: this.renderOut(out) }
+      },
+    }))
+  }
+
+  // ── systemPrompt:适配器目录(缓存 + TTL,组装时取最新) ─────
+
+  private directoryText = '浏览器代理(dsh-opencli):适配器目录加载中。'
+
+  private async injectSystemPrompt(): Promise<void> {
+    this.ctx.systemPrompt.section({
+      name: 'opencli-proxy',
+      order: 150,
+      text: () => this.directoryText,
+    })
+    void this.updateDirectory()
+  }
+
+  private async updateDirectory(): Promise<void> {
+    const list = await this.adapterList()
+    if (list === null) {
+      this.directoryText = '浏览器代理(dsh-opencli):未检测到可用的 opencli(browser_*/site 工具会失败)。请用户在设置→浏览器代理 运行诊断,或安装 OpenCLI(OpenCLIApp / npm i -g @jackwener/opencli)。'
+      return
+    }
+    const daemon = await this.daemonStatus()
+    const state = daemon !== null && daemon.running
+      ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
+      : 'daemon 未运行——browser_* 需要它:请用户启动 OpenCLIApp 或 opencli daemon restart'
+    this.directoryText = `浏览器代理(dsh-opencli):操纵用户**已登录的真实 Chrome**。流程:browser_open → browser_state(拿 [N] 索引)→ browser_click/type/fill(target 用 [N])→ browser_extract 读结果。${state}。\n${buildAdapterDirectory(list)}`
+  }
+
+  // ── RPC(面板) ────────────────────────────────────────────
+
+  @Remote('status')
+  async status(): Promise<OpencliStatus> {
+    const version = await this.runOpencli(['--version'])
+    if (version.exitCode !== 0) {
+      return { ok: false, bin: null, version: null, daemon: null, adapterSites: null, error: `opencli 不可用(${this.bin}):${version.stderr.slice(0, 300) || version.stdout.slice(0, 300)}` }
+    }
+    const daemon = await this.daemonStatus()
+    const list = await this.adapterList()
+    return {
+      ok: true,
+      bin: this.bin,
+      version: version.stdout.trim().split('\n')[0] ?? null,
+      daemon: daemon ?? null,
+      adapterSites: list?.length ?? null,
+    }
+  }
+
+  @Remote('adapters')
+  async adapters(): Promise<AdaptersResult> {
+    const list = await this.adapterList()
+    if (list === null) return { ok: false, total: 0, adapters: [], error: `opencli list 不可用 | ${this.lastShellError ?? '未知'}` }
+    return { ok: true, total: list.length, adapters: list }
+  }
+
+  @Remote('refresh')
+  async refresh(): Promise<AdaptersResult> {
+    this.adapterCache = null
+    const result = await this.adapters()
+    void this.updateDirectory()
+    return result
+  }
+
+  // ── 基础设施 ──────────────────────────────────────────────
+
+  private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const spec = this.ctx.shell.resolve({ command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes } as ShellExecRequest)
+    const r = await this.ctx.shell.run(spec)
+    return { exitCode: r.exitCode, stdout: r.stdout?.text ?? '', stderr: r.stderr?.text ?? '' }
+  }
+
+  private renderOut(out: { exitCode: number; stdout: string; stderr: string }): string {
+    if (out.exitCode === 0) return clip(out.stdout, OUTPUT_LIMIT)
+    return `命令失败(退出码 ${out.exitCode}):\n${clip(out.stdout, 2000)}\n${clip(out.stderr, 2000)}`
+  }
+
+  private async daemonStatus() {
+    const r = await this.runOpencli(['daemon', 'status'], 15000)
+    if (r.exitCode !== 0) return null
+    return parseDaemonStatus(r.stdout + '\n' + r.stderr)
+  }
+
+  private async adapterList() {
+    if (this.adapterCache !== null && Date.now() - this.adapterCache.at < ADAPTER_TTL_MS) {
+      return normalizeAdapterList(this.adapterCache.json)
+    }
+    const r = await this.runOpencli(['list', '--format', 'json'], 30000, 8 * 1024 * 1024)
+    if (r.exitCode !== 0) {
+      // 诊断通道:把 shell 失败的原始输出带回面板(临时)
+      this.lastShellError = `list(${r.exitCode})|out:${r.stdout.slice(0, 200)}|err:${r.stderr.slice(0, 200)}`
+      return null
+    }
+    try {
+      // opencli 可能把"Update available"横幅等杂物混进输出,从首个 [ 或 { 起截取
+      const start = Math.min(...['[', '{'].map((c) => { const i = r.stdout.indexOf(c); return i === -1 ? Infinity : i }))
+      const json: unknown = JSON.parse(Number.isFinite(start) ? r.stdout.slice(start) : r.stdout)
+      this.adapterCache = { at: Date.now(), json }
+      return normalizeAdapterList(json)
+    } catch (e) {
+      this.lastShellError = `json(${e instanceof Error ? e.message.slice(0, 120) : 'parse'})|head:${r.stdout.slice(0, 200)}`
+      return null
+    }
+  }
+}
+
+function clip(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  return text.slice(0, limit) + `\n…(已截断,原文 ${text.length} 字符)`
+}
+
+export default OpencliService
