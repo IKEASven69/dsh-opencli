@@ -6,11 +6,12 @@
 
 ---
 
-## 一、市场与差异化(2026-08-25 数据)
+## 一、市场与差异化(2026-08-25 全量核实,36 个逐个过目;修正此前摘要层错报的 52/2135)
 
-- 浏览器类 **52 个**(+63%,全场增速第一),但榜首 Lum1104 仅 261⭐(侧边栏 UI 形态)——无巨头;
-- **登录态真实 Chrome 方向全是 1-7⭐ 半成品**(Kimi-WebBridge 2⭐ / chrome-faithful 1⭐ / wqty123 7⭐);anweat/dsh-browser 5⭐ 只把 opencli 当 Playwright 附属依赖;腾讯 BrowserSkill(WeKnora 系)是"技能"不是登录态代理;
-- **差异化三件(全部独家)**:①登录态真实浏览器(daemon+Chrome 扩展架构,不是裸 Chromium);②179 个站点适配器长尾(`clis/`:B站/知乎/小红书/12306/51job/arxiv/Reddit/HN/Twitter…);③适配器自创作(opencli-adapter-author 技能)——叙事:"**越用越会浏览的 dsh**"。
+- 浏览器类 **36 个**(08-18 为 32,+4),榜首 Lum1104/dsh-browser **301⭐**(侧边栏形态,赛道需求已验证);无巨头;
+- **L1 层(登录态真实浏览器)有 8 个竞品但都没做起来**:Kimi-WebBridge 2⭐(daemon+登录态+全原语,架构最接近)、chrome-faithful 1⭐(MV3 扩展+精确 Profile)、wqty123 7⭐(Electron 共享窗+人机验证识别)、zaiwenJ/cdp 0⭐ 等——**L1 是入场券,不是护城河**;
+- **L2/L3(站点适配器生态、适配器自创作)零竞品**:36 个里没有任何"网站变 CLI/适配器"方向的插件;anweat/dsh-browser 6⭐ 引了 OpenCLI 但只当 Playwright 裸 Chromium 的附属,未碰登录态与适配器;
+- **结论与叙事**:发布主打"**不是又一个浏览器原语插件,是 179 个网站的确定性接口 + 越用越会自扩展**"——①登录态真实浏览器(daemon+扩展,非裸 Chromium)是入场券;②179 适配器长尾(`clis/`:B站/知乎/小红书/12306/51job/arxiv/Reddit/HN/Twitter…)是护城河;③适配器自创作(adapter-author 技能)是飞轮——"越用越会浏览的 dsh"。
 
 ## 二、形态决策(工程,照搬 depsec 已验证打法)
 
