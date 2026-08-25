@@ -1,6 +1,8 @@
 /**
- * dsh-opencli 浏览器半:设置页「浏览器代理」。
- * daemon/扩展状态卡 + 适配器搜索列表 + 刷新。RPC 走 fetch 直连 /api 桥。
+ * dsh-opencli 浏览器半:设置页「浏览器代理」——OpenCLI 管理中心。
+ * 视觉对齐 opencli.info 设计系统(deep tech noir + 电光薄荷绿,玻璃拟态卡片)。
+ * 职责:安装引导 → 桥接诊断 → 适配器管理。定位:不替代 OpenCLIApp(基础设施层),
+ * 本面板是 OpenCLI 在 dsh 生态内的管理中心。
  * @module dsh-opencli/client
  */
 
@@ -30,40 +32,59 @@ async function rpc<T>(method: string): Promise<{ ok: boolean; value?: T; error: 
   }
 }
 
+/* ── OpenCLI 设计系统(opencli.info:deep tech noir + electric mint)── */
 const CSS = `
-.oc-panel { display: flex; flex-direction: column; gap: 12px; padding: 4px 0; font-size: 13px; }
-.oc-mono { font-family: ui-monospace, 'Cascadia Mono', Consolas, 'JetBrains Mono', monospace; }
+.oc-panel { display: flex; flex-direction: column; gap: 14px; padding: 4px 0; font-family: system-ui, 'Plus Jakarta Sans', sans-serif; }
+.oc-mono { font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace; }
 .oc-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.oc-title { font-weight: 700; font-size: 14px; letter-spacing: .3px; }
-.oc-title .oc-dollar { color: #2ea043; margin-right: 6px; }
-.oc-btn { cursor: pointer; border: 1px solid var(--border, rgba(128,128,128,.5)); background: transparent; color: inherit; border-radius: 6px; padding: 4px 10px; font-size: 12px; }
-.oc-btn:hover { border-color: #2ea043; color: #2ea043; }
-/* ── 终端窗口状态卡(OpenCLI 气质:跟随主题不成立,自带深色终端底) ── */
-.oc-term { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; overflow: hidden; box-shadow: 0 6px 18px rgba(1,4,9,.35); }
-.oc-term-bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d; }
-.oc-term-dot { width: 11px; height: 11px; border-radius: 50%; }
-.oc-term-title { margin-left: 8px; font-size: 11px; color: #8b949e; }
-.oc-term-body { padding: 12px 14px; color: #c9d1d9; font-size: 12.5px; line-height: 1.75; }
-.oc-prompt { color: #2ea043; }
-.oc-cmd { color: #c9d1d9; }
-.oc-key { color: #8b949e; }
-.oc-val { color: #79c0ff; }
-.oc-ok { color: #2ea043; }
-.oc-bad { color: #f85149; }
-.oc-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.oc-chip { background: #161b22; border: 1px solid #30363d; color: #7ee787; border-radius: 6px; padding: 3px 10px; font-size: 12px; }
-/* ── 其余区跟随宿主主题 ── */
-.oc-box { border: 1px solid var(--border, rgba(128,128,128,.35)); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-.oc-box-error { border-color: rgba(248,81,73,.6); }
-.oc-input { flex: 1; min-width: 0; font-size: 12px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border, rgba(128,128,128,.4)); background: transparent; color: inherit; font-family: ui-monospace, Consolas, monospace; }
-.oc-input:focus { border-color: #2ea043; outline: none; }
-.oc-list { display: flex; flex-direction: column; gap: 3px; max-height: 420px; overflow: auto; }
-.oc-item { font-size: 12px; line-height: 1.6; font-family: ui-monospace, Consolas, monospace; }
-.oc-item:hover { color: #2ea043; }
-.oc-n { color: #2ea043; font-weight: 600; }
-.oc-c { color: var(--muted, rgba(128,128,128,.9)); }
-.oc-dom { color: var(--muted, rgba(128,128,128,.7)); font-style: italic; }
-.oc-muted { font-size: 12px; color: var(--muted, rgba(128,128,128,.9)); }
+.oc-logo { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 16px; font-weight: 700; letter-spacing: .2px;
+  background: linear-gradient(135deg, #00e5a0 0%, #00b4d8 50%, #7b61ff 100%);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.oc-sub { font-size: 12px; color: #8b8ba3; margin-top: 2px; }
+.oc-btn { cursor: pointer; border: 1px solid rgba(0,229,160,.25); background: rgba(0,229,160,.08); color: #00e5a0;
+  border-radius: 10px; padding: 6px 14px; font-size: 12px; font-family: 'JetBrains Mono', ui-monospace, monospace;
+  transition: all .25s cubic-bezier(.16,1,.3,1); white-space: nowrap; }
+.oc-btn:hover { background: rgba(0,229,160,.16); box-shadow: 0 0 16px rgba(0,229,160,.25); }
+/* ── 玻璃卡片(opencli.info feature-card)── */
+.oc-card { position: relative; padding: 16px 18px; background: rgba(18,18,26,.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 16px; transition: all .35s cubic-bezier(.16,1,.3,1); overflow: hidden; }
+.oc-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(135deg, #00e5a0 0%, #00b4d8 50%, #7b61ff 100%); opacity: .6; }
+.oc-card:hover { border-color: rgba(0,229,160,.25); transform: translateY(-2px); box-shadow: 0 12px 36px rgba(0,0,0,.3); }
+/* ── 状态行 ── */
+.oc-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.oc-k { color: #5a5a72; font-size: 12px; }
+.oc-v { color: #f0f0f5; font-size: 12.5px; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.oc-v-ok { color: #00e5a0; }
+.oc-v-bad { color: #ff5f57; }
+.oc-chip { background: rgba(0,229,160,.1); border: 1px solid rgba(0,229,160,.2); color: #00e5a0; border-radius: 999px;
+  padding: 2px 10px; font-size: 11.5px; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.oc-chip-warn { background: rgba(255,200,0,.1); border-color: rgba(255,200,0,.25); color: #ffd86b; }
+/* ── 安装引导(opencli.info 渐变边卡)── */
+.oc-setup { display: flex; flex-direction: column; gap: 10px; }
+.oc-step { display: flex; gap: 12px; align-items: flex-start; }
+.oc-step-n { flex: none; width: 24px; height: 24px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; font-family: ui-monospace, monospace;
+  background: linear-gradient(135deg, rgba(0,229,160,.18), rgba(123,97,255,.18)); border: 1px solid rgba(0,229,160,.3); color: #00e5a0; }
+.oc-step-t { font-size: 13px; color: #f0f0f5; line-height: 1.5; }
+.oc-step-d { font-size: 12px; color: #8b8ba3; margin-top: 2px; line-height: 1.5; }
+.oc-code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #00e5a0;
+  background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.07); border-radius: 8px; padding: 3px 8px; display: inline-block; }
+.oc-link { color: #00b4d8; font-size: 12px; text-decoration: underline; cursor: pointer; word-break: break-all; }
+/* ── 适配器区 ── */
+.oc-input { flex: 1; min-width: 0; font-size: 12.5px; padding: 7px 12px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.1); background: rgba(10,10,15,.5); color: #f0f0f5;
+  font-family: 'JetBrains Mono', ui-monospace, monospace; outline: none; transition: border-color .25s; }
+.oc-input:focus { border-color: rgba(0,229,160,.45); box-shadow: 0 0 12px rgba(0,229,160,.15); }
+.oc-input::placeholder { color: #5a5a72; }
+.oc-list { display: flex; flex-direction: column; gap: 4px; max-height: 440px; overflow: auto; }
+.oc-item { font-size: 12px; line-height: 1.65; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  color: #b8b8c8; padding: 3px 6px; border-radius: 6px; transition: all .2s; }
+.oc-item:hover { color: #00e5a0; background: rgba(0,229,160,.06); }
+.oc-n { color: #00e5a0; font-weight: 600; }
+.oc-dom { color: #5a5a72; font-style: italic; }
+.oc-muted { font-size: 12px; color: #8b8ba3; line-height: 1.6; }
+.oc-err { font-size: 12px; color: #ff5f57; font-family: 'JetBrains Mono', ui-monospace, monospace; word-break: break-all; }
 `
 
 function Panel(): ReturnType<typeof createElement> {
@@ -71,81 +92,94 @@ function Panel(): ReturnType<typeof createElement> {
   const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
 
   const reload = async () => {
     if (busy) return
     setBusy(true)
-    setErr(null)
     const [st, ad] = await Promise.all([rpc<OpencliStatus>('status'), rpc<AdaptersResult>('adapters')])
     if (st.ok && st.value !== undefined) setStatus(st.value)
-    else setErr(st.error.message)
+    else setStatus(st.value ?? { ok: false, bin: null, version: null, daemon: null, adapterSites: null, error: st.error.message })
     if (ad.ok && ad.value !== undefined) setAdapters(ad.value.adapters)
     setBusy(false)
   }
 
   useEffect(() => { void reload() }, [])
 
-  const filtered = (adapters ?? []).filter((a) => query.trim().length === 0 || a.name.includes(query.trim()) || (a.domain ?? '').includes(query.trim()))
   const d = status?.daemon
   const up = d?.running === true
+  const ext = d?.extension === 'connected'
+  const missing = status !== null && !status.ok
   const totalCmds = (adapters ?? []).reduce((n, a) => n + a.commandCount, 0)
+  const filtered = (adapters ?? []).filter((a) => query.trim().length === 0 || a.name.includes(query.trim()) || (a.domain ?? '').includes(query.trim()))
+
   return createElement('div', { className: 'oc-panel' },
     createElement('style', null, CSS),
+    // ── 头部 ──
     createElement('div', { className: 'oc-head' },
-      createElement('span', { className: 'oc-title oc-mono' }, createElement('span', { className: 'oc-dollar' }, '$'), 'opencli', createElement('span', { className: 'oc-c', style: { fontWeight: 400 } }, ' — 浏览器代理')),
-      createElement('button', { className: 'oc-btn oc-mono', onClick: reload, disabled: busy }, busy ? '↻ loading…' : '↻ 刷新/诊断'),
+      createElement('div', null,
+        createElement('div', { className: 'oc-logo' }, '$ opencli'),
+        createElement('div', { className: 'oc-sub' }, '浏览器代理 · 登录态 Chrome + 站点适配器 · OpenCLI 管理中心'),
+      ),
+      createElement('button', { className: 'oc-btn', onClick: reload, disabled: busy }, busy ? '↻ 检测中…' : '↻ 刷新/诊断'),
     ),
-    err !== null ? createElement('div', { className: 'oc-box oc-box-error' },
-      createElement('div', { className: 'oc-title oc-mono' }, '✗ opencli 不可用'),
-      createElement('div', { className: 'oc-muted' }, err),
-      createElement('div', { className: 'oc-muted' }, '安装:OpenCLIApp(推荐,https://opencli.info/download)或 npm i -g @jackwener/opencli;装好后点「刷新/诊断」。自定义二进制:设 DSH_OPENCLI_BIN 环境变量。'),
+
+    // ── 未安装:安装引导卡(第一职责)──
+    missing ? createElement('div', { className: 'oc-card oc-setup' },
+      createElement('div', { style: { fontSize: 14, fontWeight: 700, color: '#f0f0f5' } }, '未检测到 opencli —— 三步接入'),
+      createElement('div', { className: 'oc-err' }, status?.error ?? ''),
+      createElement('div', { className: 'oc-step' },
+        createElement('span', { className: 'oc-step-n' }, '1'),
+        createElement('div', null,
+          createElement('div', { className: 'oc-step-t' }, '安装 OpenCLIApp(推荐)', createElement('span', { className: 'oc-link', onClick: () => { void 0 } }, '')),
+          createElement('div', { className: 'oc-step-d' }, '下载: ', createElement('span', { className: 'oc-link' }, 'https://opencli.info/download'), ' — 托盘应用,内置 daemon、Chrome 扩展桥、登录态守护与自动更新。'),
+        ),
+      ),
+      createElement('div', { className: 'oc-step' },
+        createElement('span', { className: 'oc-step-n' }, '2'),
+        createElement('div', null,
+          createElement('div', { className: 'oc-step-t' }, '打开 App 并连接 Chrome 扩展'),
+          createElement('div', { className: 'oc-step-d' }, '首次打开按引导装扩展并登录你常用的网站;之后 daemon 常驻,登录态自动保持。命令行用户也可 ', createElement('span', { className: 'oc-code' }, 'npm i -g @jackwener/opencli'), ' 再 ', createElement('span', { className: 'oc-code' }, 'opencli daemon restart'), '。'),
+        ),
+      ),
+      createElement('div', { className: 'oc-step' },
+        createElement('span', { className: 'oc-step-n' }, '3'),
+        createElement('div', null,
+          createElement('div', { className: 'oc-step-t' }, '回到这里点「刷新/诊断」'),
+          createElement('div', { className: 'oc-step-d' }, '检测通过后,dsh 会话即可用 browser_* 工具与 ', createElement('span', { className: 'oc-code' }, 'site <适配器>'), ' 调用。自定义安装路径可设 ', createElement('span', { className: 'oc-code' }, 'DSH_OPENCLI_BIN'), ' 环境变量。'),
+        ),
+      ),
     ) : null,
-    status !== null && status.ok
-      ? createElement('div', { className: 'oc-term' },
-          createElement('div', { className: 'oc-term-bar' },
-            createElement('span', { className: 'oc-term-dot', style: { background: '#f85149' } }),
-            createElement('span', { className: 'oc-term-dot', style: { background: '#d29922' } }),
-            createElement('span', { className: 'oc-term-dot', style: { background: '#2ea043' } }),
-            createElement('span', { className: 'oc-term-title oc-mono' }, 'opencli daemon status — bridge'),
+
+    // ── 状态卡(玻璃)──
+    status !== null && status.ok ? createElement('div', { className: 'oc-card' },
+      createElement('div', { className: 'oc-row', style: { marginBottom: 8 } },
+        createElement('span', { className: `oc-v ${up ? 'oc-v-ok' : 'oc-v-bad'}` }, up ? '● daemon 运行中' : '● daemon 未运行'),
+        createElement('span', { className: `oc-v ${ext ? 'oc-v-ok' : 'oc-v-bad'}` }, `● 扩展 ${d?.extension ?? '?'}`),
+        up ? null : createElement('span', { className: 'oc-chip oc-chip-warn' }, '启动 OpenCLIApp 或 opencli daemon restart'),
+      ),
+      createElement('div', { className: 'oc-row' },
+        createElement('span', { className: 'oc-chip' }, `v${status.version ?? '?'}`),
+        createElement('span', { className: 'oc-chip' }, `${status.adapterSites ?? adapters?.length ?? '?'} 站点`),
+        createElement('span', { className: 'oc-chip' }, `${totalCmds} 命令`),
+        d?.port !== undefined ? createElement('span', { className: 'oc-chip' }, `port ${d.port}`) : null,
+        d?.uptime !== undefined ? createElement('span', { className: 'oc-chip' }, `↑ ${d.uptime}`) : null,
+      ),
+    ) : null,
+
+    // ── 适配器卡 ──
+    adapters !== null ? createElement('div', { className: 'oc-card' },
+      createElement('input', { className: 'oc-input', placeholder: '搜索适配器(名称/域名)…', value: query, onChange: (e: { target: { value: string } }) => setQuery(e.target.value) }),
+      createElement('div', { className: 'oc-muted' }, `共 ${adapters.length} 个适配器,按命令数降序。dsh 会话中:`, createElement('span', { className: 'oc-code' }, 'site zhihu hot'), ' 直接调用;没有的站让模型现场创作(browser_do: analyze → init → verify)。'),
+      createElement('div', { className: 'oc-list' },
+        filtered.slice(0, 200).map((a) =>
+          createElement('div', { key: a.name, className: 'oc-item' },
+            createElement('span', { className: 'oc-n' }, a.name),
+            ` [${a.commandCount}] ${a.commands.slice(0, 6).join(', ')}${a.commandCount > 6 ? ' …' : ''}`,
+            a.domain !== undefined && a.domain !== 'null' ? createElement('span', { className: 'oc-dom' }, `  ${a.domain}`) : null,
           ),
-          createElement('div', { className: 'oc-term-body oc-mono' },
-            createElement('div', null, createElement('span', { className: 'oc-prompt' }, '~ $ '), createElement('span', { className: 'oc-cmd' }, 'opencli daemon status')),
-            createElement('div', null,
-              createElement('span', { className: up ? 'oc-ok' : 'oc-bad' }, up ? '✓ Daemon: running' : '✗ Daemon: not running'),
-              d?.pid !== undefined ? createElement('span', { className: 'oc-key' }, `  (PID ${d.pid})`) : null),
-            d !== null ? createElement('div', null,
-              createElement('span', { className: 'oc-key' }, '  Extension: '),
-              createElement('span', { className: d.extension === 'connected' ? 'oc-ok' : 'oc-val' }, d.extension ?? '?'),
-              createElement('span', { className: 'oc-key' }, '  ·  Port: '),
-              createElement('span', { className: 'oc-val' }, String(d.port ?? '?')),
-              d.uptime !== undefined ? createElement('span', null, createElement('span', { className: 'oc-key' }, '  ·  Uptime: '), createElement('span', { className: 'oc-val' }, d.uptime)) : null,
-            ) : null,
-            createElement('div', { className: 'oc-chips' },
-              createElement('span', { className: 'oc-chip' }, `v${status.version ?? '?'}`),
-              createElement('span', { className: 'oc-chip' }, `${status.adapterSites ?? adapters?.length ?? '?'} sites`),
-              createElement('span', { className: 'oc-chip' }, `${totalCmds} commands`),
-              up ? null : createElement('span', { className: 'oc-chip', style: { color: '#f85149', borderColor: '#f85149' } }, 'browser_* 需启动 OpenCLIApp'),
-            ),
-          ),
-        )
-      : null,
-    adapters !== null
-      ? createElement('div', { className: 'oc-box' },
-          createElement('input', { className: 'oc-input', placeholder: 'grep 适配器(名称/域名)…', value: query, onChange: (e: { target: { value: string } }) => setQuery(e.target.value) }),
-          createElement('div', { className: 'oc-muted' }, `共 ${adapters.length} 个适配器,按命令数降序;模型经 site 工具调用,systemPrompt 已注入目录。没有的站可让模型现场创作(browser_do: analyze→init→verify)。`),
-          createElement('div', { className: 'oc-list' },
-            filtered.slice(0, 200).map((a) =>
-              createElement('div', { key: a.name, className: 'oc-item' },
-                createElement('span', { className: 'oc-n' }, a.name),
-                createElement('span', { className: 'oc-c' }, ` [${a.commandCount}] `),
-                `${a.commands.slice(0, 6).join(', ')}${a.commandCount > 6 ? ' …' : ''}`,
-                a.domain !== undefined && a.domain !== 'null' ? createElement('span', { className: 'oc-dom' }, `  # ${a.domain}`) : null,
-              ),
-            ),
-          ),
-        )
-      : null,
+        ),
+      ),
+    ) : null,
   )
 }
 
