@@ -71,18 +71,31 @@ const CSS = `
 .oc-code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #00e5a0;
   background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.07); border-radius: 8px; padding: 3px 8px; display: inline-block; }
 .oc-link { color: #00b4d8; font-size: 12px; text-decoration: underline; cursor: pointer; word-break: break-all; }
-/* ── 适配器区 ── */
+/* ── 适配器区(官网 PluginCard 行卡样式)── */
 .oc-input { flex: 1; min-width: 0; font-size: 12.5px; padding: 7px 12px; border-radius: 10px;
   border: 1px solid rgba(255,255,255,.1); background: rgba(10,10,15,.5); color: #f0f0f5;
   font-family: 'JetBrains Mono', ui-monospace, monospace; outline: none; transition: border-color .25s; }
 .oc-input:focus { border-color: rgba(0,229,160,.45); box-shadow: 0 0 12px rgba(0,229,160,.15); }
 .oc-input::placeholder { color: #5a5a72; }
-.oc-list { display: flex; flex-direction: column; gap: 4px; max-height: 440px; overflow: auto; }
-.oc-item { font-size: 12px; line-height: 1.65; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
-  color: #b8b8c8; padding: 3px 6px; border-radius: 6px; transition: all .2s; }
-.oc-item:hover { color: #00e5a0; background: rgba(0,229,160,.06); }
-.oc-n { color: #00e5a0; font-weight: 600; }
-.oc-dom { color: #5a5a72; font-style: italic; }
+.oc-list { display: flex; flex-direction: column; max-height: 480px; overflow: auto; border-top: 1px solid rgba(255,255,255,.06); }
+.oc-pcard { position: relative; padding: 12px 14px; background: rgba(18,18,26,.55);
+  border-bottom: 1px solid rgba(255,255,255,.06); transition: all .3s cubic-bezier(.16,1,.3,1); }
+.oc-pcard:first-child { border-top-left-radius: 12px; border-top-right-radius: 12px; }
+.oc-pcard:last-child { border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; border-bottom: none; }
+.oc-pcard:hover { background: rgba(0,229,160,.04); }
+.oc-ptop { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.oc-ptop-l { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.oc-pname { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; }
+.oc-pauthor { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; font-weight: 600;
+  color: #5a5a72; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-pstat { display: inline-flex; align-items: center; gap: 4px; font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11.5px; font-weight: 600; color: #8b8ba3; white-space: nowrap; }
+.oc-pstat b { color: #00e5a0; font-weight: 700; }
+.oc-pdesc { color: #8b8ba3; font-size: 12px; line-height: 1.6; margin-bottom: 4px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-pfoot { display: flex; align-items: center; gap: 8px; }
+.oc-pbadge { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: 600;
+  letter-spacing: .05em; border: 1px solid; border-radius: 999px; padding: 1px 8px; }
 .oc-muted { font-size: 12px; color: #8b8ba3; line-height: 1.6; }
 .oc-err { font-size: 12px; color: #ff5f57; font-family: 'JetBrains Mono', ui-monospace, monospace; word-break: break-all; }
 `
@@ -166,18 +179,32 @@ function Panel(): ReturnType<typeof createElement> {
       ),
     ) : null,
 
-    // ── 适配器卡 ──
+    // ── 适配器卡(官网 PluginCard 行卡)──
     adapters !== null ? createElement('div', { className: 'oc-card' },
       createElement('input', { className: 'oc-input', placeholder: '搜索适配器(名称/域名)…', value: query, onChange: (e: { target: { value: string } }) => setQuery(e.target.value) }),
       createElement('div', { className: 'oc-muted' }, `共 ${adapters.length} 个适配器,按命令数降序。dsh 会话中:`, createElement('span', { className: 'oc-code' }, 'site zhihu hot'), ' 直接调用;没有的站让模型现场创作(browser_do: analyze → init → verify)。'),
       createElement('div', { className: 'oc-list' },
-        filtered.slice(0, 200).map((a) =>
-          createElement('div', { key: a.name, className: 'oc-item' },
-            createElement('span', { className: 'oc-n' }, a.name),
-            ` [${a.commandCount}] ${a.commands.slice(0, 6).join(', ')}${a.commandCount > 6 ? ' …' : ''}`,
-            a.domain !== undefined && a.domain !== 'null' ? createElement('span', { className: 'oc-dom' }, `  ${a.domain}`) : null,
-          ),
-        ),
+        filtered.slice(0, 200).map((a) => {
+          const isApp = a.domain === 'localhost' || a.domain === '127.0.0.1' || a.domain === undefined || a.domain === 'null'
+          const badgeColor = isApp ? '#7b61ff' : '#00b4d8'
+          return createElement('div', { key: a.name, className: 'oc-pcard' },
+            createElement('div', { className: 'oc-ptop' },
+              createElement('div', { className: 'oc-ptop-l' },
+                createElement('span', { className: 'oc-pname', style: { backgroundColor: badgeColor } }, a.name),
+                createElement('span', { className: 'oc-pauthor' }, (isApp ? 'APP' : a.domain ?? '').toUpperCase()),
+              ),
+              createElement('span', { className: 'oc-pstat' }, createElement('b', null, String(a.commandCount)), ' cmds'),
+            ),
+            createElement('div', { className: 'oc-pdesc' }, a.commands.slice(0, 8).join(', ') + (a.commandCount > 8 ? ' …' : '')),
+            createElement('div', { className: 'oc-pfoot' },
+              createElement('span', { className: 'oc-pbadge', style: { borderColor: badgeColor, color: badgeColor } }, isApp ? 'APP' : 'SITE'),
+              a.kinds.map((k) => createElement('span', {
+                key: k, className: 'oc-pbadge',
+                style: { borderColor: 'rgba(255,255,255,.15)', color: '#8b8ba3' },
+              }, k.toUpperCase())),
+            ),
+          )
+        }),
       ),
     ) : null,
   )
