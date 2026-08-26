@@ -41,3 +41,26 @@ export interface AdaptersResult {
   adapters: AdapterInfo[]
   error?: string
 }
+
+/** 一条命令的详情(来自 opencli list --format json 的原始条目)。 */
+export interface AdapterCommand {
+  name: string
+  description: string
+  access: string
+  example?: string
+  argCount: number
+}
+
+/** adapter-detail RPC 请求。 */
+export interface AdapterDetailRequest {
+  name: string
+}
+
+/** adapter-detail RPC 结果。 */
+export interface AdapterDetailResult {
+  ok: boolean
+  name: string | null
+  domain: string | null
+  commands: AdapterCommand[]
+  error?: string
+}

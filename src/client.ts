@@ -8,11 +8,11 @@
 
 import { createElement, useEffect, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AdapterInfo, AdaptersResult, OpencliStatus } from './types.ts'
+import type { AdapterDetailResult, AdapterInfo, AdaptersResult, OpencliStatus } from './types.ts'
 
 export const inject = ['slots']
 
-async function rpc<T>(method: string): Promise<{ ok: boolean; value?: T; error: { message: string } }> {
+async function rpc<T>(method: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; value?: T; error: { message: string } }> {
   try {
     const res = await fetch(`/api/opencli/${method}`, {
       method: 'POST',
@@ -21,7 +21,7 @@ async function rpc<T>(method: string): Promise<{ ok: boolean; value?: T; error: 
         type: 'client-request',
         rpcId: (globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.random())),
         method: `opencli/${method}`,
-        payload: { args: {} },
+        payload: { args },
       }),
     })
     const msg = await res.json() as { result?: { ok: boolean; value?: T; error?: { message?: string } } }
@@ -94,6 +94,17 @@ const CSS = `
 .oc-pdesc { color: #8b8ba3; font-size: 12px; line-height: 1.6; margin-bottom: 4px;
   font-family: 'JetBrains Mono', ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-pfoot { display: flex; align-items: center; gap: 8px; }
+/* ── 展开的命令详情 ── */
+.oc-detail { margin-top: 8px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(10,10,15,.6); border: 1px solid rgba(0,229,160,.15); display: flex; flex-direction: column; gap: 6px;
+  max-height: 320px; overflow: auto; }
+.oc-cmd { display: flex; flex-direction: column; gap: 2px; padding: 5px 6px; border-radius: 6px; }
+.oc-cmd:hover { background: rgba(0,229,160,.05); }
+.oc-cmd-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.oc-cmd-name { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; font-weight: 700; color: #00e5a0; }
+.oc-cmd-args { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; color: #5a5a72; }
+.oc-cmd-desc { font-size: 12px; color: #8b8ba3; line-height: 1.5; }
+.oc-cmd-ex { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: #00b4d8; }
 .oc-pbadge { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: 600;
   letter-spacing: .05em; border: 1px solid; border-radius: 999px; padding: 1px 8px; }
 .oc-muted { font-size: 12px; color: #8b8ba3; line-height: 1.6; }
@@ -105,6 +116,17 @@ function Panel(): ReturnType<typeof createElement> {
   const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [details, setDetails] = useState<Record<string, AdapterDetailResult>>({})
+
+  const toggle = async (name: string): Promise<void> => {
+    if (expanded === name) { setExpanded(null); return }
+    setExpanded(name)
+    if (details[name] === undefined) {
+      const r = await rpc<AdapterDetailResult>('adapter-detail', { request: { name } })
+      setDetails((prev) => ({ ...prev, [name]: r.ok && r.value !== undefined ? r.value : { ok: false, name, domain: null, commands: [], error: r.error.message } }))
+    }
+  }
 
   const reload = async () => {
     if (busy) return
@@ -187,15 +209,38 @@ function Panel(): ReturnType<typeof createElement> {
         filtered.slice(0, 200).map((a) => {
           const isApp = a.domain === 'localhost' || a.domain === '127.0.0.1' || a.domain === undefined || a.domain === 'null'
           const badgeColor = isApp ? '#7b61ff' : '#00b4d8'
-          return createElement('div', { key: a.name, className: 'oc-pcard' },
+          const open = expanded === a.name
+          const detail = details[a.name]
+          return createElement('div', {
+            key: a.name, className: 'oc-pcard', onClick: () => { void toggle(a.name) },
+            style: { cursor: 'pointer', background: open ? 'rgba(0,229,160,.06)' : undefined },
+          },
             createElement('div', { className: 'oc-ptop' },
               createElement('div', { className: 'oc-ptop-l' },
                 createElement('span', { className: 'oc-pname', style: { backgroundColor: badgeColor } }, a.name),
                 createElement('span', { className: 'oc-pauthor' }, (isApp ? 'APP' : a.domain ?? '').toUpperCase()),
               ),
-              createElement('span', { className: 'oc-pstat' }, createElement('b', null, String(a.commandCount)), ' cmds'),
+              createElement('span', { className: 'oc-pstat' }, createElement('b', null, String(a.commandCount)), ' cmds ', createElement('span', { style: { color: open ? '#00e5a0' : '#5a5a72', display: 'inline-block', transition: 'transform .25s', transform: open ? 'rotate(90deg)' : 'none' } }, '▸')),
             ),
             createElement('div', { className: 'oc-pdesc' }, a.commands.slice(0, 8).join(', ') + (a.commandCount > 8 ? ' …' : '')),
+            open ? createElement('div', { className: 'oc-detail', onClick: (e: Event) => { e.stopPropagation() } },
+              createElement('div', { className: 'oc-muted', style: { marginBottom: 6 } }, 'dsh 会话调用:', createElement('span', { className: 'oc-code' }, `site ${a.name} <command>`)),
+              detail === undefined
+                ? createElement('div', { className: 'oc-muted oc-mono' }, 'loading…')
+                : detail.ok
+                  ? detail.commands.map((c) =>
+                      createElement('div', { key: c.name, className: 'oc-cmd' },
+                        createElement('div', { className: 'oc-cmd-head' },
+                          createElement('span', { className: 'oc-cmd-name' }, c.name),
+                          createElement('span', { className: 'oc-pbadge', style: { borderColor: c.access === 'write' ? '#ff5f57' : 'rgba(0,229,160,.4)', color: c.access === 'write' ? '#ff5f57' : '#00e5a0' } }, c.access.toUpperCase()),
+                          c.argCount > 0 ? createElement('span', { className: 'oc-cmd-args' }, `${c.argCount} args`) : null,
+                        ),
+                        c.description.length > 0 ? createElement('div', { className: 'oc-cmd-desc' }, c.description) : null,
+                        c.example !== undefined ? createElement('div', { className: 'oc-cmd-ex' }, c.example) : null,
+                      ),
+                    )
+                  : createElement('div', { className: 'oc-err' }, detail.error ?? '加载失败'),
+            ) : null,
             createElement('div', { className: 'oc-pfoot' },
               createElement('span', { className: 'oc-pbadge', style: { borderColor: badgeColor, color: badgeColor } }, isApp ? 'APP' : 'SITE'),
               a.kinds.map((k) => createElement('span', {

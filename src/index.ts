@@ -12,7 +12,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
-import type { AdaptersResult, OpencliStatus } from './types.ts'
+import type { AdapterDetailRequest, AdapterDetailResult, AdaptersResult, OpencliStatus } from './types.ts'
 import { buildAdapterDirectory, normalizeAdapterList, parseDaemonStatus } from './parsers.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -262,6 +262,36 @@ export class OpencliService extends TypertRemoteService {
     const result = await this.adapters()
     void this.updateDirectory()
     return result
+  }
+
+  /** 单个适配器的完整命令详情(从缓存的原始 list JSON 过滤,面板展开时按需拉取)。 */
+  @Remote('adapter-detail')
+  async adapterDetail(request: AdapterDetailRequest): Promise<AdapterDetailResult> {
+    const empty: AdapterDetailResult = { ok: false, name: request.name, domain: null, commands: [] }
+    if (this.adapterCache === null) {
+      // 面板冷启动后第一次展开:先触发一次缓存装载
+      const list = await this.adapterList()
+      if (list === null) return { ...empty, error: this.lastShellError ?? 'opencli list 不可用' }
+    }
+    const raw = this.adapterCache?.json
+    if (!Array.isArray(raw)) return { ...empty, error: '缓存无原始数据' }
+    const commands = []
+    let domain: string | null = null
+    for (const e of raw as Array<Record<string, unknown>>) {
+      if (e === null || typeof e !== 'object' || e.site !== request.name) continue
+      if (domain === null && typeof e.domain === 'string' && e.domain !== 'null') domain = e.domain
+      const args = Array.isArray(e.args) ? (e.args as unknown[]).length : 0
+      commands.push({
+        name: typeof e.name === 'string' ? e.name : String(e.command ?? ''),
+        description: typeof e.description === 'string' ? e.description : '',
+        access: typeof e.access === 'string' ? e.access : 'read',
+        example: typeof e.example === 'string' ? e.example : undefined,
+        argCount: args,
+      })
+    }
+    if (commands.length === 0) return { ...empty, error: `未找到适配器:${request.name}` }
+    commands.sort((a, b) => a.name.localeCompare(b.name))
+    return { ok: true, name: request.name, domain, commands }
   }
 
   // ── 基础设施 ──────────────────────────────────────────────
