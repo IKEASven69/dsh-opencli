@@ -43,11 +43,11 @@ opencli-adapter-author 技能封装为 dsh skill;会话内"没有你要的站?�
 
 | # | 内容 | 验收 |
 |---|---|---|
-| **O1** | 骨架 + doctor(CLI/daemon 检测与引导)+ L1 四件(navigate/click/fill/extract);**首项任务:核实各原语的结构化输出**(`--json` 或解析层) | dsh 会话里自然语言"打开B站搜 XX"在登录态真实跑通 |
-| **O2** | snapshot(ax 快照)+ screenshot + 注入格式打磨(截断/摘要策略防上下文膨胀) | 模型仅凭 snapshot 自主决策下一步操作 |
-| **O3** | 适配器桥:清单枚举→systemPrompt 限量目录 + `site` 统一工具 | `site zhihu hot` / `site arxiv search …` 等跨 ≥5 个适配器调用全通 |
-| **O4** | 面板:状态卡/截图/适配器管理/历史 | 面板可禁用某适配器且注入清单同步收缩 |
-| **O5** | adapter-author 技能接入(会话内创作+verify 闭环)+ 发布(README GIF:登录态演示→收录→dsh-market) | 会话内成功创作 1 个新适配器;收录通过 |
+| **O1** ✅ | 骨架 + doctor(CLI/daemon 检测与引导)+ L1 四件(navigate/click/fill/extract);**首项任务:核实各原语的结构化输出**(`--json` 或解析层) | dsh 会话里自然语言"打开B站搜 XX"在登录态真实跑通 |
+| **O2** ✅ | snapshot(ax 快照)+ screenshot + 注入格式打磨(截断/摘要策略防上下文膨胀) | 模型仅凭 snapshot 自主决策下一步操作 |
+| **O3** ✅ | 适配器桥:清单枚举→systemPrompt 限量目录 + `site` 统一工具 | `site zhihu hot` / `site arxiv search …` 等跨 ≥5 个适配器调用全通 |
+| **O4** ✅(2026-08-27) | 面板:状态卡/适配器管理/卡片展开命令详情;视觉对齐 OpenCLIApp 0.1.38「命令集合」页实测(冷灰卡片+蓝强调+Site/App 分段 tab+单行命令徽章) | 面板结构/配色/度量与 App 同构;展开行含 browser/read·write 徽章与 example 悬停。(禁用联动未做,降级为 v0.2) |
+| **O5** ◐ | adapter-author 技能接入(会话内创作+verify 闭环)+ 发布(README GIF:登录态演示→收录→dsh-market);SKILL.md 初版已入库 | 会话内成功创作 1 个新适配器;收录通过 |
 
 ## 六、风险与对策
 
