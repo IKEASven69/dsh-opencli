@@ -12,7 +12,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
-import type { AdapterDetailRequest, AdapterDetailResult, AdaptersResult, OpencliStatus } from './types.ts'
+import type { AdapterDetailRequest, AdapterDetailResult, AdaptersResult, DaemonStartResult, OpencliStatus } from './types.ts'
 import { buildAdapterDirectory, normalizeAdapterList, parseDaemonStatus } from './parsers.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -226,7 +226,7 @@ export class OpencliService extends TypertRemoteService {
     const daemon = await this.daemonStatus()
     const state = daemon !== null && daemon.running
       ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
-      : 'daemon 未运行——browser_* 需要它:请用户启动 OpenCLIApp 或 opencli daemon restart'
+      : 'daemon 未运行——browser_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
     this.directoryText = `浏览器代理(dsh-opencli):操纵用户**已登录的真实 Chrome**。流程:browser_open → browser_state(拿 [N] 索引)→ browser_click/type/fill(target 用 [N])→ browser_extract 读结果。${state}。\n${buildAdapterDirectory(list)}`
   }
 
@@ -262,6 +262,19 @@ export class OpencliService extends TypertRemoteService {
     const result = await this.adapters()
     void this.updateDirectory()
     return result
+  }
+
+  /** daemon 未运行时由面板一键拉起;已在运行则不动作(避免干扰在用的桥接)。 */
+  @Remote('daemon-start')
+  async daemonStart(): Promise<DaemonStartResult> {
+    const before = await this.daemonStatus()
+    if (before?.running === true) return { ok: true, started: false, message: 'daemon 已在运行' }
+    const r = await this.runOpencli(['daemon', 'restart'], 30000)
+    const after = await this.daemonStatus()
+    if (r.exitCode !== 0 && after?.running !== true) {
+      return { ok: false, started: false, message: `启动失败(退出码 ${r.exitCode}):${clip(r.stderr || r.stdout, 300)}` }
+    }
+    return { ok: true, started: true, message: null }
   }
 
   /** 单个适配器的完整命令详情(从缓存的原始 list JSON 过滤,面板展开时按需拉取)。 */

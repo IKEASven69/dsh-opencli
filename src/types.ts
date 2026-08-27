@@ -64,3 +64,10 @@ export interface AdapterDetailResult {
   commands: AdapterCommand[]
   error?: string
 }
+
+/** daemon-start RPC 结果(面板一键拉起)。 */
+export interface DaemonStartResult {
+  ok: boolean
+  started: boolean
+  message: string | null
+}

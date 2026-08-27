@@ -11,7 +11,7 @@
 
 import { createElement, useEffect, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AdapterDetailResult, AdapterInfo, AdaptersResult, OpencliStatus } from './types.ts'
+import type { AdapterDetailResult, AdapterInfo, AdaptersResult, DaemonStartResult, OpencliStatus } from './types.ts'
 
 export const inject = ['slots']
 
@@ -49,6 +49,7 @@ const CSS = `
   border-radius: 8px; padding: 8px 14px; font-size: 12.5px; margin-left: auto; transition: background .15s; white-space: nowrap; }
 .ocp-btn:hover { background: #46464B; }
 .ocp-btn:disabled { opacity: .6; cursor: default; }
+.ocp-btn-sm { padding: 5px 11px; font-size: 11.5px; margin-left: auto; }
 /* ── 设置卡片(系统页样式:分组卡 + 分隔行)── */
 .ocp-card { background: #26262A; border: 1px solid rgba(255,255,255,.05); border-radius: 14px; padding: 4px 18px; }
 .ocp-srow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid rgba(255,255,255,.06); font-size: 13px; }
@@ -64,9 +65,13 @@ const CSS = `
 .ocp-code { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 11.5px; color: #C9C9CF;
   background: #1E1E20; border-radius: 6px; padding: 2px 8px; display: inline-block; }
 .ocp-err { font-size: 12px; color: #FF6B5E; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; word-break: break-all; line-height: 1.5; }
-/* ── 安装引导(系统页恢复操作样式)── */
-.ocp-setup { display: flex; flex-direction: column; gap: 14px; padding: 18px; }
+/* ── 安装引导(系统页恢复操作样式;可折叠)── */
+.ocp-setup { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; }
+.ocp-setup-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
 .ocp-setup-t { font-size: 14.5px; font-weight: 700; }
+.ocp-setup-head .ocp-chev { margin-left: auto; }
+.ocp-chev-on { transform: rotate(90deg); color: #4A9EFF; }
+.ocp-setup-body { display: flex; flex-direction: column; gap: 14px; }
 .ocp-step { display: flex; gap: 12px; align-items: flex-start; }
 .ocp-step-n { flex: none; width: 26px; height: 26px; border-radius: 7px; display: flex; align-items: center; justify-content: center;
   font-size: 12.5px; font-weight: 700; background: rgba(74,158,255,.16); color: #4A9EFF; }
@@ -138,6 +143,23 @@ function Panel(): ReturnType<typeof createElement> {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [details, setDetails] = useState<Record<string, AdapterDetailResult>>({})
   const [copied, setCopied] = useState<string | null>(null)
+  const [setupOpen, setSetupOpen] = useState(true)
+  const [starting, setStarting] = useState(false)
+  const [daemonMsg, setDaemonMsg] = useState<string | null>(null)
+
+  const startDaemon = async (): Promise<void> => {
+    if (starting) return
+    setStarting(true)
+    setDaemonMsg(null)
+    const r = await rpc<DaemonStartResult>('daemon-start')
+    setStarting(false)
+    if (r.ok && r.value !== undefined && r.value.ok) {
+      if (r.value.started !== true && r.value.message !== null) setDaemonMsg(r.value.message)
+      void reload()
+    } else {
+      setDaemonMsg(r.ok ? (r.value?.message ?? '启动失败') : r.error.message)
+    }
+  }
 
   const toggle = async (name: string, el?: HTMLElement | null): Promise<void> => {
     if (expanded === name) { setExpanded(null); return }
@@ -198,10 +220,14 @@ function Panel(): ReturnType<typeof createElement> {
       createElement('button', { className: 'ocp-btn', onClick: reload, disabled: busy }, busy ? '检测中…' : '刷新/诊断'),
     ),
 
-    // ── 未安装:安装引导卡(第一职责)──
+    // ── 未安装:安装引导卡(第一职责;可折叠)──
     missing ? createElement('div', { className: 'ocp-card ocp-setup' },
-      createElement('div', { className: 'ocp-setup-t' }, '未检测到 opencli —— 三步接入'),
-      createElement('div', { className: 'ocp-err' }, status?.error ?? ''),
+      createElement('div', { className: 'ocp-setup-head', onClick: () => { setSetupOpen(!setupOpen) } },
+        createElement('span', { className: 'ocp-setup-t' }, '未检测到 opencli —— 三步接入'),
+        createElement('span', { className: `ocp-chev ${setupOpen ? 'ocp-chev-on' : ''}` }, '›'),
+      ),
+      setupOpen ? createElement('div', { className: 'ocp-setup-body' },
+        createElement('div', { className: 'ocp-err' }, status?.error ?? ''),
       createElement('div', { className: 'ocp-step' },
         createElement('span', { className: 'ocp-step-n' }, '1'),
         createElement('div', null,
@@ -223,6 +249,7 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('div', { className: 'ocp-step-d' }, '检测通过后,dsh 会话即可使用 browser_* 工具与 ', createElement('span', { className: 'ocp-code' }, 'site <适配器> <命令>'), '。自定义路径可设 ', createElement('span', { className: 'ocp-code' }, 'DSH_OPENCLI_BIN'), '。'),
         ),
       ),
+      ) : null,
     ) : null,
 
     // ── 状态卡(系统页样式)──
@@ -231,7 +258,11 @@ function Panel(): ReturnType<typeof createElement> {
         createElement('span', { className: `ocp-dot ${up ? 'ocp-ok' : 'ocp-bad'}` }),
         createElement('span', { className: 'ocp-sk' }, 'daemon'),
         createElement('span', { className: 'ocp-sv' }, up ? '运行中' : '未运行'),
-        up ? null : createElement('span', { className: 'ocp-hint' }, '启动 OpenCLIApp 或运行 opencli daemon restart'),
+        up ? null : createElement('button', {
+          className: 'ocp-btn ocp-btn-sm', disabled: starting,
+          onClick: () => { void startDaemon() },
+        }, starting ? '启动中…' : '启动 daemon'),
+        daemonMsg !== null ? createElement('span', { className: 'ocp-err' }, daemonMsg) : null,
       ),
       createElement('div', { className: 'ocp-srow' },
         createElement('span', { className: `ocp-dot ${ext ? 'ocp-ok' : 'ocp-bad'}` }),
