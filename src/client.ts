@@ -103,7 +103,8 @@ const CSS = `
 .ocp-site-on { border-color: rgba(74,158,255,.4); background: #262B33; }
 .ocp-siterow { display: flex; align-items: center; gap: 12px; }
 .ocp-ava { flex: none; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
-  font-size: 14px; font-weight: 700; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; }
+  font-size: 14px; font-weight: 700; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; overflow: hidden; }
+.ocp-ava img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ocp-sname { font-size: 15px; font-weight: 600; white-space: nowrap; }
 .ocp-scount { font-size: 13px; color: #9A9AA0; white-space: nowrap; }
 .ocp-chev { margin-left: auto; flex: none; color: #9A9AA0; font-size: 14px; display: inline-block;
@@ -112,12 +113,14 @@ const CSS = `
 /* ── 展开的命令列表(单行:名称 + 截断描述 + browser/read|write 徽章;点击复制)── */
 .ocp-cmds { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.06); padding-top: 10px; display: flex; flex-direction: column; gap: 2px;
   max-height: 300px; overflow: auto; }
-.ocp-cmdrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px;
+.ocp-cmdhint { font-size: 11px; color: #9A9AA0; margin-bottom: 7px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ocp-cmdrow { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; font-size: 12.5px;
   cursor: pointer; transition: background .12s; }
 .ocp-cmdrow:hover { background: rgba(255,255,255,.05); }
 .ocp-cmdrow:active { background: rgba(74,158,255,.12); }
-.ocp-cname { flex: none; min-width: 92px; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  font-size: 12.5px; font-weight: 600; color: #79B7FF; }
+.ocp-cname { flex: none; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px; font-weight: 600; color: #79B7FF; background: #1E1E20;
+  border: 1px solid rgba(255,255,255,.06); border-radius: 6px; padding: 2px 9px; }
 .ocp-cdesc { flex: 1; min-width: 0; color: #A6A6AE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ocp-tag { flex: none; font-size: 10.5px; font-weight: 600; letter-spacing: .3px; padding: 2px 8px; border-radius: 6px; }
 .ocp-tag-web { background: #333338; color: #9A9AA0; }
@@ -146,6 +149,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [setupOpen, setSetupOpen] = useState(true)
   const [starting, setStarting] = useState(false)
   const [daemonMsg, setDaemonMsg] = useState<string | null>(null)
+  const [iconFail, setIconFail] = useState<Record<string, boolean>>({})
 
   const startDaemon = async (): Promise<void> => {
     if (starting) return
@@ -284,10 +288,15 @@ function Panel(): ReturnType<typeof createElement> {
     // ── 命令集合(对齐 App 同名页面)──
     adapters !== null ? createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
       createElement('div', { className: 'ocp-tabs' },
-        createElement('button', { className: `ocp-tab ${tab === 'site' ? 'ocp-tab-on' : ''}`, onClick: () => { setTab('site'); setExpanded(null) } },
-          'Site 命令', createElement('b', null, String(siteCmds))),
-        createElement('button', { className: `ocp-tab ${tab === 'app' ? 'ocp-tab-on' : ''}`, onClick: () => { setTab('app'); setExpanded(null) } },
-          'App 命令', createElement('b', null, String(appCmds))),
+        createElement('button', {
+          className: `ocp-tab ${tab === 'site' ? 'ocp-tab-on' : ''}`, title: '网站适配器——在登录态 Chrome 里执行',
+          onClick: () => { setTab('site'); setExpanded(null) },
+        }, 'Site 命令', createElement('b', null, String(siteCmds))),
+        createElement('button', {
+          className: `ocp-tab ${tab === 'app' ? 'ocp-tab-on' : ''}`,
+          title: '本地桌面应用适配器(Codex/Cursor/Trae 等,经 CDP 操控目标应用;需本机装有对应应用,不依赖 OpenCLIApp)',
+          onClick: () => { setTab('app'); setExpanded(null) },
+        }, 'App 命令', createElement('b', null, String(appCmds))),
       ),
       createElement('div', { className: 'ocp-search' },
         createElement('input', { className: 'ocp-input', placeholder: '搜索站点、命令或描述', value: query, onChange: (e: { target: { value: string } }) => setQuery(e.target.value) }),
@@ -298,6 +307,8 @@ function Panel(): ReturnType<typeof createElement> {
           const open = expanded === a.name
           const detail = details[a.name]
           const hue = avatarHue(a.name)
+          const hasDomain = a.domain !== undefined && a.domain !== 'localhost' && a.domain !== '127.0.0.1' && a.domain !== 'null'
+          const useFavicon = hasDomain === true && iconFail[a.name] !== true
           return createElement('div', {
             key: a.name, className: `ocp-site ${open ? 'ocp-site-on' : ''}`,
             onClick: (e: Event) => { void toggle(a.name, e.currentTarget as HTMLElement | null) },
@@ -305,13 +316,24 @@ function Panel(): ReturnType<typeof createElement> {
             createElement('div', { className: 'ocp-siterow' },
               createElement('span', {
                 className: 'ocp-ava',
-                style: { background: `hsl(${hue} 42% 30%)`, color: `hsl(${hue} 75% 78%)` },
-              }, a.name.slice(0, 1).toUpperCase()),
+                style: useFavicon ? undefined : { background: `hsl(${hue} 42% 30%)`, color: `hsl(${hue} 75% 78%)` },
+              },
+                useFavicon
+                  ? createElement('img', {
+                      src: `https://${a.domain}/favicon.ico`, loading: 'lazy', alt: '',
+                      onError: () => { setIconFail((p) => ({ ...p, [a.name]: true })) },
+                    })
+                  : a.name.slice(0, 1).toUpperCase()),
               createElement('span', { className: 'ocp-sname' }, a.name),
               createElement('span', { className: 'ocp-scount' }, String(a.commandCount)),
               createElement('span', { className: 'ocp-chev' }, '›'),
             ),
             open ? createElement('div', { className: 'ocp-cmds', onClick: (e: Event) => { e.stopPropagation() } },
+              createElement('div', { className: 'ocp-cmdhint' },
+                createElement('span', null, 'dsh 会话调用:'),
+                createElement('span', { className: 'ocp-code' }, `site ${a.name} <命令>`),
+                createElement('span', null, '· 点击行复制完整命令'),
+              ),
               detail === undefined
                 ? createElement('div', { className: 'ocp-load' }, 'loading…')
                 : detail.ok
