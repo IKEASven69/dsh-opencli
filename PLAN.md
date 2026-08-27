@@ -16,9 +16,19 @@
 
 ## 二、形态决策(工程,照搬 depsec 已验证打法)
 
-- **wrapper 插件,不打包 OpenCLI**:doctor 检测 `opencli` CLI(不可用→OpenCLIApp/npm 安装指引);全部调用经 `ctx.shell.resolve/run`;daemon 生命周期 OpenCLI 自管(仅做 `opencli daemon status` 状态探测)。
+- **wrapper 插件,不打包 OpenCLI**:doctor 检测 `opencli` CLI(不可用→OpenCLIApp/npm 安装指引);全部调用经 `ctx.shell.resolve/run`;daemon 生命周期 OpenCLI 自管(仅做 `opencli daemon status` 状态探测 + 面板一键拉起)。
 - 零原生依赖、无 dts 痛点;`.build-tools` 构建管线(SWC stage-3 + esbuild + `__ModuleLoader__` 包装)直接复制;RPC 签名禁默认值;客户端 fetch 直连 `/api` 桥。
 - 插件内各工具统一 `browser_*` / `site_*` 前缀,与 dsh 内置 web 工具(`web_search` 等)边界清晰:内置=检索,本插件=**办事**。
+
+### 二·一、定位四层(2026-08-27 定稿,回答"与 opencli 本身/App/官方 skill 的区别")
+
+**CLI=引擎,App=管家,官方 skill=通用说明书,本插件=dsh 里的驾驶舱。**官方 skill(App 一键装入 ~/.agents/skills,教任何 agent 裸跑 opencli)与我们不构成替代:它养大 opencli 用户基数,我们承接其中用 dsh 的那批。目标用户=「dsh 用户里的 opencli 用户」。相对"agent+skill 直用"的五点增量:
+
+1. **工具化 vs 自由 shell**:一等公民工具(参数校验/命令白名单/输出 schema/遥测),且 write 审批门只能在工具层做——自由 shell 拦不住模型的 opencli 调用;
+2. **目录预注入**:1276 命令蒸馏进 systemPrompt,开局即选对命令,省 turns/token,不依赖 shell 权限(只读会话也能用);
+3. **面板**:daemon 诊断/一键启动/命令集合浏览/复制——skill 永远给不了的 UI 层;
+4. **dsh 生态钩子**:slots/RPC/schedule/通知,定时订阅与 deck/hippo 联动只有插件形态接得进;
+5. **两不互斥**:插件自带 SKILL.md(L3 创作循环),深度指导走 skill,工具/面板/注入走插件。
 
 ## 三、能力三层
 
