@@ -41,9 +41,9 @@ const CSS = `
 .ocp-mono { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; }
 /* ── 页头:iOS 设置式(图标 + 大标题 + 描述)── */
 .ocp-head { display: flex; align-items: flex-start; gap: 14px; }
-.ocp-icon { flex: none; width: 44px; height: 44px; border-radius: 11px; background: #4A9EFF;
-  display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800; color: #fff; letter-spacing: .5px; }
-.ocp-title { font-size: 19px; font-weight: 700; line-height: 1.35; }
+.ocp-icon { flex: none; width: 46px; height: 46px; border-radius: 12px; background: #4A9EFF;
+  display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 800; color: #fff; letter-spacing: .5px; }
+.ocp-title { font-size: 20px; font-weight: 700; line-height: 1.35; }
 .ocp-desc { font-size: 12.5px; color: #9A9AA0; margin-top: 3px; line-height: 1.55; }
 .ocp-btn { flex: none; cursor: pointer; border: none; background: #3A3A3E; color: #F0F0F2;
   border-radius: 8px; padding: 8px 14px; font-size: 12.5px; margin-left: auto; transition: background .15s; white-space: nowrap; }
@@ -75,7 +75,7 @@ const CSS = `
 /* ── 命令集合:分段 tab(高 42,左对齐相邻)── */
 .ocp-tabs { display: flex; gap: 6px; }
 .ocp-tab { cursor: pointer; border: none; background: transparent; color: #9A9AA0; font-size: 13px;
-  padding: 8px 14px; border-radius: 9px; display: inline-flex; gap: 7px; align-items: center; transition: background .15s; }
+  padding: 9px 15px; border-radius: 9px; display: inline-flex; gap: 7px; align-items: center; transition: background .15s; }
 .ocp-tab b { font-weight: 600; font-size: 12px; opacity: .85; }
 .ocp-tab:hover { background: #303036; color: #C9C9CF; }
 .ocp-tab-on { background: #1E3A5F; color: #EAF2FF; }
@@ -83,7 +83,7 @@ const CSS = `
 .ocp-tab-on b { opacity: .8; }
 /* ── 搜索行(高输入框 + 右对齐计数)── */
 .ocp-search { display: flex; align-items: center; gap: 12px; }
-.ocp-input { flex: 1; min-width: 0; height: 40px; font-size: 13px; padding: 0 14px; border-radius: 10px;
+.ocp-input { flex: 1; min-width: 0; height: 44px; font-size: 13px; padding: 0 14px; border-radius: 10px;
   border: 1px solid rgba(255,255,255,.09); background: #1C1C1E; color: #F0F0F2; outline: none; transition: border-color .15s;
   font-family: inherit; }
 .ocp-input:focus { border-color: rgba(74,158,255,.65); }
@@ -91,34 +91,43 @@ const CSS = `
 .ocp-count { flex: none; font-size: 12px; color: #9A9AA0; }
 .ocp-count b { color: #F0F0F2; font-weight: 600; }
 /* ── 适配器卡片(独立卡片,间距 ~16,内行 67 缩放;随宿主滚动,不内滚)── */
-.ocp-sites { display: flex; flex-direction: column; gap: 10px; }
-.ocp-site { background: #26262A; border: 1px solid rgba(255,255,255,.05); border-radius: 13px; padding: 13px 16px;
+.ocp-sites { display: flex; flex-direction: column; gap: 12px; }
+.ocp-site { background: #26262A; border: 1px solid rgba(255,255,255,.05); border-radius: 13px; padding: 15px 16px;
   cursor: pointer; transition: background .15s, border-color .15s; }
 .ocp-site:hover { background: #2B2B30; }
 .ocp-site-on { border-color: rgba(74,158,255,.4); background: #262B33; }
 .ocp-siterow { display: flex; align-items: center; gap: 12px; }
-.ocp-ava { flex: none; width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  background: rgba(74,158,255,.14); color: #4A9EFF; }
-.ocp-sname { font-size: 14px; font-weight: 600; white-space: nowrap; }
-.ocp-scount { font-size: 12.5px; color: #9A9AA0; white-space: nowrap; }
-.ocp-chev { margin-left: auto; flex: none; color: #9A9AA0; font-size: 13px; display: inline-block;
+.ocp-ava { flex: none; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; }
+.ocp-sname { font-size: 15px; font-weight: 600; white-space: nowrap; }
+.ocp-scount { font-size: 13px; color: #9A9AA0; white-space: nowrap; }
+.ocp-chev { margin-left: auto; flex: none; color: #9A9AA0; font-size: 14px; display: inline-block;
   transition: transform .2s ease, color .15s; }
 .ocp-site-on .ocp-chev { color: #4A9EFF; transform: rotate(90deg); }
-/* ── 展开的命令列表(单行:名称 + 截断描述 + browser/read|write 徽章)── */
-.ocp-cmds { margin-top: 11px; border-top: 1px solid rgba(255,255,255,.06); padding-top: 9px; display: flex; flex-direction: column; gap: 2px;
+/* ── 展开的命令列表(单行:名称 + 截断描述 + browser/read|write 徽章;点击复制)── */
+.ocp-cmds { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.06); padding-top: 10px; display: flex; flex-direction: column; gap: 2px;
   max-height: 300px; overflow: auto; }
-.ocp-cmdrow { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-size: 12.5px; }
-.ocp-cmdrow:hover { background: rgba(255,255,255,.045); }
+.ocp-cmdrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px;
+  cursor: pointer; transition: background .12s; }
+.ocp-cmdrow:hover { background: rgba(255,255,255,.05); }
+.ocp-cmdrow:active { background: rgba(74,158,255,.12); }
 .ocp-cname { flex: none; min-width: 92px; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   font-size: 12.5px; font-weight: 600; color: #79B7FF; }
-.ocp-cdesc { flex: 1; min-width: 0; color: #9A9AA0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ocp-cdesc { flex: 1; min-width: 0; color: #A6A6AE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ocp-tag { flex: none; font-size: 10.5px; font-weight: 600; letter-spacing: .3px; padding: 2px 8px; border-radius: 6px; }
 .ocp-tag-web { background: #333338; color: #9A9AA0; }
 .ocp-tag-read { background: rgba(74,158,255,.14); color: #4A9EFF; }
 .ocp-tag-write { background: rgba(229,132,90,.15); color: #E5845A; }
+.ocp-copied { flex: none; color: #34C759; font-size: 11px; font-weight: 600; }
 .ocp-load { font-size: 12px; color: #9A9AA0; padding: 6px 8px; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; }
 `
+
+/* 站点名 → 稳定色相(模拟 App 的彩色 favicon 头像,低饱和双色调) */
+function avatarHue(name: string): number {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
+  return h
+}
 
 function Panel(): ReturnType<typeof createElement> {
   const [status, setStatus] = useState<OpencliStatus | null>(null)
@@ -128,14 +137,25 @@ function Panel(): ReturnType<typeof createElement> {
   const [busy, setBusy] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [details, setDetails] = useState<Record<string, AdapterDetailResult>>({})
+  const [copied, setCopied] = useState<string | null>(null)
 
-  const toggle = async (name: string): Promise<void> => {
+  const toggle = async (name: string, el?: HTMLElement | null): Promise<void> => {
     if (expanded === name) { setExpanded(null); return }
     setExpanded(name)
+    if (el !== undefined && el !== null) window.setTimeout(() => { el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }, 140)
     if (details[name] === undefined) {
       const r = await rpc<AdapterDetailResult>('adapter-detail', { request: { name } })
       setDetails((prev) => ({ ...prev, [name]: r.ok && r.value !== undefined ? r.value : { ok: false, name, domain: null, commands: [], error: r.error.message } }))
     }
+  }
+
+  const copyCmd = (key: string, text: string): void => {
+    const clip = (globalThis as { navigator?: { clipboard?: { writeText?: (t: string) => Promise<void> } } }).navigator?.clipboard
+    if (clip?.writeText === undefined) return
+    void clip.writeText(text).then(() => {
+      setCopied(key)
+      window.setTimeout(() => { setCopied((c) => (c === key ? null : c)) }, 1600)
+    }).catch(() => { /* 剪贴板不可用则保持只读 */ })
   }
 
   const reload = async () => {
@@ -246,11 +266,16 @@ function Panel(): ReturnType<typeof createElement> {
         filtered.slice(0, 200).map((a) => {
           const open = expanded === a.name
           const detail = details[a.name]
+          const hue = avatarHue(a.name)
           return createElement('div', {
-            key: a.name, className: `ocp-site ${open ? 'ocp-site-on' : ''}`, onClick: () => { void toggle(a.name) },
+            key: a.name, className: `ocp-site ${open ? 'ocp-site-on' : ''}`,
+            onClick: (e: Event) => { void toggle(a.name, e.currentTarget as HTMLElement | null) },
           },
             createElement('div', { className: 'ocp-siterow' },
-              createElement('span', { className: 'ocp-ava' }, a.name.slice(0, 1).toUpperCase()),
+              createElement('span', {
+                className: 'ocp-ava',
+                style: { background: `hsl(${hue} 42% 30%)`, color: `hsl(${hue} 75% 78%)` },
+              }, a.name.slice(0, 1).toUpperCase()),
               createElement('span', { className: 'ocp-sname' }, a.name),
               createElement('span', { className: 'ocp-scount' }, String(a.commandCount)),
               createElement('span', { className: 'ocp-chev' }, '›'),
@@ -259,14 +284,21 @@ function Panel(): ReturnType<typeof createElement> {
               detail === undefined
                 ? createElement('div', { className: 'ocp-load' }, 'loading…')
                 : detail.ok
-                  ? detail.commands.map((c) =>
-                      createElement('div', { key: c.name, className: 'ocp-cmdrow', title: c.example !== undefined && c.example.length > 0 ? c.example : c.description },
+                  ? detail.commands.map((c) => {
+                      const cmdText = c.example !== undefined && c.example.length > 0 ? c.example : `opencli ${a.name} ${c.name}`
+                      const key = `${a.name}:${c.name}`
+                      const justCopied = copied === key
+                      return createElement('div', {
+                        key: c.name, className: 'ocp-cmdrow', title: `${cmdText}\n点击复制`,
+                        onClick: () => { copyCmd(key, cmdText) },
+                      },
                         createElement('span', { className: 'ocp-cname' }, c.name),
                         createElement('span', { className: 'ocp-cdesc' }, c.description.length > 0 ? c.description : '—'),
                         createElement('span', { className: 'ocp-tag ocp-tag-web' }, 'browser'),
                         createElement('span', { className: `ocp-tag ${c.access === 'write' ? 'ocp-tag-write' : 'ocp-tag-read'}` }, c.access),
-                      ),
-                    )
+                        justCopied ? createElement('span', { className: 'ocp-copied' }, '已复制') : null,
+                      )
+                    })
                   : createElement('div', { className: 'ocp-err' }, detail.error ?? '加载失败'),
             ) : null,
           )
