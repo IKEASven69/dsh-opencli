@@ -12,8 +12,15 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
-import type { AdapterDetailRequest, AdapterDetailResult, AdaptersResult, DaemonStartResult, OpencliStatus } from './types.ts'
-import { buildAdapterDirectory, normalizeAdapterList, parseDaemonStatus } from './parsers.ts'
+import { homedir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import type {
+  AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
+  AdaptersResult, ApprovalSetRequest, ApprovalSetResult, DaemonStartResult, LoginCheckItem, LoginCheckResult,
+  OpencliStatus, SettingsResult,
+} from './types.ts'
+import { buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -30,6 +37,14 @@ const BROWSER_DO_ALLOW = new Set([
 
 const OUTPUT_LIMIT = 16000
 const ADAPTER_TTL_MS = 60 * 60 * 1000
+const LOGIN_CHECK_TTL_MS = 10 * 60 * 1000
+const LOGIN_CHECK_CONCURRENCY = 3
+
+/** 插件持久状态(~/.dsh/dsh-opencli-state.json)。 */
+interface PluginState {
+  approval: 'on' | 'off'
+  disabled: string[]
+}
 
 interface ToolArgs {
   session?: string
@@ -53,15 +68,20 @@ export class OpencliService extends TypertRemoteService {
   private readonly bin: string
   private adapterCache: { at: number; json: unknown } | null = null
   private lastShellError: string | null = null
+  private state: PluginState = { approval: 'on', disabled: [] }
+  private readonly statePath = join(homedir(), '.dsh', 'dsh-opencli-state.json')
+  private loginCache: { at: number; results: LoginCheckResult } | null = null
 
   constructor(ctx: Context) {
     super(ctx, 'opencli')
     this.bin = process.env.DSH_OPENCLI_BIN ?? 'opencli'
+    void this.loadState()
   }
 
   protected async [Service.init](): Promise<void> {
     this.registerBrowserTools()
     this.registerSiteTool()
+    this.registerApprovalGate()
     void this.injectSystemPrompt()
   }
 
@@ -198,6 +218,9 @@ export class OpencliService extends TypertRemoteService {
         if (!/^[\w@.-]+$/.test(adapter) || !/^[\w-]+$/.test(command)) {
           return { text: `非法 adapter/command:${adapter} ${command}` }
         }
+        if (this.state.disabled.includes(adapter)) {
+          return { text: `适配器 ${adapter} 已被禁用(设置→浏览器代理 可重新启用)。` }
+        }
         const out = await this.runOpencli([adapter, command, ...(a.args ?? [])])
         return { text: this.renderOut(out) }
       },
@@ -223,11 +246,13 @@ export class OpencliService extends TypertRemoteService {
       this.directoryText = '浏览器代理(dsh-opencli):未检测到可用的 opencli(browser_*/site 工具会失败)。请用户在设置→浏览器代理 运行诊断,或安装 OpenCLI(OpenCLIApp / npm i -g @jackwener/opencli)。'
       return
     }
+    const active = list.filter((a) => !this.state.disabled.includes(a.name))
     const daemon = await this.daemonStatus()
     const state = daemon !== null && daemon.running
       ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
       : 'daemon 未运行——browser_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
-    this.directoryText = `浏览器代理(dsh-opencli):操纵用户**已登录的真实 Chrome**。流程:browser_open → browser_state(拿 [N] 索引)→ browser_click/type/fill(target 用 [N])→ browser_extract 读结果。${state}。\n${buildAdapterDirectory(list)}`
+    const gate = this.state.approval === 'on' ? 'site 的 write 命令会先请求用户审批。' : '审批门已关闭(write 命令直接执行)。'
+    this.directoryText = `浏览器代理(dsh-opencli):操纵用户**已登录的真实 Chrome**。流程:browser_open → browser_state(拿 [N] 索引)→ browser_click/type/fill(target 用 [N])→ browser_extract 读结果。${state}。${gate}\n${buildAdapterDirectory(active)}`
   }
 
   // ── RPC(面板) ────────────────────────────────────────────
@@ -253,7 +278,8 @@ export class OpencliService extends TypertRemoteService {
   async adapters(): Promise<AdaptersResult> {
     const list = await this.adapterList()
     if (list === null) return { ok: false, total: 0, adapters: [], error: `opencli list 不可用 | ${this.lastShellError ?? '未知'}` }
-    return { ok: true, total: list.length, adapters: list }
+    const marked = list.map((a) => ({ ...a, disabled: this.state.disabled.includes(a.name) }))
+    return { ok: true, total: marked.length, adapters: marked }
   }
 
   @Remote('refresh')
@@ -275,6 +301,58 @@ export class OpencliService extends TypertRemoteService {
       return { ok: false, started: false, message: `启动失败(退出码 ${r.exitCode}):${clip(r.stderr || r.stdout, 300)}` }
     }
     return { ok: true, started: true, message: null }
+  }
+
+  @Remote('settings')
+  async settings(): Promise<SettingsResult> {
+    return { ok: true, approvalOn: this.state.approval === 'on', disabled: [...this.state.disabled] }
+  }
+
+  @Remote('approval-set')
+  async approvalSet(request: ApprovalSetRequest): Promise<ApprovalSetResult> {
+    this.state.approval = request.enabled ? 'on' : 'off'
+    await this.saveState()
+    return { ok: true, enabled: request.enabled }
+  }
+
+  @Remote('adapter-disable')
+  async adapterDisable(request: AdapterDisableRequest): Promise<AdapterDisableResult> {
+    const set = new Set(this.state.disabled)
+    if (request.disabled) set.add(request.name)
+    else set.delete(request.name)
+    this.state.disabled = [...set]
+    await this.saveState()
+    void this.updateDirectory()
+    return { ok: true, name: request.name, disabled: request.disabled }
+  }
+
+  /** 登录态巡检:对有 whoami 命令的站点并发探测(限流+10min 缓存)。 */
+  @Remote('login-check')
+  async loginCheck(): Promise<LoginCheckResult> {
+    const empty: LoginCheckResult = { ok: false, checkedAt: null, results: [] }
+    if (this.loginCache !== null && Date.now() - this.loginCache.at < LOGIN_CHECK_TTL_MS) {
+      return this.loginCache.results
+    }
+    if (this.adapterCache === null) {
+      const list = await this.adapterList()
+      if (list === null) return { ...empty, error: this.lastShellError ?? 'opencli list 不可用' }
+    }
+    const sites = sitesWithWhoami(this.adapterCache?.json)
+    if (sites.length === 0) return { ...empty, error: '没有带 whoami 命令的适配器' }
+    const results = await this.runPool(sites, LOGIN_CHECK_CONCURRENCY, async (site): Promise<LoginCheckItem> => {
+      try {
+        const r = await this.runOpencli([site, 'whoami'], 45000, 65536)
+        const text = `${r.stdout}\n${r.stderr}`.trim()
+        const notLoggedIn = r.exitCode !== 0 || /^ok:\s*false/m.test(text) || /AUTH_REQUIRED|^logged_in:\s*false/m.test(text)
+        const meaningful = text.split('\n').find((l) => /message:|screen_name|^user/.test(l)) ?? text.split('\n').find((l) => l.trim().length > 0) ?? ''
+        return { site, ok: !notLoggedIn, timedOut: false, detail: clip(meaningful.trim(), 120) || null }
+      } catch {
+        return { site, ok: false, timedOut: true, detail: null }
+      }
+    })
+    const value: LoginCheckResult = { ok: true, checkedAt: new Date().toISOString(), results }
+    this.loginCache = { at: Date.now(), results: value }
+    return value
   }
 
   /** 单个适配器的完整命令详情(从缓存的原始 list JSON 过滤,面板展开时按需拉取)。 */
@@ -307,6 +385,32 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, name: request.name, domain, commands }
   }
 
+  /** R1 审批门:site 的 write 命令(发帖/点赞/下单等)先经 dsh 原生审批(ask→allowed-once)。
+   * 任何异常一律放行给 next(),绝不因审批门自身故障阻塞工具。 */
+  private registerApprovalGate(): void {
+    this.ctx.on('tools/pre-execute', async (exec, next) => {
+      try {
+        if (exec.name !== 'site' || this.state.approval === 'off') return await next()
+        const a = (exec.arguments ?? {}) as { adapter?: unknown; command?: unknown }
+        if (typeof a.adapter !== 'string' || typeof a.command !== 'string') return await next()
+        if (this.state.disabled.includes(a.adapter)) return await next()
+        const access = await this.lookupAccess(a.adapter, a.command)
+        if (access === 'read') return await next()
+        const reason = access === 'write'
+          ? `site ${a.adapter} ${a.command} 是写操作——会在你的登录态浏览器里真实执行(发帖/点赞/下单/改数据)。`
+          : `site ${a.adapter} ${a.command} 未能确认权限类型,按写操作审批。`
+        return { kind: 'ask', reason }
+      } catch {
+        return await next()
+      }
+    })
+  }
+
+  private async lookupAccess(adapter: string, command: string): Promise<'read' | 'write' | 'unknown'> {
+    if (this.adapterCache === null) await this.adapterList()
+    return commandAccess(this.adapterCache?.json, adapter, command)
+  }
+
   // ── 基础设施 ──────────────────────────────────────────────
 
   private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -324,6 +428,37 @@ export class OpencliService extends TypertRemoteService {
     const r = await this.runOpencli(['daemon', 'status'], 15000)
     if (r.exitCode !== 0) return null
     return parseDaemonStatus(r.stdout + '\n' + r.stderr)
+  }
+
+  private async loadState(): Promise<void> {
+    try {
+      const text = await readFile(this.statePath, 'utf8')
+      const parsed = JSON.parse(text) as Partial<PluginState>
+      if (parsed.approval === 'on' || parsed.approval === 'off') this.state.approval = parsed.approval
+      if (Array.isArray(parsed.disabled)) this.state.disabled = parsed.disabled.filter((s) => typeof s === 'string')
+    } catch { /* 无文件或损坏:用默认值 */ }
+  }
+
+  private async saveState(): Promise<void> {
+    try {
+      await mkdir(join(homedir(), '.dsh'), { recursive: true })
+      await writeFile(this.statePath, JSON.stringify(this.state, null, 2), 'utf8')
+    } catch { /* 状态写不进(权限等):仅本次会话生效 */ }
+  }
+
+  /** 简单并发池(登录巡检限流用)。 */
+  private async runPool<T>(items: string[], concurrency: number, fn: (item: string) => Promise<T>): Promise<T[]> {
+    const out: T[] = []
+    let cursor = 0
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      for (;;) {
+        const i = cursor++
+        if (i >= items.length) break
+        out.push(await fn(items[i]))
+      }
+    })
+    await Promise.all(workers)
+    return out
   }
 
   private async adapterList() {

@@ -3,7 +3,7 @@
  * 样本取自 2026-08-25 本机 opencli v1.8.6 真实输出。
  */
 import { describe, expect, it } from 'vitest'
-import { buildAdapterDirectory, normalizeAdapterList, parseDaemonStatus } from '../src/parsers.ts'
+import { buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from '../src/parsers.ts'
 
 const RUNNING = `Daemon: running (PID 19616)
 Version: v1.8.6
@@ -70,5 +70,32 @@ describe('buildAdapterDirectory', () => {
     const dir = buildAdapterDirectory(many, 70)
     expect(dir).toContain('- s69 (1): x')
     expect(dir).not.toContain('- s70 (1): x')
+  })
+})
+
+describe('commandAccess(审批门)', () => {
+  it('write/read 正确识别', () => {
+    expect(commandAccess(LIST_JSON, '12306', 'login')).toBe('write')
+    expect(commandAccess(LIST_JSON, '12306', 'me')).toBe('read')
+    expect(commandAccess(LIST_JSON, 'bilibili', 'search')).toBe('read')
+  })
+  it('未知命令与非数组输入按 unknown(安全默认=按写审批)', () => {
+    expect(commandAccess(LIST_JSON, 'zhihu', 'hot')).toBe('unknown')
+    expect(commandAccess(null, '12306', 'login')).toBe('unknown')
+    expect(commandAccess([null, 42, {}], '12306', 'login')).toBe('unknown')
+  })
+})
+
+describe('sitesWithWhoami(登录巡检)', () => {
+  it('只挑有 whoami 的站点并限量', () => {
+    const withWhoami = [
+      { site: 'zhihu', name: 'whoami', access: 'read' },
+      { site: 'zhihu', name: 'hot', access: 'read' },
+      { site: 'bilibili', name: 'whoami', access: 'read' },
+      { site: '12306', name: 'me', access: 'read' },
+    ]
+    expect(sitesWithWhoami(withWhoami)).toEqual(['bilibili', 'zhihu'])
+    expect(sitesWithWhoami(withWhoami, 1)).toEqual(['bilibili'])
+    expect(sitesWithWhoami(null)).toEqual([])
   })
 })

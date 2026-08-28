@@ -32,6 +32,7 @@ export interface AdapterInfo {
   commands: string[]
   sample: string
   kinds: string[]
+  disabled?: boolean
 }
 
 /** adapters RPC 结果。 */
@@ -70,4 +71,49 @@ export interface DaemonStartResult {
   ok: boolean
   started: boolean
   message: string | null
+}
+
+/** settings RPC 结果(审批开关 + 禁用名单)。 */
+export interface SettingsResult {
+  ok: boolean
+  approvalOn: boolean
+  disabled: string[]
+}
+
+/** approval-set RPC 请求/结果。 */
+export interface ApprovalSetRequest {
+  enabled: boolean
+}
+
+export interface ApprovalSetResult {
+  ok: boolean
+  enabled: boolean
+}
+
+/** adapter-disable RPC 请求/结果。 */
+export interface AdapterDisableRequest {
+  name: string
+  disabled: boolean
+}
+
+export interface AdapterDisableResult {
+  ok: boolean
+  name: string | null
+  disabled: boolean
+}
+
+/** 一条站点的登录态巡检结果。 */
+export interface LoginCheckItem {
+  site: string
+  ok: boolean
+  timedOut: boolean
+  detail: string | null
+}
+
+/** login-check RPC 结果。 */
+export interface LoginCheckResult {
+  ok: boolean
+  checkedAt: string | null
+  results: LoginCheckItem[]
+  error?: string
 }

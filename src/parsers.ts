@@ -75,3 +75,32 @@ export function buildAdapterDirectory(adapters: AdapterInfo[], maxSites = 70, ma
   const tail = '未列出的站点同样可用;完整清单见设置面板「浏览器代理」。没有适配器的网站:用 browser_do(command=analyze/init/verify) 现场创作(见 SKILL.md)。'
   return [head, ...lines, tail].join('\n')
 }
+
+/** 查某条 site 命令的读写权限(审批门用);找不到返回 unknown(按写处理,安全默认)。 */
+export function commandAccess(input: unknown, adapter: string, command: string): 'read' | 'write' | 'unknown' {
+  if (!Array.isArray(input)) return 'unknown'
+  for (const raw of input as RawCommandEntry[]) {
+    if (raw === null || typeof raw !== 'object') continue
+    const site = raw.site ?? raw.command?.split('/')[0]
+    const name = raw.name ?? raw.command?.split('/')[1]
+    if (site !== adapter || name !== command) continue
+    if (raw.access === 'write') return 'write'
+    if (raw.access === 'read') return 'read'
+    return 'unknown'
+  }
+  return 'unknown'
+}
+
+/** 有 whoami 命令的站点列表(登录态巡检用),按命令数降序稳定排序。 */
+export function sitesWithWhoami(input: unknown, limit = 40): string[] {
+  if (!Array.isArray(input)) return []
+  const sites = new Map<string, number>()
+  for (const raw of input as RawCommandEntry[]) {
+    if (raw === null || typeof raw !== 'object') continue
+    const site = raw.site ?? raw.command?.split('/')[0]
+    const name = raw.name ?? raw.command?.split('/')[1]
+    if (site === undefined || name !== 'whoami') continue
+    sites.set(site, (sites.get(site) ?? 0) + 1)
+  }
+  return [...sites.keys()].sort((a, b) => (sites.get(b) ?? 0) - (sites.get(a) ?? 0) || a.localeCompare(b)).slice(0, limit)
+}

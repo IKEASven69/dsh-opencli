@@ -11,7 +11,10 @@
 
 import { createElement, useEffect, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AdapterDetailResult, AdapterInfo, AdaptersResult, DaemonStartResult, OpencliStatus } from './types.ts'
+import type {
+  AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
+  DaemonStartResult, LoginCheckResult, OpencliStatus, SettingsResult,
+} from './types.ts'
 
 export const inject = ['slots']
 
@@ -59,7 +62,13 @@ const CSS = `
 .ocp-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 .ocp-ok { background: #34C759; }
 .ocp-bad { background: #FF453A; }
+.ocp-mid { background: #9A9AA0; }
 .ocp-hint { font-size: 11.5px; color: #9A9AA0; }
+.ocp-login { max-height: 260px; overflow: auto; }
+.ocp-lrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.06); font-size: 12.5px; }
+.ocp-lrow:last-child { border-bottom: none; }
+.ocp-lsite { flex: none; min-width: 96px; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-weight: 600; }
+.ocp-ldetail { flex: 1; min-width: 0; color: #9A9AA0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ocp-link { color: #4A9EFF; font-size: 12px; text-decoration: none; }
 .ocp-link:hover { text-decoration: underline; }
 .ocp-code { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 11.5px; color: #C9C9CF;
@@ -101,6 +110,8 @@ const CSS = `
   cursor: pointer; transition: background .15s, border-color .15s; }
 .ocp-site:hover { background: #2B2B30; }
 .ocp-site-on { border-color: rgba(74,158,255,.4); background: #262B33; }
+.ocp-site-dis { opacity: .55; }
+.ocp-badge-dis { flex: none; background: rgba(255,69,58,.15); color: #FF6B5E; font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
 .ocp-siterow { display: flex; align-items: center; gap: 12px; }
 .ocp-ava { flex: none; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
   font-size: 14px; font-weight: 700; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; overflow: hidden; }
@@ -150,6 +161,29 @@ function Panel(): ReturnType<typeof createElement> {
   const [starting, setStarting] = useState(false)
   const [daemonMsg, setDaemonMsg] = useState<string | null>(null)
   const [iconFail, setIconFail] = useState<Record<string, boolean>>({})
+  const [settings, setSettings] = useState<SettingsResult | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [login, setLogin] = useState<LoginCheckResult | null>(null)
+
+  const setApproval = async (enabled: boolean): Promise<void> => {
+    const r = await rpc<ApprovalSetResult>('approval-set', { request: { enabled } })
+    if (r.ok && r.value !== undefined && r.value.ok) setSettings((s) => (s === null ? null : { ...s, approvalOn: enabled }))
+  }
+
+  const toggleDisable = async (name: string, disabled: boolean): Promise<void> => {
+    const r = await rpc<AdapterDisableResult>('adapter-disable', { request: { name, disabled } })
+    if (r.ok && r.value !== undefined && r.value.ok) {
+      setAdapters((prev) => (prev === null ? prev : prev.map((a) => (a.name === name ? { ...a, disabled } : a))))
+    }
+  }
+
+  const runLoginCheck = async (): Promise<void> => {
+    if (checking) return
+    setChecking(true)
+    const r = await rpc<LoginCheckResult>('login-check')
+    setLogin(r.ok && r.value !== undefined ? r.value : { ok: false, checkedAt: null, results: [], error: r.error.message })
+    setChecking(false)
+  }
 
   const startDaemon = async (): Promise<void> => {
     if (starting) return
@@ -187,10 +221,15 @@ function Panel(): ReturnType<typeof createElement> {
   const reload = async () => {
     if (busy) return
     setBusy(true)
-    const [st, ad] = await Promise.all([rpc<OpencliStatus>('status'), rpc<AdaptersResult>('adapters')])
+    const [st, ad, se] = await Promise.all([
+      rpc<OpencliStatus>('status'),
+      rpc<AdaptersResult>('adapters'),
+      rpc<SettingsResult>('settings'),
+    ])
     if (st.ok && st.value !== undefined) setStatus(st.value)
     else setStatus(st.value ?? { ok: false, bin: null, version: null, daemon: null, adapterSites: null, error: st.error.message })
     if (ad.ok && ad.value !== undefined) setAdapters(ad.value.adapters)
+    if (se.ok && se.value !== undefined) setSettings(se.value)
     setBusy(false)
   }
 
@@ -200,6 +239,7 @@ function Panel(): ReturnType<typeof createElement> {
   const up = d?.running === true
   const ext = d?.extension === 'connected'
   const missing = status !== null && !status.ok
+  const whoamiCount = (adapters ?? []).filter((a) => a.commands.includes('whoami')).length
   const isAppAdapter = (a: AdapterInfo): boolean =>
     a.domain === undefined || a.domain === 'localhost' || a.domain === '127.0.0.1' || a.domain === 'null'
   const siteList = (adapters ?? []).filter((a) => !isAppAdapter(a))
@@ -274,6 +314,20 @@ function Panel(): ReturnType<typeof createElement> {
         createElement('span', { className: 'ocp-sv' }, d?.extension === 'connected' ? '已连接' : (d?.extension ?? '未知')),
       ),
       createElement('div', { className: 'ocp-srow' },
+        createElement('span', { className: 'ocp-sk' }, 'write 审批门'),
+        createElement('span', { className: 'ocp-sv' }, settings === null ? '…' : (settings.approvalOn ? '开启(site 写操作先经确认)' : '关闭')),
+        createElement('button', {
+          className: 'ocp-btn ocp-btn-sm', onClick: () => { void setApproval(!(settings?.approvalOn ?? true)) },
+        }, settings?.approvalOn === false ? '开启' : '关闭'),
+      ),
+      whoamiCount > 0 ? createElement('div', { className: 'ocp-srow' },
+        createElement('span', { className: 'ocp-sk' }, '登录态'),
+        createElement('span', { className: 'ocp-sv' }, `${whoamiCount} 个站点可巡检`),
+        createElement('button', {
+          className: 'ocp-btn ocp-btn-sm', disabled: checking, onClick: () => { void runLoginCheck() },
+        }, checking ? '巡检中…' : '巡检登录态'),
+      ) : null,
+      createElement('div', { className: 'ocp-srow' },
         createElement('span', { className: 'ocp-sk' }, '环境'),
         createElement('span', { className: 'ocp-sv ocp-mono', style: { fontSize: 12 } },
           `v${status.version ?? '?'}`,
@@ -283,6 +337,26 @@ function Panel(): ReturnType<typeof createElement> {
           d?.uptime !== undefined ? ` · ↑ ${d.uptime}` : '',
         ),
       ),
+    ) : null,
+
+    // ── 登录态巡检结果卡 ──
+    login !== null ? createElement('div', { className: 'ocp-card', style: { padding: '4px 18px 10px' } },
+      createElement('div', { className: 'ocp-srow' },
+        createElement('span', { className: 'ocp-setup-t' }, '登录态巡检'),
+        login.ok ? createElement('span', { className: 'ocp-hint' }, `${login.results.filter((r) => r.ok).length}/${login.results.length} 在线 · ${new Date(login.checkedAt ?? '').toLocaleTimeString()}`) : null,
+        createElement('button', { className: 'ocp-btn ocp-btn-sm', onClick: () => { setLogin(null) } }, '收起'),
+      ),
+      login.ok
+        ? createElement('div', { className: 'ocp-login' },
+            login.results.map((r) =>
+              createElement('div', { key: r.site, className: 'ocp-lrow', title: r.detail ?? '' },
+                createElement('span', { className: `ocp-dot ${r.timedOut ? 'ocp-mid' : r.ok ? 'ocp-ok' : 'ocp-bad'}` }),
+                createElement('span', { className: 'ocp-lsite' }, r.site),
+                createElement('span', { className: 'ocp-ldetail' }, r.timedOut ? '探测超时' : (r.detail ?? '')),
+              ),
+            ),
+          )
+        : createElement('div', { className: 'ocp-err' }, login.error ?? '巡检失败'),
     ) : null,
 
     // ── 命令集合(对齐 App 同名页面)──
@@ -310,7 +384,7 @@ function Panel(): ReturnType<typeof createElement> {
           const hasDomain = a.domain !== undefined && a.domain !== 'localhost' && a.domain !== '127.0.0.1' && a.domain !== 'null'
           const useFavicon = hasDomain === true && iconFail[a.name] !== true
           return createElement('div', {
-            key: a.name, className: `ocp-site ${open ? 'ocp-site-on' : ''}`,
+            key: a.name, className: `ocp-site ${open ? 'ocp-site-on' : ''} ${a.disabled === true ? 'ocp-site-dis' : ''}`,
             onClick: (e: Event) => { void toggle(a.name, e.currentTarget as HTMLElement | null) },
           },
             createElement('div', { className: 'ocp-siterow' },
@@ -326,6 +400,7 @@ function Panel(): ReturnType<typeof createElement> {
                   : a.name.slice(0, 1).toUpperCase()),
               createElement('span', { className: 'ocp-sname' }, a.name),
               createElement('span', { className: 'ocp-scount' }, String(a.commandCount)),
+              a.disabled === true ? createElement('span', { className: 'ocp-badge-dis' }, '已禁用') : null,
               createElement('span', { className: 'ocp-chev' }, '›'),
             ),
             open ? createElement('div', { className: 'ocp-cmds', onClick: (e: Event) => { e.stopPropagation() } },
@@ -333,6 +408,10 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('span', null, 'dsh 会话调用:'),
                 createElement('span', { className: 'ocp-code' }, `site ${a.name} <命令>`),
                 createElement('span', null, '· 点击行复制完整命令'),
+                createElement('button', {
+                  className: 'ocp-btn ocp-btn-sm', style: { marginLeft: 'auto' },
+                  onClick: () => { void toggleDisable(a.name, a.disabled !== true) },
+                }, a.disabled === true ? '启用' : '禁用'),
               ),
               detail === undefined
                 ? createElement('div', { className: 'ocp-load' }, 'loading…')
