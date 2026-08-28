@@ -20,7 +20,7 @@ import type {
   AdaptersResult, ApprovalSetRequest, ApprovalSetResult, DaemonStartResult, LoginCheckItem, LoginCheckResult,
   OpencliStatus, SettingsResult,
 } from './types.ts'
-import { buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
+import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -390,15 +390,16 @@ export class OpencliService extends TypertRemoteService {
   private registerApprovalGate(): void {
     this.ctx.on('tools/pre-execute', async (exec, next) => {
       try {
-        if (exec.name !== 'site' || this.state.approval === 'off') return await next()
         const a = (exec.arguments ?? {}) as { adapter?: unknown; command?: unknown }
-        if (typeof a.adapter !== 'string' || typeof a.command !== 'string') return await next()
-        if (this.state.disabled.includes(a.adapter)) return await next()
-        const access = await this.lookupAccess(a.adapter, a.command)
-        if (access === 'read') return await next()
-        const reason = access === 'write'
-          ? `site ${a.adapter} ${a.command} 是写操作——会在你的登录态浏览器里真实执行(发帖/点赞/下单/改数据)。`
-          : `site ${a.adapter} ${a.command} 未能确认权限类型,按写操作审批。`
+        const argsOk = typeof a.adapter === 'string' && typeof a.command === 'string' && a.adapter.length > 0 && a.command.length > 0
+        // 只在确有可能 ask 时才付出缓存查询成本;其余情况 access 传占位值,判定函数自会放行
+        const needsAccess = exec.name === 'site' && this.state.approval === 'on' && argsOk && !this.state.disabled.includes(a.adapter)
+        const access = needsAccess ? await this.lookupAccess(a.adapter as string, a.command as string) : 'unknown'
+        const decision = approvalDecision(this.state.approval === 'on', this.state.disabled, exec.name, a.adapter, a.command, access)
+        if (decision === 'allow') return await next()
+        const reason = decision === 'ask-write'
+          ? `site ${String(a.adapter)} ${String(a.command)} 是写操作——会在你的登录态浏览器里真实执行(发帖/点赞/下单/改数据)。`
+          : `site ${String(a.adapter)} ${String(a.command)} 未能确认权限类型,按写操作审批。`
         return { kind: 'ask', reason }
       } catch {
         return await next()

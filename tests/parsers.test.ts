@@ -3,7 +3,7 @@
  * 样本取自 2026-08-25 本机 opencli v1.8.6 真实输出。
  */
 import { describe, expect, it } from 'vitest'
-import { buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from '../src/parsers.ts'
+import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from '../src/parsers.ts'
 
 const RUNNING = `Daemon: running (PID 19616)
 Version: v1.8.6
@@ -97,5 +97,24 @@ describe('sitesWithWhoami(登录巡检)', () => {
     expect(sitesWithWhoami(withWhoami)).toEqual(['bilibili', 'zhihu'])
     expect(sitesWithWhoami(withWhoami, 1)).toEqual(['bilibili'])
     expect(sitesWithWhoami(null)).toEqual([])
+  })
+})
+
+describe('approvalDecision(审批门判定)', () => {
+  const on = true
+  const off = false
+  const noDisabled: string[] = []
+  it('写命令 ask-write,读命令 allow,未知按写 ask-unknown', () => {
+    expect(approvalDecision(on, noDisabled, 'site', 'zhihu', 'comment', 'write')).toBe('ask-write')
+    expect(approvalDecision(on, noDisabled, 'site', 'zhihu', 'hot', 'read')).toBe('allow')
+    expect(approvalDecision(on, noDisabled, 'site', 'newsite', 'fetch', 'unknown')).toBe('ask-unknown')
+  })
+  it('审批门关闭/非 site 工具/被禁用适配器/参数不完整 → allow', () => {
+    expect(approvalDecision(off, noDisabled, 'site', 'zhihu', 'comment', 'write')).toBe('allow')
+    expect(approvalDecision(on, noDisabled, 'browser_open', 'zhihu', 'comment', 'write')).toBe('allow')
+    expect(approvalDecision(on, ['zhihu'], 'site', 'zhihu', 'comment', 'write')).toBe('allow')
+    expect(approvalDecision(on, noDisabled, 'site', undefined, 'comment', 'write')).toBe('allow')
+    expect(approvalDecision(on, noDisabled, 'site', 'zhihu', 42, 'write')).toBe('allow')
+    expect(approvalDecision(on, noDisabled, 'site', '', 'comment', 'write')).toBe('allow')
   })
 })

@@ -104,3 +104,23 @@ export function sitesWithWhoami(input: unknown, limit = 40): string[] {
   }
   return [...sites.keys()].sort((a, b) => (sites.get(b) ?? 0) - (sites.get(a) ?? 0) || a.localeCompare(b)).slice(0, limit)
 }
+
+/** 审批门纯判定:host 侧 pre-execute 监听器消费。
+ * - allow:放行(非 site 工具/审批门关闭/被禁用适配器/读命令/参数不完整)
+ * - ask-write:已知写命令,弹出 dsh 原生审批
+ * - ask-unknown:权限未知,按写审批(安全默认) */
+export function approvalDecision(
+  approvalOn: boolean,
+  disabled: readonly string[],
+  toolName: string,
+  adapter: unknown,
+  command: unknown,
+  access: 'read' | 'write' | 'unknown',
+): 'allow' | 'ask-write' | 'ask-unknown' {
+  if (toolName !== 'site' || !approvalOn) return 'allow'
+  if (typeof adapter !== 'string' || typeof command !== 'string' || adapter.length === 0 || command.length === 0) return 'allow'
+  if (disabled.includes(adapter)) return 'allow'
+  if (access === 'write') return 'ask-write'
+  if (access === 'read') return 'allow'
+  return 'ask-unknown'
+}
