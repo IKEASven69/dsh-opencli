@@ -18,7 +18,7 @@ import type {
 
 export const inject = ['slots']
 
-async function rpc<T>(method: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; value?: T; error: { message: string } }> {
+async function rpc<T>(method: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; value?: T; error?: { message: string } }> {
   try {
     const res = await fetch(`/api/opencli/${method}`, {
       method: 'POST',
@@ -181,7 +181,7 @@ function Panel(): ReturnType<typeof createElement> {
     if (checking) return
     setChecking(true)
     const r = await rpc<LoginCheckResult>('login-check')
-    setLogin(r.ok && r.value !== undefined ? r.value : { ok: false, checkedAt: null, results: [], error: r.error.message })
+    setLogin(r.ok && r.value !== undefined ? r.value : { ok: false, checkedAt: null, results: [], error: r.error?.message ?? '请求失败' })
     setChecking(false)
   }
 
@@ -195,7 +195,7 @@ function Panel(): ReturnType<typeof createElement> {
       if (r.value.started !== true && r.value.message !== null) setDaemonMsg(r.value.message)
       void reload()
     } else {
-      setDaemonMsg(r.ok ? (r.value?.message ?? '启动失败') : r.error.message)
+      setDaemonMsg(r.ok ? (r.value?.message ?? '启动失败') : r.error?.message ?? '请求失败')
     }
   }
 
@@ -205,7 +205,7 @@ function Panel(): ReturnType<typeof createElement> {
     if (el !== undefined && el !== null) window.setTimeout(() => { el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }, 140)
     if (details[name] === undefined) {
       const r = await rpc<AdapterDetailResult>('adapter-detail', { request: { name } })
-      setDetails((prev) => ({ ...prev, [name]: r.ok && r.value !== undefined ? r.value : { ok: false, name, domain: null, commands: [], error: r.error.message } }))
+      setDetails((prev) => ({ ...prev, [name]: r.ok && r.value !== undefined ? r.value : { ok: false, name, domain: null, commands: [], error: r.error?.message ?? '请求失败' } }))
     }
   }
 
