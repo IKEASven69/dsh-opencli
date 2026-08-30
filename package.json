@@ -1,6 +1,6 @@
 {
   "name": "dsh-opencli",
-  "description": "登录态浏览器代理:browser_* 工具族操纵你已登录的 Chrome(ax 快照/点击/填写/提取),179 站点适配器经 site 工具即刻可用,缺适配器可会话内自创作(opencli browser init/verify)",
+  "description": "登录态浏览器代理:browser_* 工具族操纵你已登录的真实 Chrome/Edge,170+ 站点适配器经 site 工具即刻可用,缺适配器可会话内自创作;write 命令带审批门",
   "version": "0.1.0",
   "publishConfig": {
     "access": "public"
@@ -42,12 +42,12 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-client-runtime": "*",
-    "@deepseek-ai/dsh-client-ui-slots": "*",
-    "@deepseek-ai/dsh-shell": "*",
-    "@deepseek-ai/dsh-tools": "*",
-    "@deepseek-ai/dsh-typert-protocol": "*",
+    "@deepseek-ai/cordis": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-runtime": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-shell": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-tools": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
     "react": "^18.2.0"
   },
   "devDependencies": {
