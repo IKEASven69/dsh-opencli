@@ -5,6 +5,7 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
 
 /** 支持导入的扩展名(小写)。 */
@@ -41,12 +42,14 @@ export function htmlToText(html: string): string {
 }
 
 /** 抽取结果:null 表示不支持/失败,reason 供注册表 error 字段。 */
-export async function extractText(path: string): Promise<{ text: string | null; reason?: string }> {
+export async function extractText(path: string): Promise<{ text: string | null; rawHash?: string; reason?: string }> {
   const ext = extname(path).toLowerCase()
+  let rawHash: string | undefined
   try {
+    rawHash = createHash('sha256').update(await readFile(path)).digest('hex').slice(0, 16)
     if (TEXT_EXTS.has(ext)) {
       const raw = await readFile(path, 'utf8')
-      return { text: raw.replace(/\u0000/g, '').trim() || null, reason: '空文件' }
+      return { text: raw.replace(/\u0000/g, '').trim() || null, rawHash, reason: '空文件' }
     }
     if (PDF_EXTS.has(ext)) {
       const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
@@ -59,12 +62,12 @@ export async function extractText(path: string): Promise<{ text: string | null; 
         parts.push(content.items.map((it) => ('str' in it ? it.str : '')).join(' '))
       }
       const text = parts.join('\n\n').replace(/\u0000/g, '').trim()
-      return text ? { text } : { text: null, reason: 'PDF 无可抽取文本(可能为扫描件)' }
+      return text ? { text, rawHash } : { text: null, reason: 'PDF 无可抽取文本(可能为扫描件)' }
     }
     if (DOCX_EXTS.has(ext)) {
       const mammoth = await import('mammoth')
       const { value } = await mammoth.extractRawText({ path })
-      return { text: value.trim() || null, reason: '空文档' }
+      return { text: value.trim() || null, rawHash, reason: '空文档' }
     }
     return { text: null, reason: `不支持的扩展名 ${ext}` }
   } catch (err: unknown) {

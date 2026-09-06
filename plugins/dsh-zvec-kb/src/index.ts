@@ -28,11 +28,13 @@ import type { DemoResult, FileEntry, ImportResult, ListResult, RemoveResult, Sea
 declare module '@deepseek-ai/cordis' {
   interface Context {
     zvecKb: ZvecKbService
+    /** 本地结构化声明:宿主 systemPrompt 服务的最小使用面(增强包解析不可靠时不拖垮类型检查) */
+    systemPrompt: { section(cfg: { name: string; order: number; text: () => string }): void }
   }
 }
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', 'out', 'target', '.venv', 'venv', '__pycache__', '.idea', '.vscode', '.cache', '.obsidian', '.trash'])
-const MAX_FILES_PER_IMPORT = 2000
+const MAX_FILES_PER_IMPORT = 20000
 const SNIPPET = 300
 
 /** 路径规范化键(大小写与分隔符不敏感)。 */
@@ -65,6 +67,7 @@ export class ZvecKbService extends TypertRemoteService {
 
   private readonly homeDir: string
   private recoveryNote: string | null = null
+  private pendingRawHash: string | undefined = undefined
   private embedder: Embedder | null = null
   private store: KbStore | null = null
   private registry = new Map<string, FileEntryInternal>()
@@ -289,8 +292,14 @@ export class ZvecKbService extends TypertRemoteService {
       if (prev !== undefined && prev.status === 'done' && prev.bytes === c.bytes) {
         let unchanged = false
         try {
-          const buf = await readFile(c.path)
-          unchanged = createHash('sha256').update(buf).digest('hex').slice(0, 16) === prev.id
+          if (prev.rawHash !== undefined) {
+            // 新注册表:与原始文件字节哈希对比(抽取的 trim/清洗不再造成假差异)
+            unchanged = createHash('sha256').update(await readFile(c.path)).digest('hex').slice(0, 16) === prev.rawHash
+          } else {
+            // 旧注册表无 rawHash:按抽取文本哈希近似比对,拿不准就重索引
+            const { text } = await extractText(c.path)
+            unchanged = text !== null && createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex').slice(0, 16) === prev.id
+          }
         } catch {
           unchanged = false
         }
@@ -303,8 +312,9 @@ export class ZvecKbService extends TypertRemoteService {
       this.registry.set(regKey('fs', c.path), { ...prevEntry, path: resolve(c.path), bytes: c.bytes, status: 'indexing' as const, chunks: prev?.chunks ?? 0 })
       queued++
       this.enqueueSource(regKey('fs', c.path), resolve(c.path), c.bytes, async () => {
-        const { text, reason } = await extractText(c.path)
+        const { text, reason, rawHash } = await extractText(c.path)
         if (text === null) throw new Error(reason ?? '无法抽取文本')
+        this.pendingRawHash = rawHash
         return text
       })
     }
@@ -367,7 +377,7 @@ export class ZvecKbService extends TypertRemoteService {
     this.queueTail = this.queueTail.then(async () => {
       try {
         const text = await produce()
-        await this.indexContent(key, display, text, bytes)
+        await this.indexContent(key, display, text, bytes, this.pendingRawHash)
       } catch (err: unknown) {
         const cur = this.registry.get(key)
         this.registry.set(key, { ...(cur ?? entryOf(display)), bytes, status: 'failed', error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200) })
@@ -379,7 +389,7 @@ export class ZvecKbService extends TypertRemoteService {
     })
   }
 
-  private async indexContent(key: string, display: string, text: string, bytes: number): Promise<void> {
+  private async indexContent(key: string, display: string, text: string, bytes: number, rawHash?: string): Promise<void> {
     const rt = await this.ensureRuntime()
     if ('error' in rt) throw new Error(rt.error)
     const buf = Buffer.from(text, 'utf8')
@@ -388,6 +398,12 @@ export class ZvecKbService extends TypertRemoteService {
     if (chunks.length === 0) throw new Error('没有可索引的内容')
 
     const prev = this.registry.get(key)
+    // 内容完全未变(抽取文本同哈希):不重插,避免 zvec 重复 id 文档
+    if (prev !== undefined && prev.id !== '' && prev.id === id && prev.status === 'done') {
+      this.registry.set(key, { ...prev, bytes, status: 'done', rawHash })
+      this.saveRegistry()
+      return
+    }
     // 同键旧内容清理(内容变了 file id 变);首次导入 prev.id 为空串,跳过
     if (prev !== undefined && prev.id !== '' && prev.id !== id) rt.store.deleteFile(prev.id)
 
@@ -395,7 +411,7 @@ export class ZvecKbService extends TypertRemoteService {
     // 嵌入用去语法文本(余弦不被 markdown 符号污染);FTS/展示仍用原文
     const vectors = await rt.embedder.embed(chunks.map((c) => embedTextOf(c)))
     rt.store.insert(id, chunks, vectors)
-    this.registry.set(key, { id, path: display, bytes, chunks: chunks.length, status: 'done', importedAt: Date.now() })
+    this.registry.set(key, { id, path: display, bytes, chunks: chunks.length, status: 'done', importedAt: Date.now(), rawHash })
     this.saveRegistry()
     this.refreshPrompt()
   }

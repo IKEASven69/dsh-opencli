@@ -10,6 +10,8 @@ export interface FileEntry {
   status: 'indexing' | 'done' | 'failed'
   error?: string | null
   importedAt: number
+  /** 原始文件字节哈希(前16位)——增量跳过校验用,与抽取文本哈希(id)分立 */
+  rawHash?: string
 }
 
 /** 面板/工具共用的检索结果条目。 */
