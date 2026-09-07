@@ -23,6 +23,8 @@ import type { Embedder } from './embedder.ts'
 import { KbStore } from './store.ts'
 import type { RawHit } from './store.ts'
 import { extractText, htmlToText, SUPPORTED_EXTS, MAX_FILE_BYTES } from './extract.ts'
+import { WorkspaceManager } from './watch.ts'
+import { ScheduleManager } from './schedule.ts'
 import type { DemoResult, FileEntry, ImportResult, ListResult, RemoveResult, SearchHit, SearchResult, StatusResult } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -68,6 +70,8 @@ export class ZvecKbService extends TypertRemoteService {
   private readonly homeDir: string
   private recoveryNote: string | null = null
   private pendingRawHash: string | undefined = undefined
+  private readonly workspaceMgr: WorkspaceManager
+  private readonly scheduleMgr: ScheduleManager
   private embedder: Embedder | null = null
   private store: KbStore | null = null
   private registry = new Map<string, FileEntryInternal>()
@@ -79,6 +83,14 @@ export class ZvecKbService extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, 'zvecKb')
     this.homeDir = process.env.DSH_ZVECKB_HOME ?? join(homedir(), '.dsh', 'dsh-zvec-kb')
+    this.workspaceMgr = new WorkspaceManager(this.homeDir, async (p) => {
+      const r = await this.importPath(p)
+      if (r.queued > 0) this.refreshPrompt()
+      return r
+    })
+    this.scheduleMgr = new ScheduleManager(this.homeDir, async (entry) => {
+      for (const w of this.workspaceMgr.list()) await this.importPath(w.path)
+    })
     // 不注册 dispose 钩子:zvec WAL 保证崩溃安全,进程退出无需显式关库
   }
 
@@ -99,6 +111,9 @@ export class ZvecKbService extends TypertRemoteService {
       text: () => this.promptText,
     })
     this.refreshPrompt()
+    // workspace 常驻目录 + 持久化调度:rotate 等采集脚本落盘后自动增量索引;AI/面板可设定时任务
+    this.workspaceMgr.startAll()
+    this.scheduleMgr.startAll()
   }
 
   private refreshPrompt(): void {
@@ -206,6 +221,52 @@ export class ZvecKbService extends TypertRemoteService {
         const r = await this.remove(String(a.path ?? ''))
         if (!r.ok) return { text: `删除失败:${r.error ?? '未知'}` }
         return { text: r.removed ? '已从知识库移除。' : '没有匹配的已导入文件。' }
+      },
+    }))
+
+    this.ctx.tools.register(defineTool({
+      name: 'kb_watch',
+      description: '把一个目录注册为知识库常驻 workspace:此后该目录的新增/变更文件被自动增量索引(采集脚本落盘即入库,无需手动导入)。',
+      parameters: {
+        path: { type: 'string', description: '要常驻监听的目录绝对路径(支持 ~)' },
+        label: { type: 'string', description: '可选标签(面板展示用)' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: { path?: unknown; label?: unknown }): Promise<{ text: string }> => {
+        const r = await this.workspaceMgr.add(String(a.path ?? ''), a.label === undefined ? undefined : String(a.label))
+        if (!r.ok) return { text: `注册失败:${r.error ?? '未知'}` }
+        return { text: '已注册为常驻 workspace:目录内新增/变更文件将自动增量索引;首次全量在后台进行。' }
+      },
+    }))
+
+    this.ctx.tools.register(defineTool({
+      name: 'kb_schedule',
+      description: '设置/查看/删除知识库的持久化定时任务(重启不丢)。用例:按博主发博节奏定时扫描采集目录。动作 scan=全 workspace 增量索引。',
+      parameters: {
+        action: { type: 'string', enum: ['list', 'set', 'remove', 'enable', 'disable'], description: '操作' },
+        name: { type: 'string', description: '任务名(set/remove/enable/disable 必填)' },
+        kind: { type: 'string', enum: ['interval', 'daily'], description: 'set 必填:interval=每 everyMin 分钟;daily=每天 at 时刻' },
+        everyMin: { type: 'number', description: 'interval 型:间隔分钟数(1-10080)' },
+        at: { type: 'string', description: 'daily 型:HH:MM(24 小时制)' },
+        enabled: { type: 'boolean', description: 'set 时可选,默认 true' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: { action?: unknown; name?: unknown; kind?: unknown; everyMin?: unknown; at?: unknown; enabled?: unknown }): Promise<{ text: string }> => {
+        const action = String(a.action ?? 'list')
+        if (action === 'list') {
+          const rows = this.scheduleMgr.list().map((e) => `${e.enabled ? '✓' : '⏸'} ${e.name} (${e.kind === 'daily' ? `每天 ${e.at}` : `每 ${e.everyMin} 分钟`}, scan, 上次 ${e.lastRunAt ? new Date(e.lastRunAt).toLocaleString() : '未运行'})`)
+          return { text: rows.length === 0 ? '没有定时任务。用 kb_schedule action=set 创建。' : `定时任务 ${rows.length} 个:\n${rows.join('\n')}` }
+        }
+        if (action === 'set') {
+          const r = await this.scheduleMgr.set({ name: a.name, kind: a.kind, everyMin: a.everyMin, at: a.at, enabled: a.enabled })
+          return r.ok ? { text: `定时任务已保存(重启不丢),引擎将按计划执行 scan。` } : { text: `设置失败:${r.error ?? '未知'}` }
+        }
+        if (action === 'remove') {
+          const ok = await this.scheduleMgr.remove(String(a.name ?? ''))
+          return { text: ok ? '已删除。' : `不存在:${String(a.name)}` }
+        }
+        const r = await this.scheduleMgr.setEnabled(String(a.name ?? ''), action === 'enable')
+        return r.ok ? { text: action === 'enable' ? '已启用。' : '已停用。' } : { text: `失败:${r.error ?? '未知'}` }
       },
     }))
   }
@@ -582,6 +643,43 @@ export class ZvecKbService extends TypertRemoteService {
     const out: DemoResult = { ok: true, imported: !existed, query, fts: fts.hits, hybrid: hybrid.hits }
     if (fts.hits.length === 0) out.note = '关键词检索找不到——文档里没有"超时"二字'
     return out
+  }
+
+  /** 面板:workspace 常驻目录管理。 */
+  @Remote('workspace-add')
+  async rpcWorkspaceAdd(p: { path: string; label?: string }): Promise<{ ok: boolean; error?: string }> {
+    return await this.workspaceMgr.add(String(p.path ?? ''), p.label === undefined ? undefined : String(p.label))
+  }
+
+  @Remote('workspace-remove')
+  async rpcWorkspaceRemove(p: { path: string }): Promise<{ ok: boolean; removed: boolean }> {
+    return { ok: true, removed: await this.workspaceMgr.remove(String(p.path ?? '')) }
+  }
+
+  @Remote('workspace-list')
+  async rpcWorkspaceList(): Promise<{ ok: boolean; workspaces: { path: string; label: string; addedAt: number }[] }> {
+    return { ok: true, workspaces: this.workspaceMgr.list() }
+  }
+
+  /** 面板:定时任务管理(AI 侧走 kb_schedule 工具,同一注册表)。 */
+  @Remote('schedule-list')
+  async rpcScheduleList(): Promise<{ ok: boolean; schedules: unknown[] }> {
+    return { ok: true, schedules: this.scheduleMgr.list() }
+  }
+
+  @Remote('schedule-set')
+  async rpcScheduleSet(p: { name: string; kind: string; everyMin?: number; at?: string; enabled?: boolean }): Promise<{ ok: boolean; error?: string }> {
+    return await this.scheduleMgr.set(p)
+  }
+
+  @Remote('schedule-remove')
+  async rpcScheduleRemove(p: { name: string }): Promise<{ ok: boolean; removed: boolean }> {
+    return { ok: true, removed: await this.scheduleMgr.remove(String(p.name ?? '')) }
+  }
+
+  @Remote('schedule-toggle')
+  async rpcScheduleToggle(p: { name: string; enabled: boolean }): Promise<{ ok: boolean; error?: string }> {
+    return await this.scheduleMgr.setEnabled(String(p.name ?? ''), Boolean(p.enabled))
   }
 
   /** demo 用:可强制 FTS-only 的检索。 */
