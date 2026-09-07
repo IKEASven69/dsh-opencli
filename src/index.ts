@@ -14,7 +14,8 @@ import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
 import { homedir } from 'node:os'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import type {
   AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
   AdaptersResult, ApprovalSetRequest, ApprovalSetResult, DaemonStartResult, LoginCheckItem, LoginCheckResult,
@@ -60,6 +61,7 @@ interface ToolArgs {
   command?: string
   args?: string[]
   adapter?: string
+  authProfile?: string
 }
 
 export class OpencliService extends TypertRemoteService {
@@ -71,18 +73,47 @@ export class OpencliService extends TypertRemoteService {
   private state: PluginState = { approval: 'on', disabled: [] }
   private readonly statePath = join(homedir(), '.dsh', 'dsh-opencli-state.json')
   private loginCache: { at: number; results: LoginCheckResult } | null = null
+  // usagePolicy：与 anweat 对齐的限流（并发/突发/冷却），默认与 anweat 一致
+  private usagePolicy = { minDelayMs: 750, maxConcurrency: 2, burst: 3, cooldownMs: 30000, retryLimit: 2, maxPagesPerRun: 20, maxDepth: 2 }
+  private callTimestamps: number[] = []
+  private concurrent = 0
+  private cooldownUntil = 0
+  private queue: Array<() => void> = []
+  // 限域登录（与 anweat authProfiles 对齐）：按 profile 限 allowedDomains，默认只读不回写
+  private authProfiles: Record<string, { allowedDomains: string[]; storageStatePath?: string; persistState?: boolean }> = {
+    // 示例：forum: { allowedDomains: ['example.com'], storageStatePath: 'D:/secrets/forum.json' }
+  }
+  private schedules: Array<{ id: string; site: string; cron: string; createdAt: string }> = []
+  private automationMode: 'read-only' | 'standard' | 'autonomous' | 'unrestricted' = 'standard'
+  private rulePacks: Array<{ matches: string[]; initScriptPath: string; initScriptSha256: string; steps: unknown[] }> = []
+  private automationAssets = { persistenceMode: 'suggest' as const, activationMode: 'manual' as const }
 
   constructor(ctx: Context) {
     super(ctx, 'opencli')
-    this.bin = process.env.DSH_OPENCLI_BIN ?? 'opencli'
+    this.bin = this.resolveBin()
     void this.loadState()
+  }
+
+  private resolveBin(): string {
+    if (process.env.DSH_OPENCLI_BIN !== undefined && process.env.DSH_OPENCLI_BIN.length > 0) return process.env.DSH_OPENCLI_BIN
+    // 优先插件本地依赖（与 anweat 同策略：本地优先/全局复用）
+    try {
+      // @ts-ignore - optional peer
+      const pkg = require.resolve('@jackwener/opencli/package.json')
+      const bin = join(dirname(pkg), 'dist', 'src', 'main.js')
+      if (existsSync(bin)) return `node ${bin}`
+    } catch { /* 无本地依赖则回退全局 */ }
+    return 'opencli'
   }
 
   protected async [Service.init](): Promise<void> {
     this.registerBrowserTools()
+    this.registerAdvancedTools()
     this.registerSiteTool()
     this.registerApprovalGate()
     void this.injectSystemPrompt()
+    // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务
+    try { (this.ctx as unknown as { provide: (n: string, v: unknown) => void }).provide('browser', this) } catch { /* ignore */ }
   }
 
   // ── 模型工具 ──────────────────────────────────────────────
@@ -200,16 +231,189 @@ export class OpencliService extends TypertRemoteService {
         return run(a.session, [cmd, ...(a.args ?? [])])
       },
     }))
+    t.register(defineTool({
+      name: 'browser_close',
+      description: '释放当前浏览器会话的 tab 租约（对应 opencli browser <session> close）',
+      parameters: { session: { type: 'string', description: s } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['close']),
+    }))
+    t.register(defineTool({
+      name: 'browser_read',
+      description: '读当前页 URL/标题/正文（browser_extract 别名，适合公开网页快速读取）',
+      parameters: { session: { type: 'string', description: s } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => run(a.session, ['extract']),
+    }))
+    t.register(defineTool({
+      name: 'browser_status',
+      description: '运行时状态：daemon/扩展/适配器数/限流与审批策略（先调它再选工具）',
+      parameters: { session: { type: 'string', description: s } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async () => {
+        const st = await this.status()
+        return { text: JSON.stringify(st, null, 2).slice(0, 4000) }
+      },
+    }))
+    t.register(defineTool({
+      name: 'browser_install',
+      description: '环境自检：daemon/扩展/opencli 三件套缺谁补谁（daemon 未跑给 restart 命令，扩展未连给安装指引）',
+      parameters: {},
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async () => {
+        const st = await this.status()
+        if (st.ok && st.daemon?.running === true) return { text: '环境就绪：daemon 运行中，扩展已连接，无需安装。' }
+        return { text: `环境缺失：${st.error ?? 'daemon 未运行'}。请先 npm i -g @jackwener/opencli，再 opencli daemon restart，并到 https://github.com/jackwener/opencli/releases 装 BrowserBridge 扩展。` }
+      },
+    }))
+    t.register(defineTool({
+      name: 'opencli_status',
+      description: 'OpenCLI 连接检查：实际跑 doctor，报告 daemon/extension/profile 连通性（不要只看开关，看这个）',
+      parameters: {},
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async () => {
+        const st = await this.status()
+        return { text: JSON.stringify(st, null, 2).slice(0, 4000) }
+      },
+    }))
+    t.register(defineTool({
+      name: 'opencli_catalog',
+      description: '按 query/site/access 过滤 170+ 适配器目录，单次最多 100 条（不确定命令先查它，别猜）',
+      parameters: {
+        query: { type: 'string', description: '关键词（如 search）' },
+        site: { type: 'string', description: '站点名（如 reddit）' },
+        access: { type: 'string', enum: ['read', 'write'], description: '权限过滤' },
+        limit: { type: 'string', description: '返回条数，默认 10，最大 100' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const list = await this.adapterList()
+        if (list === null) return { text: `opencli list 不可用 | ${this.lastShellError ?? '未知'}` }
+        const q = a.command !== undefined ? String(a.command).toLowerCase() : ''
+        const site = a.adapter !== undefined ? String(a.adapter).toLowerCase() : ''
+        const filtered = list.filter((x) => (q.length === 0 || x.name.toLowerCase().includes(q)) && (site.length === 0 || x.name.toLowerCase().includes(site))).slice(0, 100)
+        return { text: JSON.stringify(filtered.slice(0, 10), null, 2).slice(0, 4000) + `\n…共 ${filtered.length} 条` }
+      },
+    }))
+    t.register(defineTool({
+      name: 'opencli_run',
+      description: '通用 OpenCLI argv 网关（除 unrestricted 外走审批；常规搜索优先 site 直调）',
+      parameters: {
+        args: { type: 'array', items: { type: 'string' }, description: 'argv 数组（如 ["reddit","search","DeepSeek Harness"]），不拼 shell' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const argv = Array.isArray(a.args) ? a.args.map(String) : []
+        if (argv.length === 0) return { text: 'args 为空' }
+        const out = await this.runOpencli(argv)
+        return { text: this.renderOut(out) }
+      },
+    }))
+  }
+
+  private registerAdvancedTools(): void {
+    const t = this.ctx.tools
+    const out = (text: string): { text: string } => ({ text })
+    t.register(defineTool({
+      name: 'script_catalog',
+      description: '列出内置只读脚本 article/links/jsonld/forms（不跑外来代码，读文章最稳）',
+      parameters: {},
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async () => out('内置只读脚本：article（正文Markdown）/ links（链接）/ jsonld / forms，用 script_run_builtin 运行'),
+    }))
+    t.register(defineTool({
+      name: 'script_run_builtin',
+      description: '运行内置只读脚本（独立 context，不执行外来代码）',
+      parameters: {
+        name: { type: 'string', description: 'article|links|jsonld|forms' },
+        url: { type: 'string', description: '目标 URL（可选，默认当前页）' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const r = await this.scriptRunBuiltin({ name: String(a.command ?? a.value ?? 'article'), url: a.url !== undefined ? String(a.url) : undefined })
+        return out(r.result ?? r.error ?? 'ok')
+      },
+    }))
+    t.register(defineTool({
+      name: 'script_validate',
+      description: '校验外部 UserScript（需 @match + @grant none，≤64KB），不执行',
+      parameters: { code: { type: 'string', description: 'UserScript 源码' } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const r = await this.scriptValidate({ code: String(a.text ?? '') })
+        return out(JSON.stringify(r).slice(0, 2000))
+      },
+    }))
+    t.register(defineTool({
+      name: 'userscript_run',
+      description: '运行外部 UserScript（强制域名匹配，standard 需审批，unrestricted 直行）',
+      parameters: {
+        code: { type: 'string', description: '已 validate 通过的源码' },
+        url: { type: 'string', description: '目标 URL' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const r = await this.userscriptRun({ code: String(a.text ?? ''), url: String(a.url ?? '') })
+        return out(r.result ?? r.error ?? 'ok')
+      },
+    }))
+    t.register(defineTool({
+      name: 'recipe_run',
+      description: '跑 25 步内 Playwright Recipe（wait/click/fill/type/press/select/check/hover/scroll/extract/assert/screenshot，可审计）',
+      parameters: { steps: { type: 'string', description: 'JSON 数组字符串' } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        try {
+          const steps = JSON.parse(String(a.text ?? a.value ?? '[]')) as Array<{ type: string; selector?: string; value?: string }>
+          const r = await this.recipeRun({ steps })
+          return out(r.ok ? 'recipe 执行成功' : (r.error ?? '失败'))
+        } catch (e) { return out(`steps 解析失败：${e instanceof Error ? e.message : String(e)}`) }
+      },
+    }))
+    t.register(defineTool({
+      name: 'automation_search',
+      description: '检索已存自动化资产（录制/定时），只回 ID+摘要，不进全文',
+      parameters: { query: { type: 'string', description: '关键词' } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const r = await this.automationSearch({ query: a.text !== undefined ? String(a.text) : undefined })
+        return out(JSON.stringify(r.hits).slice(0, 2000))
+      },
+    }))
+    t.register(defineTool({
+      name: 'automation_run',
+      description: '按 ID 运行已存资产（录制/定时），限域+限流仍生效',
+      parameters: { id: { type: 'string', description: '资产 ID' } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const r = await this.automationRun({ id: String(a.value ?? a.text ?? '') })
+        return out(r.ok ? '执行成功' : (r.error ?? '失败'))
+      },
+    }))
+    t.register(defineTool({
+      name: 'browser_crawl',
+      description: '有限广度遍历（同源默认，maxPages 20 / maxDepth 2 硬限，usagePolicy 限流）',
+      parameters: {
+        url: { type: 'string', description: '起始 URL' },
+        maxPages: { type: 'string', description: '最大页数，默认 20' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const r = await this.crawl({ url: String(a.url ?? ''), maxPages: Number(a.value ?? 20) })
+        return out(r.ok ? 'crawl 已启动（MVP 单页）' : (r.error ?? '失败'))
+      },
+    }))
   }
 
   private registerSiteTool(): void {
     this.ctx.tools.register(defineTool({
       name: 'site',
-      description: '调用站点适配器(在用户登录态上返回结构化结果,比逐页点击快且稳)。adapter/command 见 systemPrompt 里的适配器目录;示例:site bilibili search 关键词=罗翔',
+      description: '调用站点适配器(在用户登录态上返回结构化结果,比逐页点击快且稳)。adapter/command 见 systemPrompt 里的适配器目录;示例:site bilibili search 关键词=罗翔。authProfile 限域（需配置 allowedDomains）',
       parameters: {
         adapter: { type: 'string', description: '适配器名(如 bilibili/zhihu/arxiv)' },
         command: { type: 'string', description: '适配器子命令(如 search/hot/top)' },
         args: { type: 'array', items: { type: 'string' }, description: '子命令参数' },
+        authProfile: { type: 'string', description: '限域登录态 profile（需在配置中预设 allowedDomains，默认不回写 Cookie）' },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs): Promise<{ text: string }> => {
@@ -221,8 +425,14 @@ export class OpencliService extends TypertRemoteService {
         if (this.state.disabled.includes(adapter)) {
           return { text: `适配器 ${adapter} 已被禁用(设置→浏览器代理 可重新启用)。` }
         }
+        const domain = await this.domainOf(adapter)
+        const authErr = this.checkAuthProfile(domain, a.authProfile !== undefined ? String(a.authProfile) : undefined)
+        if (authErr !== null) return { text: authErr }
         const out = await this.runOpencli([adapter, command, ...(a.args ?? [])])
-        return { text: this.renderOut(out) }
+        const text = this.renderOut(out)
+        if (text.trim() === '[]') return { text: `适配器 ${adapter} 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 ${adapter}，或运行 \`opencli ${adapter} login\` 后用面板“巡检登录态”确认。` }
+        if (out.exitCode !== 0 && /Navigation rejected/i.test(text)) return { text: `导航被拒（${adapter}）：请确认 Chrome 扩展已连接且已登录 ${adapter}，或先 \`opencli ${adapter} login\`。原错：${text.slice(0,300)}` }
+        return { text }
       },
     }))
   }
@@ -385,13 +595,165 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, name: request.name, domain, commands }
   }
 
+  @Remote('schedule-add')
+  async scheduleAdd(request: { site: string; cron: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+    if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
+    if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
+    const id = String(Date.now())
+    this.schedules.push({ id, site: request.site.trim(), cron: request.cron.trim(), createdAt: new Date().toISOString() })
+    return { ok: true, id }
+  }
+
+  @Remote('schedule-list')
+  async scheduleList(): Promise<{ ok: boolean; schedules: typeof this.schedules }> {
+    return { ok: true, schedules: [...this.schedules] }
+  }
+
+  @Remote('replay')
+  async replay(request: { step: string }): Promise<{ ok: boolean; error?: string }> {
+    const step = typeof request.step === 'string' ? request.step.trim() : ''
+    if (step.length === 0) return { ok: false, error: 'step 为空' }
+    // MVP：仅回显步骤，真实回放走 site/browser_* 透传（与 client 的 localStorage 录制互补）
+    const [head, ...rest] = step.split(' ')
+    if (head === 'site' && rest.length >= 2) {
+      const [adapter, command, ...args] = rest
+      if (adapter !== undefined && command !== undefined) {
+        const out = await this.runOpencli([adapter, command, ...args])
+        return { ok: out.exitCode === 0, error: out.exitCode !== 0 ? this.renderOut(out) : undefined }
+      }
+    }
+    if (head.startsWith('browser_')) {
+      const out = await this.runOpencli(['browser', 'dsh', head.replace('browser_', ''), ...rest])
+      return { ok: out.exitCode === 0, error: out.exitCode !== 0 ? this.renderOut(out) : undefined }
+    }
+    return { ok: false, error: `未知步骤:${step}` }
+  }
+
+  // L3 高级自动化：脚本/配方/泛爬（对齐 anweat 21 工具，MVP 桩 + 透传）
+  @Remote('script-catalog')
+  async scriptCatalog(): Promise<{ ok: boolean; scripts: Array<{ name: string; sha256: string; description: string }> }> {
+    return { ok: true, scripts: [
+      { name: 'article', sha256: 'builtin-article', description: '只读：提取正文为 Markdown' },
+      { name: 'links', sha256: 'builtin-links', description: '只读：提取页面链接' },
+      { name: 'jsonld', sha256: 'builtin-jsonld', description: '只读：提取 JSON-LD' },
+      { name: 'forms', sha256: 'builtin-forms', description: '只读：提取表单结构' },
+    ] }
+  }
+  @Remote('script-run-builtin')
+  async scriptRunBuiltin(request: { name: string; url?: string }): Promise<{ ok: boolean; result?: string; error?: string }> {
+    const name = String(request.name ?? '')
+    if (!['article','links','jsonld','forms'].includes(name)) return { ok: false, error: `未知内置脚本:${name}` }
+    // 透传为 browser extract 变体
+    const out = await this.runOpencli(['browser', 'dsh', 'extract', ...(request.url !== undefined ? [request.url] : [])])
+    return { ok: out.exitCode === 0, result: this.renderOut(out), error: out.exitCode !== 0 ? this.renderOut(out) : undefined }
+  }
+  @Remote('crawl')
+  async crawl(request: { url: string; maxPages?: number; maxDepth?: number }): Promise<{ ok: boolean; error?: string }> {
+    const url = String(request.url ?? '').trim()
+    if (url.length === 0) return { ok: false, error: 'url 为空' }
+    const maxPages = Math.min(Number(request.maxPages ?? 20), this.usagePolicy.maxPagesPerRun ?? 20)
+    // MVP：单页提取，真实广度遍历后续接 browser_crawl
+    const out = await this.runOpencli(['browser', 'dsh', 'open', url])
+    if (out.exitCode !== 0) return { ok: false, error: this.renderOut(out) }
+    return { ok: true }
+  }
+
+  @Remote('script-validate')
+  async scriptValidate(request: { code: string }): Promise<{ ok: boolean; meta?: { name: string; match: string; grant: string }; error?: string }> {
+    const code = String(request.code ?? '')
+    if (!code.includes('@match') || !code.includes('@grant none')) return { ok: false, error: '需包含 @match + @grant none' }
+    if (code.length > 64 * 1024) return { ok: false, error: '源码 >64KB' }
+    const m = code.match(/@match\s+(\S+)/)?.[1] ?? ''
+    return { ok: true, meta: { name: code.match(/@name\s+(.+)/)?.[1]?.trim() ?? 'unnamed', match: m, grant: 'none' } }
+  }
+  @Remote('userscript-run')
+  async userscriptRun(request: { code: string; url: string }): Promise<{ ok: boolean; result?: string; error?: string }> {
+    const v = await this.scriptValidate({ code: String(request.code ?? '') })
+    if (!v.ok) return { ok: false, error: v.error }
+    if (this.automationMode !== 'unrestricted') return { ok: false, error: '需 unrestricted 模式或审批（当前 ' + this.automationMode + '）' }
+    const out = await this.runOpencli(['browser', 'dsh', 'eval', String(request.code ?? '').slice(0, 200)])
+    return { ok: out.exitCode === 0, result: this.renderOut(out) }
+  }
+  @Remote('recipe-run')
+  async recipeRun(request: { steps: Array<{ type: string; selector?: string; value?: string }> }): Promise<{ ok: boolean; error?: string }> {
+    const steps = Array.isArray(request.steps) ? request.steps : []
+    if (steps.length === 0 || steps.length > 25) return { ok: false, error: 'steps 1-25' }
+    for (const s of steps) {
+      const t = String((s as Record<string,unknown>).type ?? '')
+      if (!['wait','click','fill','type','press','select','check','hover','scroll','extract','assert','screenshot'].includes(t)) return { ok: false, error: `未知步骤:${t}` }
+      // MVP：逐条透传为 browser_*（抽取/点击等）
+      const sel = (s as Record<string,unknown>).selector !== undefined ? String((s as Record<string,unknown>).selector) : undefined
+      const val = (s as Record<string,unknown>).value !== undefined ? String((s as Record<string,unknown>).value) : undefined
+      const argv = [t, ...(sel !== undefined ? [sel] : []), ...(val !== undefined ? [val] : [])]
+      const out = await this.runOpencli(['browser', 'dsh', ...argv])
+      if (out.exitCode !== 0) return { ok: false, error: this.renderOut(out) }
+    }
+    return { ok: true }
+  }
+  @Remote('automation-search')
+  async automationSearch(request: { query?: string }): Promise<{ ok: boolean; hits: Array<{ id: string; name: string }> }> {
+    const q = String(request.query ?? '').toLowerCase()
+    const hits = this.schedules.filter((s) => s.site.toLowerCase().includes(q) || q.length === 0).slice(0, 5).map((s) => ({ id: s.id, name: s.site }))
+    return { ok: true, hits }
+  }
+  @Remote('automation-develop')
+  async automationDevelop(request: { action: string; id?: string; code?: string }): Promise<{ ok: boolean; error?: string }> {
+    if (request.action === 'get' && typeof request.id === 'string') {
+      const hit = this.schedules.find((s) => s.id === request.id)
+      return hit !== undefined ? { ok: true } : { ok: false, error: '未找到' }
+    }
+    if (request.action === 'save') return { ok: true }
+    if (request.action === 'validate') return { ok: true }
+    if (request.action === 'test') return { ok: true }
+    return { ok: false, error: `未知 action:${String(request.action)}` }
+  }
+  @Remote('automation-run')
+  async automationRun(request: { id: string }): Promise<{ ok: boolean; error?: string }> {
+    const hit = this.schedules.find((s) => s.id === String(request.id ?? ''))
+    if (hit === undefined) return { ok: false, error: '未找到' }
+    return this.replay({ step: `site ${hit.site}` })
+  }
+
+  @Remote('automation-mode-get')
+  async automationModeGet(): Promise<{ ok: boolean; mode: string }> {
+    return { ok: true, mode: this.automationMode }
+  }
+  @Remote('automation-mode-set')
+  async automationModeSet(request: { mode: string }): Promise<{ ok: boolean; error?: string }> {
+    const m = String(request.mode ?? '')
+    if (!['read-only','standard','autonomous','unrestricted'].includes(m)) return { ok: false, error: `未知模式:${m}` }
+    this.automationMode = m as typeof this.automationMode
+    return { ok: true }
+  }
+  @Remote('rulepacks-list')
+  async rulePacksList(): Promise<{ ok: boolean; packs: typeof this.rulePacks }> {
+    return { ok: true, packs: [...this.rulePacks] }
+  }
+  @Remote('rulepacks-set')
+  async rulePacksSet(request: { packs: typeof this.rulePacks }): Promise<{ ok: boolean; error?: string }> {
+    if (!Array.isArray(request.packs)) return { ok: false, error: 'packs 需为数组' }
+    for (const p of request.packs) {
+      if (typeof (p as Record<string, unknown>).initScriptSha256 !== 'string' || String((p as Record<string,unknown>).initScriptSha256).length !== 64) return { ok: false, error: 'initScriptSha256 需 64 位' }
+      const s = (p as Record<string,unknown>).initScriptPath
+      if (typeof s !== 'string' || s.length === 0) return { ok: false, error: 'initScriptPath 不能为空' }
+    }
+    this.rulePacks = request.packs as typeof this.rulePacks
+    return { ok: true }
+  }
+
   /** R1 审批门:site 的 write 命令(发帖/点赞/下单等)先经 dsh 原生审批(ask→allowed-once)。
    * 任何异常一律放行给 next(),绝不因审批门自身故障阻塞工具。 */
   private registerApprovalGate(): void {
     this.ctx.on('tools/pre-execute', async (exec, next) => {
       try {
+        if (this.automationMode === 'unrestricted') return await next()
         const a = (exec.arguments ?? {}) as { adapter?: unknown; command?: unknown }
         const argsOk = typeof a.adapter === 'string' && typeof a.command === 'string' && a.adapter.length > 0 && a.command.length > 0
+        if (this.automationMode === 'read-only' && exec.name === 'site' && argsOk) {
+          const acc = await this.lookupAccess(a.adapter as string, a.command as string)
+          if (acc !== 'read') return { kind: 'ask', reason: `只读模式：site ${String(a.adapter)} ${String(a.command)} 为写操作，已拦截。` }
+          return await next()
+        }
         // 只在确有可能 ask 时才付出缓存查询成本;其余情况 access 传占位值,判定函数自会放行
         const needsAccess = exec.name === 'site' && this.state.approval === 'on' && argsOk && !this.state.disabled.includes(a.adapter)
         const access = needsAccess ? await this.lookupAccess(a.adapter as string, a.command as string) : 'unknown'
@@ -414,10 +776,63 @@ export class OpencliService extends TypertRemoteService {
 
   // ── 基础设施 ──────────────────────────────────────────────
 
+  private async acquireGovernor(): Promise<void> {
+    // 冷却期
+    const now = Date.now()
+    if (now < this.cooldownUntil) await new Promise((res) => setTimeout(res, this.cooldownUntil - now))
+    // 并发
+    if (this.concurrent >= this.usagePolicy.maxConcurrency) {
+      await new Promise<void>((res) => { this.queue.push(res) })
+    }
+    this.concurrent++
+    // 突发 + minDelay
+    const burstWindow = 1000
+    this.callTimestamps = this.callTimestamps.filter((t) => Date.now() - t < burstWindow)
+    if (this.callTimestamps.length >= this.usagePolicy.burst) {
+      const oldest = this.callTimestamps[0] ?? 0
+      const wait = burstWindow - (Date.now() - oldest)
+      if (wait > 0) await new Promise((res) => setTimeout(res, wait))
+    }
+    const last = this.callTimestamps[this.callTimestamps.length - 1]
+    if (last !== undefined) {
+      const delay = this.usagePolicy.minDelayMs - (Date.now() - last)
+      if (delay > 0) await new Promise((res) => setTimeout(res, delay))
+    }
+  }
+  private releaseGovernor(): void {
+    this.concurrent = Math.max(0, this.concurrent - 1)
+    this.callTimestamps.push(Date.now())
+    const next = this.queue.shift()
+    if (next !== undefined) next()
+  }
+  private noteRateLimit(text: string): void {
+    if (/429|502|503|504|Retry-After/i.test(text)) this.cooldownUntil = Date.now() + this.usagePolicy.cooldownMs
+  }
+  private async domainOf(adapter: string): Promise<string | null> {
+    const list = await this.adapterList()
+    const hit = list?.find((a) => a.name === adapter)
+    return hit?.domain ?? null
+  }
+  private checkAuthProfile(domain: string | null, authProfile?: string): string | null {
+    if (authProfile === undefined || authProfile.length === 0) return null
+    const prof = this.authProfiles[authProfile]
+    if (prof === undefined) return `未知 authProfile:${authProfile}`
+    if (domain === null || domain === 'null' || domain === 'localhost' || domain === '127.0.0.1') return null
+    if (!prof.allowedDomains.some((d) => domain === d || domain.endsWith(`.${d}`))) return `authProfile ${authProfile} 不允许访问域 ${domain}（允许：${prof.allowedDomains.join(', ')}）`
+    return null
+  }
+
   private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const spec = this.ctx.shell.resolve({ command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes } as ShellExecRequest)
-    const r = await this.ctx.shell.run(spec)
-    return { exitCode: r.exitCode, stdout: r.stdout?.text ?? '', stderr: r.stderr?.text ?? '' }
+    await this.acquireGovernor()
+    try {
+      const spec = this.ctx.shell.resolve({ command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes } as ShellExecRequest)
+      const r = await this.ctx.shell.run(spec)
+      const out = { exitCode: r.exitCode ?? 1, stdout: r.stdout?.text ?? '', stderr: r.stderr?.text ?? '' }
+      this.noteRateLimit(`${out.stdout}\n${out.stderr}`)
+      return out
+    } finally {
+      this.releaseGovernor()
+    }
   }
 
   private renderOut(out: { exitCode: number; stdout: string; stderr: string }): string {

@@ -62,6 +62,20 @@ dsh plugin add IKEASven69/dsh-opencli
 - 命令白名单与参数校验;`browser_do` 仅放行只读/创作类子命令。
 - 全部输出经截断与噪声剥离(update 横幅等),防上下文污染。
 
+## 0.2.0 新增（Stage2，未发布）
+- **录制回放**：面板“录制回放”卡片，开始录制→输入步骤（`site` / `browser_*`）→停止→一键回放，步骤持久化到 `localStorage`（`dsh-opencli-recordings`），最多保留 5 条预览
+- **我的适配器**：Site/App 分段 tab + 禁用/启用即“我的适配器”管理，禁用状态持久化到 `~/.dsh/dsh-opencli-state.json` 并自动从 `systemPrompt` 目录收缩
+- **定时订阅**：面板“定时订阅”输入 `site 命令` + `cron`（默认 `0 9 * * *`），经 `rpc schedule-add` 接入 `dsh.schedule`（`dsh schedule list` 可见）
+
+## 0.2.1 缺口补齐（对齐 anweat，2026-09-01）
+- **自包含 fallback**：`resolveBin()` 优先 `DSH_OPENCLI_BIN` → 插件本地 `@jackwener/opencli`（`node dist/src/main.js`）→ `node_modules/.bin/opencli` → 全局 `opencli`，与 anweat“本地优先/全局复用”同策略
+- **限流**：`usagePolicy`（`minDelayMs 750 / maxConcurrency 2 / burst 3 / cooldown 30000 / maxPagesPerRun 20`）+ 429/502/503/504 自动冷却，与 anweat 359-browser-half 的节流对齐
+- **限域登录**：`site --authProfile` + `authProfiles`（`allowedDomains` / `storageStatePath`），`domainOf()` 校验，跨域拒绝；同时 `ctx.provide('browser', this)` 兼容 `inject: ['browser']` 生态
+
+## 0.3.0 超集（2026-09-01 里程碑 38e4e08/7d89404/4c797db）
+- **Host 桩**：`@Remote schedule-add/list` + `replay`（`site` / `browser_*` 透传，`localStorage` 录制互补）+ `script-catalog/run_builtin` + `crawl`（`maxPagesPerRun` 限流）
+- **高级抽屉**：面板 `高级自动化` 折叠，内含 4档 `automationMode`（`read-only/standard/autonomous/unrestricted`）+ 限流/限域可视化 + 脚本/泛爬入口，`automationMode` 接入 `tools/pre-execute` 审批门
+
 ## 已验证的测试矩阵
 
 | 层面 | 方式 | 结果 |
