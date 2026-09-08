@@ -1,0 +1,8 @@
+# dsh-opencli bundle patch:把登录态浏览器代理插件插入 profile 合成。
+# host 半是 TypertRemoteService(Client→Host RPC:status/adapters/refresh),
+# 并在 Service.init 里注册 browser_* 与 site 模型工具。
+# 浏览器半由 package.json 的 dsh.client 声明 + exports["./client"] 提供。
+
+- insert:
+    - id: opencli
+      name: 'dsh-opencli'

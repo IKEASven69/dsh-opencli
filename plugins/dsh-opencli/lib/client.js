@@ -986,64 +986,6 @@ window.__ModuleLoader__.load({
 		    order: 41,
 		    label: "\u6D4F\u89C8\u5668\u4EE3\u7406"
 		  }, () => (0, import_react.createElement)(Panel)));
-		  ctx.slots.inject("settings.section", () => ctx.slots.register({
-		    name: "settings.section",
-		    id: "opencli-jump",
-		    order: 42,
-		    label: "\u8DF3\u5230 dsh"
-		  }, () => (0, import_react.createElement)("section", {
-		    className: "ocp-jump",
-		    "data-dsh-opencli-jump": "1"
-		  }, (0, import_react.createElement)("h3", {
-		    style: {
-		      fontSize: "14px",
-		      marginBottom: "8px"
-		    }
-		  }, "\u8DF3\u5230 dsh \u5BF9\u8BDD\u6846\uFF08v0.3.4\uFF09"), (0, import_react.createElement)("p", {
-		    style: {
-		      fontSize: "12px",
-		      color: "#9A9AA0",
-		      marginBottom: "10px"
-		    }
-		  }, "\u8F93\u5165\u4E00\u53E5\u8BDD \u2192 \u590D\u5236\u5230\u526A\u8D34\u677F + \u81EA\u52A8\u8DF3 dsh \u6807\u7B7E\u9875 + Ctrl+V \u7C98\u5230 dsh \u5BF9\u8BDD\u6846\u3002"), (0, import_react.createElement)("textarea", {
-		    id: "dshOpencliJumpText",
-		    "data-dsh-opencli-jump-input": "1",
-		    defaultValue: "arxiv \u641C\u6700\u8FD1 7 \u5929 AI \u7EFC\u8FF0",
-		    style: {
-		      width: "100%",
-		      height: "60px",
-		      padding: "8px",
-		      borderRadius: "6px",
-		      background: "#0d0d0e",
-		      color: "#F0F0F2",
-		      border: "1px solid rgba(255,255,255,.09)",
-		      fontSize: "13px",
-		      fontFamily: "monospace"
-		    }
-		  }), (0, import_react.createElement)("button", {
-		    "data-dsh-opencli-jump-btn": "1",
-		    onClick: async () => {
-		      const ta = document.querySelector("[data-dsh-opencli-jump-input]");
-		      const text = ta?.value.trim() ?? "";
-		      if (!text) return;
-		      try {
-		        await navigator.clipboard.writeText(text);
-		      } catch {
-		      }
-		      window.open("http://127.0.0.1:3080", "_blank");
-		    },
-		    style: {
-		      marginTop: "8px",
-		      padding: "8px 16px",
-		      background: "#4A9EFF",
-		      color: "#fff",
-		      border: "none",
-		      borderRadius: "6px",
-		      cursor: "pointer",
-		      fontSize: "13px",
-		      fontWeight: 600
-		    }
-		  }, "\u2192 \u590D\u5236 + \u6253\u5F00 dsh"))));
 		}
 		// Annotate the CommonJS export names for ESM import in node:
 		0 && (module.exports = {

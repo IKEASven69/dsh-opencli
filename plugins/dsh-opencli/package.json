@@ -1,0 +1,62 @@
+{
+  "name": "dsh-opencli",
+  "description": "鐧诲綍鎬佹祻瑙堝櫒浠ｇ悊:browser_* 宸ュ叿鏃忔搷绾典綘宸茬櫥褰曠殑鐪熷疄 Chrome/Edge,170+ 绔欑偣閫傞厤鍣ㄧ粡 site 宸ュ叿鍗冲埢鍙敤,缂洪€傞厤鍣ㄥ彲浼氳瘽鍐呰嚜鍒涗綔;write 鍛戒护甯﹀鎵归棬",
+  "version": "0.3.4",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "SKILL.md"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "build:local": "node .build-tools/build.cjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.1-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.1-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-shell": ">=0.1.1-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.1.1-rc.2 <0.3.0-0",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.16.1",
+    "@types/react": "~18.3.1",
+    "esbuild": "^0.28.2",
+    "react": "^18.2.0",
+    "vitest": "^3.0.0"
+  }
+}
+
+
