@@ -590,34 +590,4 @@ export function apply(ctx: ClientContext): void {
     { name: 'settings.section', id: 'opencli-proxy', order: 41, label: '浏览器代理' },
     () => createElement(Panel),
   ))
-  // 0.3.4 增量：跳 dsh 对话框输入（无需重写整个面板，加在主面板之外）
-  ctx.slots.inject('settings.section', () => ctx.slots.register(
-    { name: 'settings.section', id: 'opencli-jump', order: 42, label: '跳到 dsh' },
-    () => createElement('section', {
-      className: 'ocp-jump', 'data-dsh-opencli-jump': '1'
-    },
-      createElement('h3', { style: { fontSize: '14px', marginBottom: '8px' } },
-        '跳到 dsh 对话框（v0.3.4）',
-      ),
-      createElement('p', { style: { fontSize: '12px', color: '#9A9AA0', marginBottom: '10px' } },
-        '输入一句话 → 复制到剪贴板 + 自动跳 dsh 标签页 + Ctrl+V 粘到 dsh 对话框。',
-      ),
-      createElement('textarea', {
-        id: 'dshOpencliJumpText', 'data-dsh-opencli-jump-input': '1',
-        defaultValue: 'arxiv 搜最近 7 天 AI 综述',
-        style: { width: '100%', height: '60px', padding: '8px', borderRadius: '6px', background: '#0d0d0e', color: '#F0F0F2', border: '1px solid rgba(255,255,255,.09)', fontSize: '13px', fontFamily: 'monospace' },
-      }),
-      createElement('button', {
-        'data-dsh-opencli-jump-btn': '1',
-        onClick: async () => {
-          const ta = document.querySelector('[data-dsh-opencli-jump-input]') as HTMLTextArea | null
-          const text = ta?.value.trim() ?? ''
-          if (!text) return
-          try { await navigator.clipboard.writeText(text) } catch {}
-          window.open('http://127.0.0.1:3080', '_blank')
-        },
-        style: { marginTop: '8px', padding: '8px 16px', background: '#4A9EFF', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 },
-      }, '→ 复制 + 打开 dsh'),
-    ),
-  ))
 }
