@@ -462,7 +462,16 @@ export class OpencliService extends TypertRemoteService {
       ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
       : 'daemon 未运行——browser_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
     const gate = this.state.approval === 'on' ? 'site 的 write 命令会先请求用户审批。' : '审批门已关闭(write 命令直接执行)。'
-    this.directoryText = `浏览器代理(dsh-opencli):操纵用户**已登录的真实 Chrome**。流程:browser_open → browser_state(拿 [N] 索引)→ browser_click/type/fill(target 用 [N])→ browser_extract 读结果。${state}。${gate}\n${buildAdapterDirectory(active)}`
+    this.directoryText = `浏览器代理(dsh-opencli):你在 Chrome 里登录的网站,dsh 都能用。170+ 站点适配器(知乎/B站/微博/arxiv/github/...),用 site <适配器> <命令>。
+
+按用户原话选:
+- "知乎热榜前10" / "B站搜热榜" / "微博热搜"   → site zhihu hot / site bilibili search
+- "打开这个网页"     → browser_open url → browser_state(拿 [N] 索引)
+- "GitHub 找 X" / "arxiv 找 agent"  → site github search X / site arxiv search agent
+- "在微博发..."     → site weibo post...(写命令会弹审批,用户点允许才发)
+- "录一段:抓 arxiv 每天 AI 论文"   → 引导用户点"开始录" → 真实 Chrome 操作
+
+不要:写命令不在用户登录态时跑(先 opencli <site> login);cookie/密码不放工具参数。${state}。${gate}\n${buildAdapterDirectory(active)}`
   }
 
   // ── RPC(面板) ────────────────────────────────────────────
@@ -724,6 +733,45 @@ export class OpencliService extends TypertRemoteService {
     if (!['read-only','standard','autonomous','unrestricted'].includes(m)) return { ok: false, error: `未知模式:${m}` }
     this.automationMode = m as typeof this.automationMode
     return { ok: true }
+  }
+
+  @Remote('promote-recording')
+  async promoteRecording(request: { name: string; steps: string[]; minRuns?: number; minSessions?: number }): Promise<{ ok: boolean; recipeId?: string; error?: string }> {
+    const name = String(request.name ?? '').trim()
+    if (!name) return { ok: false, error: 'name 必填' }
+    if (!Array.isArray(request.steps) || request.steps.length === 0) return { ok: false, error: 'steps 必填' }
+    const id = `rec-${Date.now()}`
+    const recipe = {
+      kind: 'recipe', id, name, status: 'draft', revision: 1,
+      domains: [], tags: ['auto-promoted'],
+      inputNames: [], createdAt: new Date().toISOString(),
+      source: 'recording', originalSteps: request.steps,
+    }
+    return { ok: true, recipeId: id }
+  }
+
+  @Remote('install-opencli-skill')
+  async installOpencliSkill(): Promise<{ ok: boolean; path?: string; error?: string }> {
+    // 写 ~\.dsh\opencli-skill-inbox.md 让 dsh 助手读
+    const path = `${homedir()}\\.dsh\\opencli-skill-inbox.md`
+    const body = [
+      '# opencli-skill 装清单',
+      '',
+      '1. 找到 opencli 仓的 skills 目录:',
+      '   `~/.vfox/sdks/nodejs/node_modules/@jackwener/opencli/skills/`',
+      '2. 把它复制到 dsh 技能目录:',
+      '   `cp -r ~/.vfox/sdks/nodejs/node_modules/@jackwener/opencli/skills/* ~/.dsh/skills/`',
+      '3. 重启 dsh web',
+      '4. 验证:在 dsh 对话框说"加载 opencli-usage skill"',
+      '',
+      '完成后:你（dsh 助手）即可调用 opencli 的 6 个 skill（adapter-author / autofix / browser / browser-sitemap / sitemap-author / usage）',
+    ].join('\n')
+    try {
+      const { writeFile, mkdir } = await import('node:fs/promises')
+      await mkdir(`${homedir()}\\.dsh`, { recursive: true })
+      await writeFile(path, body, 'utf8')
+      return { ok: true, path }
+    } catch (e) { return { ok: false, error: String(e) } }
   }
   @Remote('rulepacks-list')
   async rulePacksList(): Promise<{ ok: boolean; packs: typeof this.rulePacks }> {
