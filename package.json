@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "dsh-opencli",
-  "description": "登录态浏览器代理:browser_* 工具族操纵你已登录的真实 Chrome/Edge,170+ 站点适配器经 site 工具即刻可用,缺适配器可会话内自创作;write 命令带审批门",
+  "description": "鐧诲綍鎬佹祻瑙堝櫒浠ｇ悊:browser_* 宸ュ叿鏃忔搷绾典綘宸茬櫥褰曠殑鐪熷疄 Chrome/Edge,170+ 绔欑偣閫傞厤鍣ㄧ粡 site 宸ュ叿鍗冲埢鍙敤,缂洪€傞厤鍣ㄥ彲浼氳瘽鍐呰嚜鍒涗綔;write 鍛戒护甯﹀鎵归棬",
   "version": "0.3.1",
   "publishConfig": {
     "access": "public"
@@ -58,3 +58,4 @@
     "vitest": "^3.0.0"
   }
 }
+
