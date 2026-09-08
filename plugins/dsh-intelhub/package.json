@@ -1,0 +1,71 @@
+{
+  "name": "dsh-intelhub",
+  "description": "第一个 zvec 原生情报站:刷到的信息自动沉淀(采集/文件夹/网页/笔记),agent 语义+关键词混合检索带出处,零守护进程、零 API key、文档不出本机;支持 Obsidian 反哺与定时自动化",
+  "version": "0.2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "SKILL.md"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "build:local": "node .build-tools/build.cjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.5",
+    "@zvec/zvec": "^0.7.0",
+    "mammoth": "^1.11.0",
+    "pdfjs-dist": "^5.4.149"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-runtime": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-tools": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "react": "^18.2.0",
+    "dsh-better-sidebar": ">=0.4.0"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.16.1",
+    "@types/react": "~18.3.1",
+    "esbuild": "^0.28.2",
+    "react": "^18.2.0",
+    "vitest": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "dsh-better-sidebar": {
+      "optional": true
+    }
+  }
+}
