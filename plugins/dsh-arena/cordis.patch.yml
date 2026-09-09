@@ -1,0 +1,8 @@
+# dsh-arena bundle patch: 比武台（worktree 扇出比赛）挂载进 profile 组合。
+# host 半为 TypertRemoteService（Client→Host RPC: contest/verdict/merge），
+# 引擎零 experimental 依赖（git worktree + 独立 dsh 会话 + 已发布 storage-domain 契约参考）。
+# 浏览器半经 dsh.client manifest + exports["./client"] 提供「比武台」面板。
+
+- insert:
+    - id: arena
+      name: 'dsh-arena'
