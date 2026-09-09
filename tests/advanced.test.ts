@@ -68,6 +68,46 @@ describe('schedule 桩(schedule-add/list)', () => {
   })
 })
 
+describe('schedule 开关/删除(schedule-toggle/remove)', () => {
+  it('未知 id 拒绝', async () => {
+    expect((await svc.scheduleToggle({ id: 'no-such', enabled: false })).ok).toBe(false)
+    expect((await svc.scheduleRemove({ id: 'no-such' })).ok).toBe(false)
+  })
+
+  it('创建 → 关停 → list 见 enabled=false → 删除', async () => {
+    const name = `ut-tg-${Date.now()}`
+    const c = await svc.scheduleAdd({ site: name, cron: '0 9 * * *' })
+    expect(c.ok).toBe(true)
+    const id = (await svc.scheduleList()).schedules.find((s) => s.site === name)?.id ?? ''
+    expect(id.length > 0).toBe(true)
+    expect((await svc.scheduleToggle({ id, enabled: false })).ok).toBe(true)
+    expect((await svc.scheduleList()).schedules.find((s) => s.id === id)?.enabled).toBe(false)
+    expect((await svc.scheduleRemove({ id })).ok).toBe(true)
+    expect((await svc.scheduleList()).schedules.some((s) => s.id === id)).toBe(false)
+  })
+})
+
+describe('try-run(面板“试试看”后端)', () => {
+  it('空命令拒绝', async () => {
+    expect((await svc.tryRun({ line: '   ' })).ok).toBe(false)
+  })
+
+  it('非 site 开头拒绝', async () => {
+    const r = await svc.tryRun({ line: 'hello world' })
+    expect(r.ok).toBe(false)
+  })
+
+  it('site 单词不足拒绝', async () => {
+    const r = await svc.tryRun({ line: 'site arxiv' })
+    expect(r.ok).toBe(false)
+  })
+
+  it('合法 site 行透传桩 shell 成功', async () => {
+    const r = await svc.tryRun({ line: 'site arxiv recent cs.AI' })
+    expect(r.ok).toBe(true)
+  })
+})
+
 describe('replay 桩', () => {
   it('空 step 拒绝', async () => {
     const r = await svc.replay({ step: '   ' })

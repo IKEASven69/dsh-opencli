@@ -83,7 +83,7 @@ export class OpencliService extends TypertRemoteService {
   private authProfiles: Record<string, { allowedDomains: string[]; storageStatePath?: string; persistState?: boolean }> = {
     // 示例：forum: { allowedDomains: ['example.com'], storageStatePath: 'D:/secrets/forum.json' }
   }
-  private schedules: Array<{ id: string; site: string; cron: string; createdAt: string }> = []
+  private schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean }> = []
   private automationMode: 'read-only' | 'standard' | 'autonomous' | 'unrestricted' = 'standard'
   private rulePacks: Array<{ matches: string[]; initScriptPath: string; initScriptSha256: string; steps: unknown[] }> = []
   private automationAssets = { persistenceMode: 'suggest' as const, activationMode: 'manual' as const }
@@ -609,13 +609,45 @@ export class OpencliService extends TypertRemoteService {
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
     const id = String(Date.now())
-    this.schedules.push({ id, site: request.site.trim(), cron: request.cron.trim(), createdAt: new Date().toISOString() })
+    this.schedules.push({ id, site: request.site.trim(), cron: request.cron.trim(), createdAt: new Date().toISOString(), enabled: true })
     return { ok: true, id }
   }
 
   @Remote('schedule-list')
   async scheduleList(): Promise<{ ok: boolean; schedules: typeof this.schedules }> {
     return { ok: true, schedules: [...this.schedules] }
+  }
+
+  @Remote('schedule-toggle')
+  async scheduleToggle(request: { id: string; enabled: boolean }): Promise<{ ok: boolean; error?: string }> {
+    const hit = this.schedules.find((s) => s.id === String(request.id ?? ''))
+    if (hit === undefined) return { ok: false, error: '未找到' }
+    hit.enabled = request.enabled !== false
+    return { ok: true }
+  }
+
+  @Remote('schedule-remove')
+  async scheduleRemove(request: { id: string }): Promise<{ ok: boolean; error?: string }> {
+    const i = this.schedules.findIndex((s) => s.id === String(request.id ?? ''))
+    if (i < 0) return { ok: false, error: '未找到' }
+    this.schedules.splice(i, 1)
+    return { ok: true }
+  }
+
+  @Remote('try-run')
+  async tryRun(request: { line: string }): Promise<{ ok: boolean; text?: string; error?: string }> {
+    const line = String(request.line ?? '').trim()
+    if (!line) return { ok: false, error: '命令为空' }
+    const [head, ...rest] = line.split(/\s+/)
+    if (head !== 'site' || rest.length < 2) return { ok: false, error: '只支持 site <适配器> <命令> [参数...]，如：site arxiv recent cs.AI' }
+    const [adapter, command, ...args] = rest as string[]
+    if (!/^[\w@.-]+$/.test(adapter) || !/^[\w-]+$/.test(command)) return { ok: false, error: `非法 adapter/command:${adapter} ${command}` }
+    if (this.state.disabled.includes(adapter)) return { ok: false, error: `适配器 ${adapter} 已被禁用` }
+    const out = await this.runOpencli([adapter, command, ...args])
+    const text = this.renderOut(out)
+    if (out.exitCode !== 0) return { ok: false, error: text }
+    if (text.trim() === '[]') return { ok: false, error: `适配器 ${adapter} 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 ${adapter}，或运行 \`opencli ${adapter} login\` 后用面板“巡检登录态”确认。` }
+    return { ok: true, text }
   }
 
   @Remote('replay')
