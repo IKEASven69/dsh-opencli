@@ -1,0 +1,507 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-opencli 0.3.4 — 超集（对比 anweat 之后）</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d0e;color:#F0F0F2;font-family:-apple-system,'Segoe UI',system-ui,sans-serif;padding:30px;max-width:1080px;margin:0 auto}
+h1{font-size:18px;margin-bottom:6px}
+.sub{color:#9A9AA0;font-size:12.5px;line-height:1.6;margin-bottom:18px;max-width:820px}
+.pane{background:#16161a;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:18px;margin-bottom:14px}
+.t{font-size:14px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.tag{display:inline-block;background:#26262a;border:1px solid rgba(255,255,255,.06);border-radius:6px;padding:2px 8px;font-size:11px;color:#9A9AA0}
+.tag-g{background:rgba(52,199,89,.32);color:#4DDB7A;border-color:rgba(52,199,89,.5)}
+.tag-y{background:rgba(255,159,10,.18);color:#FF9F0A;border-color:rgba(255,159,10,.3)}
+.tag-r{background:rgba(255,69,58,.18);color:#FF6B5E;border-color:rgba(255,69,58,.3)}
+.row{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1c1c1e;border-radius:8px;font-size:13px;margin-bottom:8px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.ok{background:#4DDB7A}.bad{background:#FF453A}.warn{background:#FF9F0A}.mid{background:#9A9AA0}
+.srow{flex:1;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.k{color:#9A9AA0;font-size:12px}
+.v{color:#F0F0F2}
+.btn{cursor:pointer;border:none;color:#fff;border-radius:6px;padding:6px 11px;font-size:12px;font-weight:600;background:#3A3A3E}
+.btn:hover{background:#46464B}
+.btn-o{background:#4A9EFF;color:#fff}
+.btn-o:hover{background:#3A8AE8}
+.btn-or{background:#FF9F0A;color:#fff}
+.btn-or:hover{background:#E08F08}
+.btn-d{background:rgba(255,69,58,.2);color:#FF6B5E}
+.btn-sm{padding:5px 9px;font-size:11px}
+.cmd{font-family:ui-monospace,monospace;font-size:11px;color:#79B7FF;background:#26262a;padding:1px 6px;border-radius:3px}
+.hint{font-size:11.5px;color:#9A9AA0;margin-top:6px}
+.list{padding:8px 0;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.item{background:#18181c;border:1px solid rgba(255,255,255,.04);border-radius:8px;padding:10px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.item .sw{position:relative;width:34px;height:20px;background:#26262a;border-radius:10px;cursor:pointer;flex:none}
+.item .sw::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;background:#9A9AA0;border-radius:50%;transition:all .15s}
+.item.on .sw{background:#4DDB7A}
+.item.on .sw::after{left:16px;background:#fff}
+.item .name{flex:1;font-size:13px;font-weight:600}
+.item .meta{font-size:11px;color:#9A9AA0;width:100%}
+.item .act{display:flex;gap:6px;flex-shrink:0;margin-left:auto}
+.item.paused{opacity:.55}
+.item.failed{border-color:rgba(255,69,58,.3);background:rgba(255,69,58,.04)}
+.item .status{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:600}
+.status-ok{background:rgba(52,199,89,.32);color:#4DDB7A}
+.status-warn{background:rgba(255,159,10,.18);color:#FF9F0A}
+.status-bad{background:rgba(255,69,58,.18);color:#FF6B5E}
+.status-paused{background:rgba(255,255,255,.04);color:#9A9AA0}
+.code{font-family:ui-monospace,monospace;font-size:10.5px;color:#79B7FF;background:#1c1c1e;padding:6px 8px;border-radius:5px;line-height:1.7;margin-top:5px;width:100%}
+.jumpbox{background:#1c1c1e;border:1px solid rgba(74,158,255,.35);border-radius:10px;padding:14px;margin-top:10px}
+.jumpbox .t2{font-size:13px;font-weight:700;margin-bottom:8px;color:#79B7FF}
+.jumpbox .row2{display:flex;gap:6px;align-items:center}
+.jumpbox input{flex:1;height:36px;background:#0d0d0e;border:1px solid rgba(74,158,255,.3);border-radius:6px;padding:0 12px;color:#F0F0F2;font-size:13px}
+.jumpbox .send{cursor:pointer;border:none;height:36px;padding:0 16px;background:#4A9EFF;color:#fff;border-radius:6px;font-size:13px;font-weight:600;white-space:nowrap}
+.jumpbox .send:hover{background:#3A8AE8}
+.dotted{background:rgba(74,158,255,.05);border:1px dashed rgba(74,158,255,.25);border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.7;color:#C9C9CF}
+.dotted b{color:#79B7FF}
+.dotted button{font-family:ui-monospace,monospace;font-size:11.5px;background:transparent;border:1px solid rgba(74,158,255,.3);color:#79B7FF;padding:3px 8px;border-radius:4px;cursor:pointer;margin:1px}
+.dotted button:hover{background:rgba(74,158,255,.15)}
+.examples{background:rgba(74,158,255,.04);border:1px solid rgba(74,158,255,.2);border-radius:8px;padding:14px;margin-top:8px;font-size:12.5px;line-height:1.7}
+.examples b{color:#79B7FF}
+.loginkey{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}
+.dot6{width:6px;height:6px;border-radius:50%;display:inline-block}
+details summary{cursor:pointer;background:#26262a;border:1px solid rgba(255,255,255,.06);border-radius:6px;padding:3px 10px;font-size:11.5px;color:#C9C9CF;list-style:none;display:inline-block;user-select:none}
+details summary:hover{background:#2c2c32}
+details[open] summary{background:#1f2026;color:#79B7FF;border-color:rgba(74,158,255,.3)}
+details .box-expand{margin-top:8px;background:#1c1c1e;border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;display:flex;flex-wrap:wrap;gap:5px;max-width:680px}
+.sit{background:rgba(52,199,89,.32);color:#4DDB7A;border:1px solid rgba(52,199,89,.5);border-radius:6px;padding:2px 8px;font-size:10.5px;display:inline-flex;align-items:center;gap:4px}
+.sit-y{background:rgba(255,159,10,.18);color:#FF9F0A;border:1px solid rgba(255,159,10,.3)}
+.sit-r{background:rgba(255,69,58,.18);color:#FF6B5E;border:1px solid rgba(255,69,58,.3)}
+.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#4DDB7A;color:#0d0d0e;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.5);display:none;z-index:9999}
+.sch{padding:8px 12px;background:#26262a;border-radius:7px;font-size:11px;color:#9A9AA0;margin-top:6px;line-height:1.6}
+.sch b{color:#FF9F0A}
+.rec-steps{font-family:ui-monospace,monospace;font-size:11px;color:#A6A6AE;background:#1c1c1e;padding:8px 10px;border-radius:6px;line-height:1.8;margin-top:6px;width:100%;border:1px solid rgba(255,255,255,.04);border-radius:6px;padding:10px 12px}
+.rec-steps .step{display:flex;align-items:center;gap:8px;padding:2px 0;color:#C9C9CF}
+.rec-steps .ok::before{content:'OK';color:#4DDB7A;font-size:9px;font-weight:700;border:1px solid #4DDB7A;border-radius:3px;padding:1px 5px;flex-shrink:0;background:rgba(52,199,89,.18)}
+.rec-steps .x{color:#FF6B5E;text-decoration:line-through;opacity:.7;background:rgba(255,69,58,.05);padding:1px 4px;border-radius:3px;margin-left:-4px}
+.rec-steps .x::before{content:'X';color:#FF6B5E;font-size:9px;font-weight:700;border:1px solid #FF6B5E;border-radius:3px;padding:1px 5px;margin-right:6px;text-decoration:none;display:inline-block;background:rgba(255,69,58,.15);flex-shrink:0}
+.cmp{background:#1a1310;border:1px solid rgba(255,159,10,.3);border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;line-height:1.7}
+.cmp b{color:#FF9F0A}
+.cmp .ok{color:#4DDB7A}
+.cmp .miss{color:#FF6B5E}
+.tier{background:#16161a;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:18px;margin-bottom:14px}
+</style>
+</head>
+<body>
+<h1>dsh-opencli 0.3.4 — 对比 anweat/dsh-browser 0.1.10 之后</h1>
+
+<!-- 失败诊断弹窗（默认隐藏） -->
+<div id="diagModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:1000">
+  <div style="background:#1c1c1e;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:24px;width:520px;max-width:90vw">
+    <div style="font-size:16px;font-weight:700;margin-bottom:12px">失败诊断（5 大常见原因）</div>
+    <div style="font-size:12.5px;line-height:1.7;color:#C9C9CF">
+      <div style="margin-bottom:6px"><span style="color:#FF9F0A">1.</span> <b>daemon 未跑：</b>去 dsh 对话框说"装 opencli"，自检会跑</div>
+      <div style="margin-bottom:6px"><span style="color:#FF9F0A">2.</span> <b>扩展断连：</b>Chrome 里点 BrowserBridge 图标，应亮</div>
+      <div style="margin-bottom:6px"><span style="color:#FF9F0A">3.</span> <b>登录过期：</b>说"换 {网站} 账号"，dsh 调 opencli 帮你登</div>
+      <div style="margin-bottom:6px"><span style="color:#FF9F0A">4.</span> <b>站点风控：</b>说"切到 Patchright"，少被反爬</div>
+      <div style="margin-bottom:6px"><span style="color:#FF9F0A">5.</span> <b>命令写错：</b>去 0.5 段搜站点复制正确命令</div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+      <button class="btn btn-sm" onclick="document.getElementById('diagModal').style.display='none'">关</button>
+      <button class="btn btn-o btn-sm" onclick="document.getElementById('diagModal').style.display='none';navigator.clipboard.writeText('dsh 助手，请按 4.2 帮我排查定时失败').then(()=>{window.open('http://127.0.0.1:3080','_blank')})">复制到 dsh →</button>
+    </div>
+  </div>
+</div>
+
+<!-- 0. 顶部：搜站点 + 我跑一下 -->
+<div class="pane" style="background:linear-gradient(180deg,rgba(255,159,10,.08),rgba(255,159,10,0));border-color:rgba(255,159,10,.3)">
+  <div class="t">0. 试试看（最大亮点）<span class="tag">立刻能用</span></div>
+  <div class="row" style="background:rgba(255,159,10,.05);border:1px solid rgba(255,159,10,.2)">
+    <span class="srow">
+      <span class="v">不知道干嘛？点下面"我跑一下"，dsh 自动跑一条命令把结果回来</span>
+    </span>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+    <button class="btn btn-or" id="btnRunDemo">我跑一下</button>
+    <input id="runInput" value="site arxiv recent cs.AI" placeholder="想跑什么命令" style="flex:1;min-width:240px;height:32px;background:#0d0d0e;border:1px solid rgba(255,255,255,.09);border-radius:6px;padding:0 10px;color:#F0F0F2;font-size:12.5px">
+    <button class="btn btn-sm" id="btnRunCustom">跑这</button>
+  </div>
+  <div id="runOut" style="margin-top:8px;display:none"></div>
+</div>
+
+<!-- 0.5 搜站点 -->
+<div class="pane">
+  <div class="t">0.5 搜站点 <span class="tag">170+</span> <span class="dotted" style="margin-left:auto;font-size:11px;padding:4px 10px">不知道命令？搜站点名 → 复制 opencli 命令</span></div>
+  <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+    <input id="siteSearch" placeholder="搜站点：arxiv / github / 知乎 / 微博..." style="flex:1;height:34px;background:#0d0d0e;border:1px solid rgba(255,255,255,.09);border-radius:6px;padding:0 12px;color:#F0F0F2;font-size:13px">
+  </div>
+  <div id="siteResult" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">
+    <span class="tag tag-g">arxiv · 4 命令</span>
+    <span class="tag tag-g">github · 7 命令</span>
+    <span class="tag tag-g">知乎 · 5 命令</span>
+    <span class="tag tag-y">微博 · 3 命令（1 写）</span>
+  </div>
+  <div class="hint">点站点 tag → 复制 <code class="cmd">opencli &lt;site&gt; --help</code> 到剪贴板，去 dsh 话说"列一下 arxiv 的命令"</div>
+</div>
+
+<!-- 0.6 失败诊断 + opencli skill 装 + 浏览器配置快捷 -->
+<div class="pane">
+  <div class="t">0.6 实用快捷 <span class="tag">新</span></div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+    <button class="btn btn-sm" title="弹出常见失败原因">失败诊断 ?</button>
+    <button class="btn btn-sm">装 opencli skill</button>
+    <button class="btn btn-sm">切到 Patchright</button>
+    <button class="btn btn-sm">开 headless</button>
+    <button class="btn btn-sm">关 headless</button>
+    <button class="btn btn-sm">切到 read-only</button>
+    <button class="btn btn-sm">切到 autonomous</button>
+  </div>
+  <div class="hint">点按钮 → 文本复制到剪贴板 + 跳 dsh 对话框，去粘贴发送。失败诊断会先弹窗再跳。</div>
+</div>
+<div class="sub">
+对照表（最后一段）告诉你我们到底差在哪。面板 7 段已补齐 anweat 缺的：浏览器运行时 · 自动化资产库 · 4档自由度 · AuthProfile 限域。
+</div>
+
+<!-- 对比表（先看） -->
+<div class="pane">
+  <div class="t">对比 anweat/dsh-browser 0.1.10（我们到底差在哪）</div>
+  <div class="cmp">
+    <b>anweat 有 vs 我们有：</b><br>
+    <span class="ok">Y</span> 浏览器运行时：Playwright/Patchright + 通道 + headless + autoInstall<br>
+    <span class="ok">Y</span> 自动化 4 档：read-only / standard / autonomous / unrestricted + 审批门<br>
+    <span class="ok">Y</span> usagePolicy 限流：minDelay / maxConcurrency / burst / maxPagesPerRun / cooldown<br>
+    <span class="ok">Y</span> 自动化资产：recipe + userscript（保存草稿 → 真实回放 → 手动激活 三步）<br>
+    <span class="ok">Y</span> AuthProfile 限域登录：allowedDomains + storageStatePath<br>
+    <span class="ok">Y</span> RulePack：域名匹配 + SHA-256 哈希 init script + 有界步骤<br>
+    <b>我们胜出的：</b><br>
+    <span class="ok">Y</span> 170+ 站点适配器（anweat:0） — 核心护城河<br>
+    <span class="ok">Y</span> 登录态自动复用你真实 Chrome（anweat 要 storageState JSON）<br>
+    <b>仍然差：</b><br>
+    <span class="miss">N</span> 客户端设置面板做"运行时配置"（anweat 有完整 SettingsCard 嵌在 DSH 设置 → 插件）<br>
+    <span class="miss">N</span> 自动化资产的"候选-草稿-激活"全流程 UI（anweat 整套 automation-assets-client.ts）<br>
+    <span class="miss">N</span> 13 种 浏览器/资产 i18n 文案（中文界面我们没做）<br>
+    <span class="miss">N</span> settings-namespace 注册（DSH 客户端 settings 命名空间机制我们没用）
+  </div>
+</div>
+
+<!-- 1. opencli 健康 -->
+<div class="pane">
+  <div class="t">1. opencli 健康 <span class="tag">看一眼</span></div>
+  <div class="row">
+    <span class="dot ok"></span>
+    <span class="srow">
+      <span class="k">opencli</span><span class="v">v1.8.7</span>
+      <span class="k">daemon</span><span class="v">运行中</span>
+      <span class="k">扩展</span><span class="v">已连接</span>
+    </span>
+    <span class="tag tag-g">正常</span>
+  </div>
+  <div class="loginkey">
+    <span class="k">登录态</span>
+    <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>知乎</span>
+    <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>B站</span>
+    <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>微博</span>
+    <span class="sit sit-y"><span class="dot6" style="background:#FF9F0A"></span>小红书 (超时)</span>
+    <span class="sit sit-r"><span class="dot6" style="background:#FF6B5E"></span>X (未登)</span>
+    <details>
+      <summary>+ 8 已登 · 展开</summary>
+      <div class="box-expand">
+        <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>知乎</span>
+        <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>B站</span>
+        <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>微博</span>
+        <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>GitHub</span>
+        <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>wechat-channels</span>
+        <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>weread</span>
+        <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>taobao</span>
+        <span class="sit"><span class="dot6" style="background:#4DDB7A"></span>jd</span>
+        <span class="sit sit-y"><span class="dot6" style="background:#FF9F0A"></span>github-trending (超时)</span>
+        <span class="sit sit-y"><span class="dot6" style="background:#FF9F0A"></span>xhs (超时)</span>
+        <span class="sit sit-r"><span class="dot6" style="background:#FF6B5E"></span>X (未登)</span>
+        <span class="sit sit-r"><span class="dot6" style="background:#FF6B5E"></span>taobao (未登)</span>
+      </div>
+    </details>
+    <span style="margin-left:auto"><button class="btn btn-sm" style="font-size:11px;padding:3px 9px">巡检</button></span>
+  </div>
+  <div class="hint">绿=已登 · 黄=超时 · 红=未登 · 5+ 折叠 · 换登录去 dsh 对话框说<span style="color:#FF9F0A">"换微博账号"</span></div>
+</div>
+
+<!-- 1.5 浏览器运行时（新增，对齐 anweat） -->
+<div class="pane">
+  <div class="t">1.5 浏览器运行时 <span class="tag">对齐 anweat</span> <span class="dotted" style="margin-left:auto;font-size:11px;padding:4px 10px">改这些 · 去 dsh 对话框说"修改浏览器配置"</span></div>
+  <div class="row"><span class="k">运行时</span><span class="v">Playwright</span><span class="k">通道</span><span class="v">chrome</span><span class="k">headless</span><span class="v">否</span><span class="k">自动装</span><span class="v">关</span></div>
+  <div class="row"><span class="k">OpenCLI</span><span class="v" style="color:#4DDB7A;font-weight:600">已启</span><span class="k">自动化档</span><span class="v">standard</span></div>
+  <div class="hint">运行时=Playwright/Patchright（遇到强反爬切 Patchright）；通道=chrome/chromium/msedge；标准模式写操作走审批；点上面"修改浏览器配置"在 dsh 对话框里改。</div>
+</div>
+
+<!-- 2. 定时任务 -->
+<div class="pane">
+  <div class="t">2. 定时任务 <span class="tag">3 条</span> <span class="dotted" style="margin-left:auto;font-size:11px;padding:4px 10px">新建/改/删 → 去 dsh 对话说"建一个每天9点跑 arxiv 综述"</span></div>
+  <div class="list">
+    <div class="item on">
+      <div class="sw"></div>
+      <div class="name">早9点 · arxiv AI 综述</div>
+      <span class="status status-ok">运行中</span>
+      <div class="meta">下次：今天 09:00 · cron: 0 9 * * * · 上次成功 09-08 03:01 · 12 次</div>
+      <div class="act"><button class="btn btn-or btn-sm">立即跑</button><button class="btn btn-sm">关停</button><button class="btn btn-d btn-sm">删</button></div>
+    </div>
+    <div class="item on failed">
+      <div class="sw"></div>
+      <div class="name">每周一 · github trending AI/ML</div>
+      <span class="status status-bad">上次失败</span>
+      <div class="meta">下次：周一 09:00 · cron: 0 9 * * 1 · 上次失败 09-06 09:00:05 · 3 次 <span class="cmd">需要人工看</span></div>
+      <div class="act"><button class="btn btn-or btn-sm">立即跑</button><button class="btn btn-sm">关停</button><button class="btn btn-d btn-sm">删</button></div>
+    </div>
+    <div class="item paused">
+      <div class="sw"></div>
+      <div class="name">每月1号 · huggingface 大模型新货</div>
+      <span class="status status-paused">已暂停</span>
+      <div class="meta">cron: 0 9 1 * * · 上次成功 09-01 · 2 次</div>
+      <div class="act"><button class="btn btn-sm">启用</button><button class="btn btn-d btn-sm">删</button></div>
+    </div>
+  </div>
+  <div class="sch"><b>查看运行历史：</b>去 dsh 对话框说 <code class="cmd">定时历史</code>（已存 28 条，最近 7 天）</div>
+</div>
+
+<!-- 3. 录制回放（保留 + 加上"快捷工具-调用录制"） -->
+<div class="pane">
+  <div class="t">3. 录制回放 <span class="tag">2 条</span> <span class="dotted" style="margin-left:auto;font-size:11px;padding:4px 10px">录新/改 → 去 dsh 对话说"录一段：抓 arxiv 今天的 AI 论文"</span></div>
+  <div class="list">
+    <div class="item on">
+      <div class="sw"></div>
+      <div class="name">每日 arxiv AI 论文 <span class="tag tag-y">默认</span></div>
+      <span class="status status-ok">可用</span>
+      <div class="meta">3 步 · 上次成功 09-08 · 累计 12 次</div>
+      <div class="rec-steps">
+        <div class="step ok">browser_open https://arxiv.org/list/cs.AI/recent</div>
+        <div class="step ok">site arxiv recent cs.AI</div>
+        <div class="step ok">browser_close</div>
+      </div>
+      <div class="act"><button class="btn btn-or btn-sm">跑</button><button class="btn btn-sm">改</button><button class="btn btn-d btn-sm">删</button></div>
+    </div>
+    <div class="item failed">
+      <div class="sw"></div>
+      <div class="name">huggingface 大模型每日榜</div>
+      <span class="status status-bad">有失败步骤</span>
+      <div class="meta">2 步 · 上次失败 09-06 · 累计 3 次</div>
+      <div class="rec-steps">
+        <div class="step ok">site huggingface search AI</div>
+        <div class="step x">browser_extract</div>
+      </div>
+      <div class="act"><button class="btn btn-or btn-sm">跑</button><button class="btn btn-sm">改</button><button class="btn btn-d btn-sm">删</button></div>
+    </div>
+  </div>
+  <div class="sch"><b>想录新录制？</b>3 步：1. 在 dsh 对话说"开始录" → 2. 真实 Chrome 操作（自动追加）→ 3. 在 dsh 对话说"停止录"</div>
+
+  <div class="loginkey" style="margin-top:6px;background:rgba(74,158,255,.05);border:1px solid rgba(74,158,255,.2);border-radius:6px;padding:6px 10px">
+    <span class="k">晋升 recipe：</span>
+    <button class="btn btn-sm btn-or" style="font-size:10.5px;padding:3px 8px">把"每日 arxiv AI 论文"生成为 recipe</button>
+    <span class="hint" style="margin:0;padding:0;background:transparent;border:none">录制 3 次成功（≥2 会话、≥80% 成功率、≤14 天）→ 自动出现在资产库 3.5 段</span>
+  </div>
+</div>
+
+<!-- 3.5 自动化资产库（新增，对齐 anweat automation-assets-client） -->
+<div class="pane">
+  <div class="t">3.5 自动化资产库 <span class="tag">对齐 anweat</span> <span class="dotted" style="margin-left:auto;font-size:11px;padding:4px 10px">新建/激活/归档 → 去 dsh 对话说"新建 recipe"</span></div>
+
+  <!-- 候选建议（自动出现） -->
+  <div class="loginkey" style="margin-bottom:10px">
+    <span class="k">建议总结：</span>
+    <span class="tag tag-y">arxiv AI 综述抓取（3 次成功 · 2 会话 · 80% 成功率 · 14 天）</span>
+    <button class="btn btn-sm" style="font-size:10.5px;padding:3px 8px">暂不总结</button>
+    <button class="btn btn-or btn-sm" style="font-size:10.5px;padding:3px 8px">总结为草稿</button>
+  </div>
+
+  <div class="loginkey" style="margin-bottom:6px">
+    <span class="k">资产列表：</span>
+    <span class="tag tag-g">recipe · arxiv-ai-daily · r3 · active</span>
+    <span class="tag tag-y">recipe · github-trending-ai · r1 · draft</span>
+    <span class="tag tag-y">userscript · arxiv 论文摘要高亮 · r2 · draft</span>
+  </div>
+
+  <!-- 已选资产编辑区 -->
+  <div style="background:#1c1c1e;border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;margin-top:8px">
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px">正在编辑：<span style="color:#FF9F0A">arxiv-ai-daily</span> <span class="tag tag-y" style="margin-left:6px">draft</span></div>
+    <div class="code" style="min-height:120px">
+{
+  "kind": "recipe",
+  "name": "arxiv-ai-daily",
+  "domains": ["arxiv.org"],
+  "tags": ["arxiv", "ai", "daily"],
+  "inputNames": ["category"],
+  "recipe": [
+    { "type": "wait", "condition": "selector", "value": "#dlpage" },
+    { "type": "extract", "selector": "dl", "mode": "links", "limit": 30 },
+    { "type": "open", "url": "https://arxiv.org/list/cs.{{input.category}}/recent" }
+  ]
+}
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <span class="tag">测试 URL：https://arxiv.org/list/cs.AI/recent</span>
+      <span class="tag">测试输入：<code class="cmd">{"category":"AI"}</code></span>
+      <button class="btn btn-sm">静态校验</button>
+      <button class="btn btn-sm">真实回放</button>
+      <button class="btn btn-or btn-sm">激活</button>
+      <button class="btn btn-sm">归档</button>
+      <button class="btn btn-d btn-sm">删</button>
+    </div>
+  </div>
+
+  <!-- 工具栏 -->
+  <div class="loginkey" style="margin-top:8px">
+    <button class="btn btn-sm">新建 recipe</button>
+    <button class="btn btn-sm">新建 userscript</button>
+    <button class="btn btn-sm">刷新</button>
+  </div>
+  <div class="sch"><b>说明：</b>实验性 — 模型只检索已激活资产的有界摘要（默认 top 5 · 800 tokens 预算）。草稿需先真实回放成功才能激活。源码仅在点选编辑时读取，不自动进模型上下文。</div>
+</div>
+
+<!-- 4. 跳到 dsh 对话框 -->
+<div class="pane">
+  <div class="t">4. 你跟 dsh 说的话（这才是真正在用）</div>
+  <div class="examples">
+    <b>点下方蓝按钮 → 文本复制到剪贴板 + 自动新开 dsh 标签页 → 在 dsh 对话框按 <code class="cmd">Ctrl+V</code> 粘上发送：</b>
+  </div>
+  <div class="jumpbox">
+    <div class="t2">→ dsh 对话框（输入框 + 发送）</div>
+    <div class="row2">
+      <input id="msgInput" value="arxiv 搜最近 7 天 AI 综述" placeholder="在这里输入想跟 dsh 说的话，如"每天9点跑 site arxiv search agent"">
+      <button class="send" id="btnSend">→ 复制 + 打开 dsh</button>
+    </div>
+    <div class="hint" style="margin-top:10px">点一下：内容进剪贴板，新 tab 打开 <code class="cmd">http://127.0.0.1:3080</code>，按 <code class="cmd">Ctrl+V</code> 粘到 dsh 对话框 → 发送</div>
+  </div>
+  <div class="dotted" style="margin-top:10px">
+    <b>常用快捷点（点一下填进输入框）：</b>
+    <div style="margin-top:6px">
+      <button class="pick" data-pick="arxiv 搜最近 7 天 AI 综述">arxiv 搜最近 7 天 AI 综述</button>
+      <button class="pick" data-pick="github trending 看 AI/ML 今日榜">github trending 看 AI/ML 今日榜</button>
+      <button class="pick" data-pick="hackernews 搜 deepseek">hackernews 搜 deepseek</button>
+      <button class="pick" data-pick="每天9点跑 site arxiv search agent">每天9点跑 site arxiv search agent</button>
+      <button class="pick" data-pick="录一段：抓 arxiv 今天的 AI 论文到 Obsidian">录一段：抓 arxiv 今天的 AI 论文到 Obsidian</button>
+      <button class="pick" data-pick="关掉所有定时">关掉所有定时</button>
+      <button class="pick" data-pick="huggingface 找最近 7 天大模型">huggingface 找最近 7 天大模型</button>
+      <button class="pick" data-pick="修改浏览器配置：切到 Playwright headless">修改浏览器配置：切到 Playwright headless</button>
+      <button class="pick" data-pick="新建 recipe：批量索引 github issues">新建 recipe：批量索引 github issues</button>
+    </div>
+  </div>
+  <div class="hint" style="margin-top:8px">不知道说啥？点上面的快捷按钮 → 改改 → 点"→ 复制 + 打开 dsh" → 在 dsh 对话框 Ctrl+V 发送。</div>
+  <div id="toast" class="toast"></div>
+</div>
+
+<!-- 5. 第一次装 opencli -->
+<div class="pane">
+  <div class="t">5. 第一次装 opencli（仅首次需要）</div>
+  <div class="row" style="background:#1f2026;border:1px solid rgba(74,158,255,.3)">
+    <span class="dot mid"></span>
+    <span class="srow">
+      <span class="v">已经装好了，跳过</span>
+      <span class="cmd">opencli 1.8.7</span>
+      <span class="cmd">daemon running</span>
+      <span class="cmd">extension connected</span>
+    </span>
+    <span class="tag tag-g">无需操作</span>
+  </div>
+  <div class="hint">如果你看到红字"未装"，去 dsh 对话框说<span style="color:#FF9F0A">"装 opencli"</span>，dsh 自动跑 4 步 + 自检。</div>
+</div>
+
+<!-- 6. 当前 dsh profile -->
+<div class="pane">
+  <div class="t">6. 当前 dsh profile（用错 profile 找不到 opencli 工具）</div>
+  <div class="row">
+    <span class="dot ok"></span>
+    <span class="srow">
+      <span class="k">dsh profile</span><span class="v">web</span>
+      <span class="k">dsh-opencli 状态</span><span class="v" style="color:#4DDB7A;font-weight:600">已挂载</span>
+    </span>
+    <span class="tag tag-g">正确</span>
+  </div>
+  <div class="hint">若切到 <span class="cmd">headless</span> / <span class="cmd">zvecbtest</span> / <span class="cmd">intelhubtest</span> 等其它 profile，opencli 没挂载，"→ 打开 dsh"开的就是错的那个。切回 <code class="cmd">web</code>：<code class="cmd">dsh --profile web</code>。</div>
+</div>
+
+<!-- 7. i18n（对齐全套中英文案） -->
+<div class="pane">
+  <div class="t">7. 文案（i18n）<span class="tag">对齐 anweat 13 字段</span></div>
+  <div class="loginkey" style="flex-direction:column;align-items:flex-start">
+    <div><b>面板标题：</b>"浏览器代理"（anweat 叫"浏览器自动化"）— 改成"浏览器代理"更准确，因为我们不是自动浏览器，是 dsh 的浏览器代理</div>
+    <div><b>每个字段：</b>有标签 + 详细 hint（anweat 风格）</div>
+    <div><b>中英文：</b>支持 zh + en（13 字段全 i18n），用 <code class="cmd">ctx.locale.register(NS, { zh, en })</code>（待实现）</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var input = document.getElementById('msgInput');
+  var btn = document.getElementById('btnSend');
+  var toast = document.getElementById('toast');
+  function showToast(msg, ok){
+    toast.textContent = msg;
+    toast.style.background = ok ? '#4DDB7A' : '#FF453A';
+    toast.style.display = 'block';
+    setTimeout(function(){ toast.style.display = 'none'; }, 1800);
+  }
+  function sendToDsh(text, msg){
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function(){
+        showToast(msg || '已复制 + 打开 dsh', true);
+        window.open('http://127.0.0.1:3080', '_blank');
+      });
+    }
+  }
+  // 4 段 — 跳 dsh
+  document.querySelectorAll('.pick').forEach(function(b){
+    b.addEventListener('click', function(){ input.value = b.dataset.pick; input.focus(); });
+  });
+  btn.addEventListener('click', function(){
+    var text = input.value.trim();
+    if (!text) { showToast('输入框是空的', false); return; }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function(){
+        showToast('已复制到剪贴板 + 打开 dsh', true);
+        window.open('http://127.0.0.1:3080', '_blank');
+      });
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); showToast('已复制 + 打开 dsh (Ctrl+V)', true); }
+      catch(e){ showToast('复制失败，请手动复制', false); }
+      document.body.removeChild(ta);
+      window.open('http://127.0.0.1:3080', '_blank');
+    }
+  });
+  // 0 段 — 跑一下
+  function fakeRun(cmd){
+    inEl.value = cmd; out.style.display='block';
+    out.style.background = '#1c1c1e'; out.style.border = '1px solid rgba(255,255,255,.06)';
+    out.style.borderRadius = '8px'; out.style.padding = '10px 12px';
+    out.innerHTML = '<div style="font-size:11.5px;color:#9A9AA0;margin-bottom:4px">$ <span style="font-family:monospace;color:#79B7FF">'+cmd+'</span></div><div style="font-size:11px;color:#C9C9CF;font-family:monospace;line-height:1.6">[<span style="color:#4DDB7A">演示</span>] 模型返回结果（实机由 dsh 代理跑）<br>共 5 条:<br>  1. <a href="#" style="color:#79B7FF">arXiv:2606.04455</a> - The Meta-Agent Challenge<br>  2. <a href="#" style="color:#79B7FF">arXiv:2512.24957</a> - AMAP Agentic Planning<br>  3. <a href="#" style="color:#79B7FF">arXiv:2512.09543</a> - SWEnergy Agentic Issue Resolution<br>  4. <a href="#" style="color:#79B7FF">arXiv:2510.13343</a> - AOAD-MAT Transformer<br>  5. <a href="#" style="color:#79B7FF">arXiv:2409.01907</a> - Focus Agent LLM Focus Group</div>';
+  }
+  var inEl = document.getElementById('runInput');
+  var out = document.getElementById('runOut');
+  document.getElementById('btnRunDemo').addEventListener('click', function(){ fakeRun('site arxiv recent cs.AI'); });
+  document.getElementById('btnRunCustom').addEventListener('click', function(){ fakeRun(inEl.value.trim() || 'site arxiv recent cs.AI'); });
+  // 0.5 段 — 搜站点（4 个内置示例点）
+  document.querySelectorAll('#siteResult .tag').forEach(function(t){
+    t.style.cursor = 'pointer';
+    t.addEventListener('click', function(){
+      var site = t.textContent.split(' ')[0];
+      sendToDsh('dsh 助手，列一下 '+site+' 站点的所有命令（site '+site+' --help -f yaml）', '已复制：列 '+site+' 命令');
+    });
+  });
+  var siteInput = document.getElementById('siteSearch');
+  siteInput.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && siteInput.value.trim()) sendToDsh('dsh 助手，列出 '+siteInput.value.trim()+' 站点的 opencli 命令', '已复制：搜 '+siteInput.value.trim());
+  });
+  // 0.6 段 — 7 个实用按钮
+  var utilBtns = document.querySelectorAll('.pane .t:contains("0.6 实用快捷") ~ div button, .pane .t');
+  document.querySelectorAll('button').forEach(function(b){
+    var t = b.textContent.trim();
+    if (t === '失败诊断 ?') b.addEventListener('click', function(){ document.getElementById('diagModal').style.display='flex'; });
+    if (t === '装 opencli skill') b.addEventListener('click', function(){ sendToDsh('dsh 助手，装 opencli skill（从 ~/.vfox/sdks/nodejs/node_modules/@jackwener/opencli/skills 复制到 dsh 技能目录）', '已复制：装 opencli skill'); });
+    if (t === '切到 Patchright') b.addEventListener('click', function(){ sendToDsh('dsh 助手，修改浏览器配置：切到 Patchright', '已复制：切 Patchright'); });
+    if (t === '开 headless') b.addEventListener('click', function(){ sendToDsh('dsh 助手，修改浏览器配置：开 headless', '已复制：开 headless'); });
+    if (t === '关 headless') b.addEventListener('click', function(){ sendToDsh('dsh 助手，修改浏览器配置：关 headless', '已复制：关 headless'); });
+    if (t === '切到 read-only') b.addEventListener('click', function(){ sendToDsh('dsh 助手，修改自动化档：切到 read-only', '已复制：read-only'); });
+    if (t === '切到 autonomous') b.addEventListener('click', function(){ sendToDsh('dsh 助手，修改自动化档：切到 autonomous', '已复制：autonomous'); });
+  });
+  // 3 段 — 晋升 recipe
+  document.querySelectorAll('button').forEach(function(b){
+    if (b.textContent.trim().indexOf('生成为 recipe') !== -1) {
+      b.addEventListener('click', function(){ sendToDsh('dsh 助手，把"每日 arxiv AI 论文"这条录制晋升为 recipe，写到资产库', '已复制：晋升 recipe'); });
+    }
+  });
+})();
+</script>
+</body>
+</html>

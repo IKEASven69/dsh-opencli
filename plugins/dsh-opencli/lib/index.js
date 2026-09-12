@@ -547,6 +547,9 @@ var _dec23;
 var _dec24;
 var _dec25;
 var _dec26;
+var _dec27;
+var _dec28;
+var _dec29;
 var _initProto;
 var BROWSER_DO_ALLOW = /* @__PURE__ */ new Set([
   "analyze",
@@ -578,7 +581,7 @@ var OUTPUT_LIMIT = 16e3;
 var ADAPTER_TTL_MS = 60 * 60 * 1e3;
 var LOGIN_CHECK_TTL_MS = 10 * 60 * 1e3;
 var LOGIN_CHECK_CONCURRENCY = 3;
-_computedKey = Service.init, _dec = Remote("status"), _dec1 = Remote("adapters"), _dec2 = Remote("refresh"), _dec3 = Remote("daemon-start"), _dec4 = Remote("settings"), _dec5 = Remote("approval-set"), _dec6 = Remote("adapter-disable"), _dec7 = Remote("login-check"), _dec8 = Remote("adapter-detail"), _dec9 = Remote("schedule-add"), _dec10 = Remote("schedule-list"), _dec11 = Remote("replay"), _dec12 = Remote("script-catalog"), _dec13 = Remote("script-run-builtin"), _dec14 = Remote("crawl"), _dec15 = Remote("script-validate"), _dec16 = Remote("userscript-run"), _dec17 = Remote("recipe-run"), _dec18 = Remote("automation-search"), _dec19 = Remote("automation-develop"), _dec20 = Remote("automation-run"), _dec21 = Remote("automation-mode-get"), _dec22 = Remote("automation-mode-set"), _dec23 = Remote("promote-recording"), _dec24 = Remote("install-opencli-skill"), _dec25 = Remote("rulepacks-list"), _dec26 = Remote("rulepacks-set");
+_computedKey = Service.init, _dec = Remote("status"), _dec1 = Remote("adapters"), _dec2 = Remote("refresh"), _dec3 = Remote("daemon-start"), _dec4 = Remote("settings"), _dec5 = Remote("approval-set"), _dec6 = Remote("adapter-disable"), _dec7 = Remote("login-check"), _dec8 = Remote("adapter-detail"), _dec9 = Remote("schedule-add"), _dec10 = Remote("schedule-list"), _dec11 = Remote("schedule-toggle"), _dec12 = Remote("schedule-remove"), _dec13 = Remote("try-run"), _dec14 = Remote("replay"), _dec15 = Remote("script-catalog"), _dec16 = Remote("script-run-builtin"), _dec17 = Remote("crawl"), _dec18 = Remote("script-validate"), _dec19 = Remote("userscript-run"), _dec20 = Remote("recipe-run"), _dec21 = Remote("automation-search"), _dec22 = Remote("automation-develop"), _dec23 = Remote("automation-run"), _dec24 = Remote("automation-mode-get"), _dec25 = Remote("automation-mode-set"), _dec26 = Remote("promote-recording"), _dec27 = Remote("install-opencli-skill"), _dec28 = Remote("rulepacks-list"), _dec29 = Remote("rulepacks-set");
 var OpencliService = class extends TypertRemoteService {
   static {
     ({ e: [_initProto] } = _apply_decs_2203_r(this, [
@@ -640,80 +643,95 @@ var OpencliService = class extends TypertRemoteService {
       [
         _dec11,
         2,
-        "replay"
+        "scheduleToggle"
       ],
       [
         _dec12,
         2,
-        "scriptCatalog"
+        "scheduleRemove"
       ],
       [
         _dec13,
         2,
-        "scriptRunBuiltin"
+        "tryRun"
       ],
       [
         _dec14,
         2,
-        "crawl"
+        "replay"
       ],
       [
         _dec15,
         2,
-        "scriptValidate"
+        "scriptCatalog"
       ],
       [
         _dec16,
         2,
-        "userscriptRun"
+        "scriptRunBuiltin"
       ],
       [
         _dec17,
         2,
-        "recipeRun"
+        "crawl"
       ],
       [
         _dec18,
         2,
-        "automationSearch"
+        "scriptValidate"
       ],
       [
         _dec19,
         2,
-        "automationDevelop"
+        "userscriptRun"
       ],
       [
         _dec20,
         2,
-        "automationRun"
+        "recipeRun"
       ],
       [
         _dec21,
         2,
-        "automationModeGet"
+        "automationSearch"
       ],
       [
         _dec22,
         2,
-        "automationModeSet"
+        "automationDevelop"
       ],
       [
         _dec23,
         2,
-        "promoteRecording"
+        "automationRun"
       ],
       [
         _dec24,
         2,
-        "installOpencliSkill"
+        "automationModeGet"
       ],
       [
         _dec25,
         2,
-        "rulePacksList"
+        "automationModeSet"
       ],
       [
         _dec26,
+        2,
+        "promoteRecording"
+      ],
+      [
+        _dec27,
+        2,
+        "installOpencliSkill"
+      ],
+      [
+        _dec28,
+        2,
+        "rulePacksList"
+      ],
+      [
+        _dec29,
         2,
         "rulePacksSet"
       ]
@@ -778,7 +796,17 @@ var OpencliService = class extends TypertRemoteService {
     this.registerApprovalGate();
     void this.injectSystemPrompt();
     try {
-      this.ctx.provide("browser", this);
+      const proto = Object.getPrototypeOf(this);
+      const facade = {};
+      for (const key of Object.getOwnPropertyNames(proto)) {
+        if (key === "constructor") continue;
+        const d = Object.getOwnPropertyDescriptor(proto, key);
+        if (d !== void 0 && typeof d.value === "function") facade[key] = d.value.bind(this);
+      }
+      Object.defineProperty(facade, "typertRemote", {
+        get: () => void 0
+      });
+      this.ctx.provide("browser", facade);
     } catch {
     }
   }
@@ -1905,7 +1933,8 @@ ${r.stderr}`.trim();
       id,
       site: request.site.trim(),
       cron: request.cron.trim(),
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      enabled: true
     });
     return {
       ok: true,
@@ -1918,6 +1947,67 @@ ${r.stderr}`.trim();
       schedules: [
         ...this.schedules
       ]
+    };
+  }
+  async scheduleToggle(request) {
+    const hit = this.schedules.find((s) => s.id === String(request.id ?? ""));
+    if (hit === void 0) return {
+      ok: false,
+      error: "\u672A\u627E\u5230"
+    };
+    hit.enabled = request.enabled !== false;
+    return {
+      ok: true
+    };
+  }
+  async scheduleRemove(request) {
+    const i = this.schedules.findIndex((s) => s.id === String(request.id ?? ""));
+    if (i < 0) return {
+      ok: false,
+      error: "\u672A\u627E\u5230"
+    };
+    this.schedules.splice(i, 1);
+    return {
+      ok: true
+    };
+  }
+  async tryRun(request) {
+    const line = String(request.line ?? "").trim();
+    if (!line) return {
+      ok: false,
+      error: "\u547D\u4EE4\u4E3A\u7A7A"
+    };
+    const [head, ...rest] = line.split(/\s+/);
+    if (head !== "site" || rest.length < 2) return {
+      ok: false,
+      error: "\u53EA\u652F\u6301 site <\u9002\u914D\u5668> <\u547D\u4EE4> [\u53C2\u6570...]\uFF0C\u5982\uFF1Asite arxiv recent cs.AI"
+    };
+    const [adapter, command, ...args] = rest;
+    if (!/^[\w@.-]+$/.test(adapter) || !/^[\w-]+$/.test(command)) return {
+      ok: false,
+      error: `\u975E\u6CD5 adapter/command:${adapter} ${command}`
+    };
+    if (this.state.disabled.includes(adapter)) return {
+      ok: false,
+      error: `\u9002\u914D\u5668 ${adapter} \u5DF2\u88AB\u7981\u7528`
+    };
+    const out = await this.runOpencli([
+      adapter,
+      command,
+      ...args
+    ]);
+    const text = this.renderOut(out);
+    if (out.exitCode !== 0) return {
+      ok: false,
+      error: text
+    };
+    if (text.trim() === "[]") return {
+      ok: false,
+      error: `\u9002\u914D\u5668 ${adapter} \u8FD4\u56DE\u7A7A\uFF08\u53EF\u80FD\u672A\u767B\u5F55\u6216\u65E0\u6570\u636E\uFF09\u3002\u8BF7\u5148\u5728\u771F\u5B9E Chrome \u767B\u5F55 ${adapter}\uFF0C\u6216\u8FD0\u884C \`opencli ${adapter} login\` \u540E\u7528\u9762\u677F\u201C\u5DE1\u68C0\u767B\u5F55\u6001\u201D\u786E\u8BA4\u3002`
+    };
+    return {
+      ok: true,
+      text
     };
   }
   async replay(request) {
