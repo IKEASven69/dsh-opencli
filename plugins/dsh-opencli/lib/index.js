@@ -497,7 +497,7 @@ function _apply_decs_2203_r(targetClass, memberDecs, classDecs, parentClass) {
     }
   }
   function defineMetadata(Class, metadata) {
-    return Object.defineProperty(Class, Symbol.metadata || Symbol.for("Symbol.metadata"), {
+    return Object.defineProperty(Class, Symbol.metadata || /* @__PURE__ */ Symbol.for("Symbol.metadata"), {
       configurable: true,
       enumerable: true,
       value: metadata
@@ -505,7 +505,7 @@ function _apply_decs_2203_r(targetClass, memberDecs, classDecs, parentClass) {
   }
   _apply_decs_2203_r = function(targetClass2, memberDecs2, classDecs2, parentClass2) {
     if (parentClass2 !== void 0) {
-      var parentMetadata = parentClass2[Symbol.metadata || Symbol.for("Symbol.metadata")];
+      var parentMetadata = parentClass2[Symbol.metadata || /* @__PURE__ */ Symbol.for("Symbol.metadata")];
     }
     var metadata = Object.create(parentMetadata === void 0 ? null : parentMetadata);
     var e = applyMemberDecs(targetClass2, memberDecs2, metadata);
