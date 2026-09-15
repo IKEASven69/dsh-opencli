@@ -112,10 +112,11 @@ export class OpencliService extends TypertRemoteService {
     this.registerSiteTool()
     this.registerApprovalGate()
     void this.injectSystemPrompt()
-    // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务
-    // 兼容 anweat 生态。不能把带 typertRemote 的原始实例直接 provide：网关遍历时
-    // 'browser' 条目会因 serviceKey 不一致抛 inconsistent binding。改提供无
-    // typertRemote 的方法门面（网关扫描时自然跳过）。
+    // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务。
+    // 不能把带 typertRemote 的原始实例直接 provide：网关遍历 ctx.reflect.props 时,
+    // 'browser' 条目会在 namespace 过滤前走 readBinding,serviceKey('browser')≠绑定
+    // 里的 'opencli' 直接抛 inconsistent binding。改为提供绑定方法的无门面副本
+    // (无 typertRemote 属性,网关扫描时被自然跳过)。
     try {
       const proto = Object.getPrototypeOf(this) as Record<string, unknown>
       const facade: Record<PropertyKey, unknown> = {}
