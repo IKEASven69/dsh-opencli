@@ -88,6 +88,7 @@ export class OpencliService extends TypertRemoteService {
     // 示例：forum: { allowedDomains: ['example.com'], storageStatePath: 'D:/secrets/forum.json' }
   }
   private schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string }> = []
+  private runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string }>> = {}
   private automationMode: 'read-only' | 'standard' | 'autonomous' | 'unrestricted' = 'standard'
   private rulePacks: Array<{ matches: string[]; initScriptPath: string; initScriptSha256: string; steps: unknown[] }> = []
   private automationAssets = { persistenceMode: 'suggest' as const, activationMode: 'manual' as const }
@@ -95,7 +96,6 @@ export class OpencliService extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, 'opencli')
     this.bin = this.resolveBin()
-    void this.loadState()
   }
 
   private resolveBin(): string {
@@ -111,12 +111,15 @@ export class OpencliService extends TypertRemoteService {
   }
 
   protected async [Service.init](): Promise<void> {
+    // 先同步加载持久化状态,再注册工具/审批门:否则在途回读会冲掉已到达的
+    // schedule-add 等写操作(构造器 fire-and-forget 时代的竞态)。
+    await this.loadState()
     this.registerBrowserTools()
     this.registerAdvancedTools()
     this.registerSiteTool()
     this.registerApprovalGate()
     void this.injectSystemPrompt()
-    void this.loadState().then(() => { if (this.schedules.some((s) => s.enabled)) this.startScheduler() })
+    if (this.schedules.some((s) => s.enabled)) this.startScheduler()
     // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务。
     // 不能把带 typertRemote 的原始实例直接 provide：网关遍历 ctx.reflect.props 时,
     // 'browser' 条目会在 namespace 过滤前走 readBinding,serviceKey('browser')≠绑定
