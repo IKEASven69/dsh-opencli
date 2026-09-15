@@ -45,6 +45,10 @@ const LOGIN_CHECK_CONCURRENCY = 3
 interface PluginState {
   approval: 'on' | 'off'
   disabled: string[]
+  /** 持久化定时任务:重启恢复,每分钟 tick 到期自动执行 site 命令 */
+  schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string }>
+  /** 每任务运行历史(最近 5 条) */
+  runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string }>>
 }
 
 interface ToolArgs {
@@ -70,7 +74,7 @@ export class OpencliService extends TypertRemoteService {
   private readonly bin: string
   private adapterCache: { at: number; json: unknown } | null = null
   private lastShellError: string | null = null
-  private state: PluginState = { approval: 'on', disabled: [] }
+  private state: PluginState = { approval: 'on', disabled: [], schedules: [], runHistory: {} }
   private readonly statePath = join(homedir(), '.dsh', 'dsh-opencli-state.json')
   private loginCache: { at: number; results: LoginCheckResult } | null = null
   // usagePolicy：与 anweat 对齐的限流（并发/突发/冷却），默认与 anweat 一致
@@ -83,7 +87,7 @@ export class OpencliService extends TypertRemoteService {
   private authProfiles: Record<string, { allowedDomains: string[]; storageStatePath?: string; persistState?: boolean }> = {
     // 示例：forum: { allowedDomains: ['example.com'], storageStatePath: 'D:/secrets/forum.json' }
   }
-  private schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean }> = []
+  private schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string }> = []
   private automationMode: 'read-only' | 'standard' | 'autonomous' | 'unrestricted' = 'standard'
   private rulePacks: Array<{ matches: string[]; initScriptPath: string; initScriptSha256: string; steps: unknown[] }> = []
   private automationAssets = { persistenceMode: 'suggest' as const, activationMode: 'manual' as const }
@@ -112,6 +116,7 @@ export class OpencliService extends TypertRemoteService {
     this.registerSiteTool()
     this.registerApprovalGate()
     void this.injectSystemPrompt()
+    void this.loadState().then(() => { if (this.schedules.some((s) => s.enabled)) this.startScheduler() })
     // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务。
     // 不能把带 typertRemote 的原始实例直接 provide：网关遍历 ctx.reflect.props 时,
     // 'browser' 条目会在 namespace 过滤前走 readBinding,serviceKey('browser')≠绑定
@@ -290,6 +295,36 @@ export class OpencliService extends TypertRemoteService {
         return { text: JSON.stringify(st, null, 2).slice(0, 4000) }
       },
     }))
+    t.register(defineTool({
+      name: 'site_batch',
+      description: '批量采集:一条 site 子命令 fan-out 到多个站点并行执行,汇总各站结果。例:sites=["zhihu","weibo","bilibili"], command="hot" 同时拉三站热榜。',
+      parameters: {
+        command: { type: 'string', description: 'site 子命令(不含站点名),如 hot/search/recent' },
+        sites: { type: 'array', items: { type: 'string' }, description: '站点名列表(2-6 个)' },
+        args: { type: 'array', items: { type: 'string' }, description: '可选:命令参数' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: { command?: unknown; sites?: unknown; args?: unknown }): Promise<{ text: string }> => {
+        const command = String(a.command ?? '').trim()
+        const sites = Array.isArray(a.sites) ? a.sites.map(String).slice(0, 6) : []
+        if (!command) return { text: 'command 不能为空。' }
+        if (sites.length < 2) return { text: 'sites 至少 2 个站点。' }
+        if (sites.some((x) => !/^[\w.-]+$/.test(x))) return { text: '站点名含非法字符。' }
+        const args = Array.isArray(a.args) ? a.args.map(String) : []
+        const results = await Promise.all(sites.map(async (site) => {
+          try {
+            const out = await this.runOpencli([site, command, ...args], 45_000)
+            return { site, ok: out.exitCode === 0, text: (out.exitCode === 0 ? out.stdout : out.stderr).slice(0, 900) }
+          } catch (err: unknown) {
+            return { site, ok: false, text: err instanceof Error ? err.message.slice(0, 200) : 'failed' }
+          }
+        }))
+        const okN = results.filter((r) => r.ok).length
+        const body = results.map((r) => `== ${r.site} ${r.ok ? '✓' : '✗'} ==\n${r.text}`).join('\n\n')
+        return { text: `批量采集 ${okN}/${sites.length} 站成功:\n\n${body}` }
+      },
+    }))
+
     t.register(defineTool({
       name: 'opencli_catalog',
       description: '按 query/site/access 过滤 170+ 适配器目录，单次最多 100 条（不确定命令先查它，别猜）',
@@ -624,12 +659,36 @@ export class OpencliService extends TypertRemoteService {
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
     const id = String(Date.now())
     this.schedules.push({ id, site: request.site.trim(), cron: request.cron.trim(), createdAt: new Date().toISOString(), enabled: true })
+    await this.saveState()
+    this.startScheduler()
     return { ok: true, id }
   }
 
   @Remote('schedule-list')
-  async scheduleList(): Promise<{ ok: boolean; schedules: typeof this.schedules }> {
-    return { ok: true, schedules: [...this.schedules] }
+  async scheduleList(): Promise<{ ok: boolean; schedules: Array<typeof this.schedules[number] & { history?: Array<{ at: string; ok: boolean; summary: string }> }> }> {
+    return {
+      ok: true,
+      schedules: this.schedules.map((s) => ({ ...s, history: (this.runHistory[s.id] ?? []).slice(0, 3) })),
+    }
+  }
+
+
+  @Remote('ingest-events')
+  async ingestEvents(): Promise<{ ok: boolean; events: IngestEvent[] }> {
+    return { ok: true, events: this.ingestEvents.slice(0, 30) }
+  }
+
+  @Remote('schedule-run-now')
+  async scheduleRunNow(p: { id: string }): Promise<{ ok: boolean; error?: string }> {
+    const sch = this.schedules.find((s) => s.id === String(p.id ?? ''))
+    if (sch === undefined) return { ok: false, error: '未找到' }
+    void this.runSiteCommand(sch.site, sch.id)
+    return { ok: true }
+  }
+
+  @Remote('schedule-history')
+  async scheduleHistory(p: { id: string }): Promise<{ ok: boolean; history: Array<{ at: string; ok: boolean; summary: string }> }> {
+    return { ok: true, history: this.runHistory[String(p.id ?? '')] ?? [] }
   }
 
   @Remote('schedule-toggle')
@@ -637,6 +696,8 @@ export class OpencliService extends TypertRemoteService {
     const hit = this.schedules.find((s) => s.id === String(request.id ?? ''))
     if (hit === undefined) return { ok: false, error: '未找到' }
     hit.enabled = request.enabled !== false
+    await this.saveState()
+    if (hit.enabled) this.startScheduler()
     return { ok: true }
   }
 
@@ -645,6 +706,8 @@ export class OpencliService extends TypertRemoteService {
     const i = this.schedules.findIndex((s) => s.id === String(request.id ?? ''))
     if (i < 0) return { ok: false, error: '未找到' }
     this.schedules.splice(i, 1)
+    delete this.runHistory[String(request.id ?? '')]
+    await this.saveState()
     return { ok: true }
   }
 
@@ -946,14 +1009,63 @@ export class OpencliService extends TypertRemoteService {
       const parsed = JSON.parse(text) as Partial<PluginState>
       if (parsed.approval === 'on' || parsed.approval === 'off') this.state.approval = parsed.approval
       if (Array.isArray(parsed.disabled)) this.state.disabled = parsed.disabled.filter((s) => typeof s === 'string')
+      if (Array.isArray(parsed.schedules)) this.schedules = parsed.schedules
+      if (parsed.runHistory !== undefined && typeof parsed.runHistory === 'object') this.runHistory = parsed.runHistory as typeof this.runHistory
     } catch { /* 无文件或损坏:用默认值 */ }
   }
 
   private async saveState(): Promise<void> {
     try {
       await mkdir(join(homedir(), '.dsh'), { recursive: true })
-      await writeFile(this.statePath, JSON.stringify(this.state, null, 2), 'utf8')
+      await writeFile(this.statePath, JSON.stringify({ ...this.state, schedules: this.schedules, runHistory: this.runHistory }, null, 2), 'utf8')
     } catch { /* 状态写不进(权限等):仅本次会话生效 */ }
+  }
+
+  /** 简易 5 段 cron 匹配(分 时 日 月 周;支持 *、数字、星斜步长)。 */
+  private cronMatches(cron: string, now: Date): boolean {
+    const parts = cron.trim().split(/\s+/)
+    if (parts.length !== 5) return false
+    const vals = [now.getMinutes(), now.getHours(), now.getDate(), now.getMonth() + 1, now.getDay()]
+    const mins = [0, 0, 1, 1, 0]
+    const maxs = [59, 23, 31, 12, 6]
+    return parts.every((spec, i) => {
+      if (spec === '*') return true
+      if (spec.startsWith('*/')) {
+        const step = Number(spec.slice(2))
+        if (!Number.isFinite(step) || step <= 0) return false
+        return (vals[i] - mins[i]) % step === 0
+      }
+      return spec.split(',').every((tok) => { const n = Number(tok); return Number.isFinite(n) && n >= mins[i] && n <= maxs[i] })
+    })
+  }
+
+  private startScheduler(): void {
+    if (this.schedTimer !== undefined) return
+    this.schedTimer = setInterval(() => {
+      const now = new Date()
+      const minuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`
+      for (const sch of this.schedules) {
+        if (!sch.enabled) continue
+        const histKey = `${sch.id}:${minuteKey}`
+        if (this.runHistory[histKey] !== undefined) continue
+        if (!this.cronMatches(sch.cron, now)) continue
+        this.runHistory[histKey] = [{ at: now.toISOString(), ok: true, summary: 'triggered' }]
+        void this.runSiteCommand(sch.site, sch.id)
+      }
+    }, 15_000)
+    try { this.schedTimer.unref?.() } catch { /* ignore */ }
+  }
+
+  private async runSiteCommand(siteCmd: string, id: string): Promise<void> {
+    try {
+      const r = await this.runOpencli(siteCmd.split(/\s+/), 60_000)
+      const ok = r.exitCode === 0
+      const summary = ok ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
+      const hist = this.runHistory[id] ?? []
+      hist.unshift({ at: new Date().toISOString(), ok, summary })
+      this.runHistory[id] = hist.slice(0, 5)
+      await this.saveState()
+    } catch { /* ignore */ }
   }
 
   /** 简单并发池(登录巡检限流用)。 */
