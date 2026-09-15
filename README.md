@@ -1,5 +1,8 @@
 # dsh-opencli · 让 DeepSeek Harness 会办事,不只是会搜索
 
+[![DSH Market](https://raw.githubusercontent.com/2BingLing/dsh-market/master/assets/readme/badge-listed-zh.svg)](https://dsh.market/)
+[![dsh-plugin](https://img.shields.io/badge/GitHub%20topic-dsh--plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
+
 > Give your DeepSeek Harness agent real hands: drive your **logged-in browser** and call **176 site adapters / 200+ commands** as deterministic one-shot commands — with a write-approval gate.
 
 dsh 内置的 web 工具是"检索"(web_search/web_fetch)。本插件给它补上"**办事**"的那一半:agent 可以操纵**你自己日常使用的、带登录态的真实浏览器**,并直接调用知乎/B站/微博/GitHub 等 **176 个站点、200+ 结构化命令**——不是匿名抓取,是你本人的视角和数据。
@@ -73,6 +76,20 @@ dsh plugin add IKEASven69/dsh-opencli
 ```
 
 自定义二进制路径:设 `DSH_OPENCLI_BIN`(也可依赖插件自带的本地 `@jackwener/opencli`)。
+
+## 配置
+
+零配置开箱即用;需要微调时有这几处:
+
+| 配置 | 方式 | 默认 |
+|---|---|---|
+| opencli 二进制路径 | 环境变量 `DSH_OPENCLI_BIN`,或依赖插件自带的本地 `@jackwener/opencli` | `opencli`(全局) |
+| 写审批开关 | 面板「审批门」一键开关 | 开 |
+| 自动化模式 | 面板四档:read-only / standard / autonomous / unrestricted | standard |
+| 限流策略 | `usagePolicy`(minDelayMs 750 / maxConcurrency 2 / burst 3 / cooldown 30s / maxPagesPerRun 20) | 见左 |
+| 限域登录 | `authProfiles`(`allowedDomains` / `storageStatePath`),配 `site --authProfile` 使用 | 无 |
+
+示例:让 agent 只读不动手——面板切到 read-only,所有写命令直接拒绝,无需逐条审批。
 
 ## 安全设计
 
