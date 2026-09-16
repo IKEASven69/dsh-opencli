@@ -204,15 +204,15 @@ const CSS = `
 .o4 { width:100%; max-width:640px; margin:0 auto; display:flex; flex-direction:column; gap:10px; font-family:-apple-system,'Segoe UI','Microsoft YaHei',system-ui,sans-serif; color:#E8EAED; }
 .o4ic { width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none; }
 .o4ic-s { width:13px; height:13px; }
-.o4-head { display:flex; align-items:center; gap:14px; padding:16px 18px; background:#14171C; border:1px solid #262B33; border-radius:14px; }
-.o4-logo { width:48px; height:48px; border-radius:12px; background:linear-gradient(135deg,#4D6BFE,#2B4BC0); color:#fff; display:flex; align-items:center; justify-content:center; flex:none; box-shadow:0 4px 14px rgba(77,107,254,.35); }
+.o4-head { display:flex; align-items:center; gap:11px; padding:13px 15px; background:#14171C; border:1px solid #262B33; border-radius:14px; flex-wrap:wrap; }
+.o4-logo { width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center; flex:none; }
 .o4-logo .o4ic { width:26px; height:26px; }
-.o4-h1 { font-size:19px; font-weight:700; }
-.o4-desc { font-size:12px; color:#9AA3AD; margin-top:3px; }
-.o4-hr { margin-left:auto; display:flex; align-items:center; gap:8px; }
+.o4-h1 { font-size:17px; font-weight:700; white-space:nowrap; }
+.o4-desc { font-size:11px; color:#9AA3AD; margin-top:2px; }
+.o4-hr { margin-left:auto; display:flex; align-items:center; gap:7px; flex:none; }
 .o4-vchip { font-size:11px; color:#5F6873; border:1px solid #262B33; border-radius:999px; padding:3px 9px; }
 .o4-seg { display:flex; background:#1F242D; border:1px solid #313845; border-radius:8px; padding:2px; }
-.o4-seg button { border:0; background:transparent; color:#9AA3AD; font-size:11.5px; padding:4px 11px; border-radius:6px; cursor:pointer; }
+.o4-seg button { border:0; background:transparent; color:#9AA3AD; font-size:11.5px; padding:4px 10px; border-radius:6px; cursor:pointer; white-space:nowrap; }
 .o4-seg button.on { background:#4A9EFF; color:#fff; }
 .o4-tabs { display:flex; gap:4px; background:#14171C; border:1px solid #262B33; border-radius:11px; padding:4px; }
 .o4-tabs button { flex:1; border:0; background:transparent; color:#9AA3AD; font-size:13px; padding:8px 0; border-radius:8px; cursor:pointer; }
@@ -581,11 +581,6 @@ function Panel(): ReturnType<typeof createElement> {
               ),
             )
           : null,
-        createElement('div', { className: 'o4-micro' },
-          createElement('div', { className: 'o4-mst load' }, createElement('b', null, t2('loading')), createElement('div', { className: 'bar', style: { width: '80%' } }), createElement('div', { className: 'bar', style: { width: '60%' } }), '骨架屏,按钮禁用'),
-          createElement('div', { className: 'o4-mst ok' }, createElement('b', null, 'OK'), t2('copy') + ' / ' + t2('rerun')),
-          createElement('div', { className: 'o4-mst err' }, createElement('b', null, 'ERR'), t2('needLogin'), ' ', createElement('span', { className: 'fix' }, t2('fix') + ' ↗')),
-        ),
       ),
       // 快捷 + 巡检
       createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '12px' } },
@@ -910,7 +905,6 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('div', { className: 'o4-desc' }, t2('desc')),
         ),
         createElement('div', { className: 'o4-hr' },
-          createElement('span', { className: 'o4-vchip' }, 'v0.4.0'),
           createElement('div', { className: 'o4-seg' },
             createElement('button', { className: lang === 'zh' ? 'on' : '', onClick: () => setLang('zh') }, '中文'),
             createElement('button', { className: lang === 'en' ? 'on' : '', onClick: () => setLang('en') }, 'EN'),
@@ -924,14 +918,14 @@ function Panel(): ReturnType<typeof createElement> {
       ),
       // 状态条(指示灯)
       createElement('div', { className: 'o4-status' },
-        createElement('span', { className: 'o4-chip' }, createElement('span', { className: `o4-dot ${daemonUp ? 'g' : 'r'}` }), 'daemon ', daemonUp ? t2('daemonRunning') : t2('daemonDown')),
-        createElement('span', { className: 'o4-chip' }, createElement('span', { className: 'o4-dot g' }), 'BrowserBridge ', t2('bridgeOn')),
-        createElement('span', { className: 'o4-chip' }, ic('monitor', true), 'Chrome'),
+        createElement('span', { className: 'o4-chip', title: `daemon ${daemonUp ? t2('daemonRunning') : t2('daemonDown')}` }, createElement('span', { className: `o4-dot ${daemonUp ? 'g' : 'r'}` }), 'daemon'),
+        createElement('span', { className: 'o4-chip', title: 'BrowserBridge connected' }, createElement('span', { className: 'o4-dot g' }), 'Bridge'),
+        createElement('span', { className: 'o4-chip', title: 'Chrome' }, ic('monitor', true)),
         createElement('span', { className: 'o4-sep' }),
         ...(loginResults.length > 0
           ? loginResults.map((r) => chip(null, r.site, r.ok ? 'g' : (r.timedOut ? 'y' : 'r'), `${r.site}: ${r.ok ? t2('online') : (r.timedOut ? t2('timeout') : t2('expired'))}${r.detail !== null ? ` · ${r.detail}` : ''}`))
           : [chip(null, 'zhihu', 'n'), chip(null, 'bilibili', 'n'), chip(null, 'github', 'n')]),
-        createElement('span', { className: 'o4-chip', style: { marginLeft: 'auto', cursor: 'pointer' }, onClick: () => { void runLoginCheck() } }, ic('refresh', true), t2('recheck')),
+        createElement('span', { className: 'o4-chip', style: { marginLeft: 'auto', cursor: 'pointer' }, onClick: () => { void runLoginCheck() }, title: t2('recheck') }, ic('refresh', true)),
       ),
       // 诊断条
       createElement('div', { className: `o4-diag ${daemonUp && binOk ? 'ok' : 'bad'}`, onClick: () => { void openDiag() } },
