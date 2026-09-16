@@ -73,11 +73,45 @@ export interface DaemonStartResult {
   message: string | null
 }
 
-/** settings RPC 结果(审批开关 + 禁用名单)。 */
+/** settings RPC 结果(审批开关 + 禁用名单 + 自证与审计摘要)。 */
 export interface SettingsResult {
   ok: boolean
   approvalOn: boolean
   disabled: string[]
+  /** 当前构建(lib/index.js)的 sha256 前 16 位;读取失败为 null */
+  sha256: string | null
+  /** 近 7 天被拦截写操作次数 */
+  audit7d: number
+}
+
+/** 一条被拦截的写操作(审批门审计)。 */
+export interface AuditItem {
+  at: string
+  command: string
+  reason: string
+  mode: string
+}
+
+/** audit-list RPC 结果。 */
+export interface AuditListResult {
+  ok: boolean
+  count7d: number
+  items: AuditItem[]
+}
+
+/** logs-tail RPC 结果(opencli 未暴露日志文件时给诊断快照 + hint)。 */
+export interface LogsTailResult {
+  ok: boolean
+  source: string | null
+  lines: string[]
+  hint?: string
+}
+
+/** 面板通知事件(调度失败等需要人工关注的事)。 */
+export interface IngestEvent {
+  at: string
+  kind: string
+  text: string
 }
 
 /** approval-set RPC 请求/结果。 */

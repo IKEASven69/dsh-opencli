@@ -14,12 +14,14 @@ import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
 import { homedir } from 'node:os'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type {
   AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
-  AdaptersResult, ApprovalSetRequest, ApprovalSetResult, DaemonStartResult, LoginCheckItem, LoginCheckResult,
-  OpencliStatus, SettingsResult,
+  AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, DaemonStartResult, IngestEvent,
+  LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 
@@ -46,9 +48,11 @@ interface PluginState {
   approval: 'on' | 'off'
   disabled: string[]
   /** 持久化定时任务:重启恢复,每分钟 tick 到期自动执行 site 命令 */
-  schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string }>
+  schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string; retry?: number; notify?: boolean }>
   /** 每任务运行历史(最近 5 条) */
   runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string }>>
+  /** 审批门拦截审计(最近 50 条) */
+  audit: Array<{ at: string; command: string; reason: string; mode: string }>
 }
 
 interface ToolArgs {
@@ -74,7 +78,11 @@ export class OpencliService extends TypertRemoteService {
   private readonly bin: string
   private adapterCache: { at: number; json: unknown } | null = null
   private lastShellError: string | null = null
-  private state: PluginState = { approval: 'on', disabled: [], schedules: [], runHistory: {} }
+  private state: PluginState = { approval: 'on', disabled: [], schedules: [], runHistory: {}, audit: [] }
+  /** 面板通知事件(调度失败等;内存态,最近 30 条) */
+  private ingestEventList: IngestEvent[] = []
+  /** 当前构建 sha256(懒计算) */
+  private sha256Cache: string | null = null
   private readonly statePath = join(homedir(), '.dsh', 'dsh-opencli-state.json')
   private loginCache: { at: number; results: LoginCheckResult } | null = null
   // usagePolicy：与 anweat 对齐的限流（并发/突发/冷却），默认与 anweat 一致
@@ -536,10 +544,12 @@ export class OpencliService extends TypertRemoteService {
     }
     const daemon = await this.daemonStatus()
     const list = await this.adapterList()
-    return {
+    // opencli 某些版本把 --version 写到 stderr:两流合并取首个非空行
+    let vraw = (version.stdout.trim() || version.stderr.trim()).split('\n')[0]?.trim() ?? ''
+        return {
       ok: true,
       bin: this.bin,
-      version: version.stdout.trim().split('\n')[0] ?? null,
+      version: vraw || null,
       daemon: daemon ?? null,
       adapterSites: list?.length ?? null,
     }
@@ -576,7 +586,30 @@ export class OpencliService extends TypertRemoteService {
 
   @Remote('settings')
   async settings(): Promise<SettingsResult> {
-    return { ok: true, approvalOn: this.state.approval === 'on', disabled: [...this.state.disabled] }
+    return { ok: true, approvalOn: this.state.approval === 'on', disabled: [...this.state.disabled], sha256: this.buildSha256(), audit7d: this.auditCount7d() }
+  }
+
+  /** 当前构建的 sha256 前 16 位(供应链自证;读取失败给 null,绝不编造)。 */
+  private buildSha256(): string | null {
+    if (this.sha256Cache !== null) return this.sha256Cache
+    try {
+      const self = fileURLToPath(import.meta.url)
+      this.sha256Cache = createHash('sha256').update(readFileSync(self)).digest('hex').slice(0, 16)
+    } catch { this.sha256Cache = null }
+    return this.sha256Cache
+  }
+
+  private auditCount7d(): number {
+    const cut = Date.now() - 7 * 86_400_000
+    return (Array.isArray(this.state.audit) ? this.state.audit : []).filter((a) => new Date(a.at).getTime() >= cut).length
+  }
+
+  private recordAudit(command: string, reason: string): void {
+    // state 可能被测试/旧文件整体替换成无 audit 的净对象:这里自愈,别让审计挂掉审批
+    if (!Array.isArray(this.state.audit)) this.state.audit = []
+    this.state.audit.unshift({ at: new Date().toISOString(), command, reason, mode: this.automationMode })
+    if (this.state.audit.length > 50) this.state.audit.length = 50
+    void this.saveState()
   }
 
   @Remote('approval-set')
@@ -657,11 +690,14 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
     const id = String(Date.now())
-    this.schedules.push({ id, site: request.site.trim(), cron: request.cron.trim(), createdAt: new Date().toISOString(), enabled: true })
+    const entry: typeof this.schedules[number] = { id, site: request.site.trim(), cron: request.cron.trim(), createdAt: new Date().toISOString(), enabled: true }
+    if (typeof request.retry === 'number' && Number.isFinite(request.retry)) entry.retry = Math.max(1, Math.min(5, Math.round(request.retry)))
+    if (typeof request.notify === 'boolean') entry.notify = request.notify
+    this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
     return { ok: true, id }
@@ -678,7 +714,33 @@ export class OpencliService extends TypertRemoteService {
 
   @Remote('ingest-events')
   async ingestEvents(): Promise<{ ok: boolean; events: IngestEvent[] }> {
-    return { ok: true, events: this.ingestEvents.slice(0, 30) }
+    return { ok: true, events: this.ingestEventList.slice(0, 30) }
+  }
+
+  @Remote('audit-list')
+  async auditList(): Promise<AuditListResult> {
+    return {
+      ok: true,
+      count7d: this.auditCount7d(),
+      items: this.state.audit.slice(0, 20).map((a) => ({ at: a.at, command: a.command, reason: a.reason, mode: a.mode })),
+    }
+  }
+
+  @Remote('logs-tail')
+  async logsTail(): Promise<LogsTailResult> {
+    const candidates = [join(homedir(), '.opencli', 'daemon.log'), join(homedir(), '.opencli', 'logs', 'daemon.log')]
+    for (const c of candidates) {
+      try {
+        const text = await readFile(c, 'utf8')
+        const lines = text.split('\n').filter((l) => l.trim().length > 0)
+        return { ok: true, source: c, lines: lines.slice(-80) }
+      } catch { /* 试下一个候选 */ }
+    }
+    const diag: string[] = []
+    if (this.lastShellError !== null && this.lastShellError !== '') diag.push(`lastShellError: ${this.lastShellError}`)
+    diag.push(`bin: ${this.bin}`)
+    diag.push(`mode: ${this.automationMode} · approval: ${this.state.approval} · schedules: ${this.schedules.length}`)
+    return { ok: true, source: null, lines: diag, hint: 'opencli 未暴露日志文件;以上为最近诊断快照,可在 dsh 对话说"opencli 诊断"获取实时日志' }
   }
 
   @Remote('schedule-run-now')
@@ -911,7 +973,11 @@ export class OpencliService extends TypertRemoteService {
         const argsOk = typeof a.adapter === 'string' && typeof a.command === 'string' && a.adapter.length > 0 && a.command.length > 0
         if (this.automationMode === 'read-only' && exec.name === 'site' && argsOk) {
           const acc = await this.lookupAccess(a.adapter as string, a.command as string)
-          if (acc !== 'read') return { kind: 'ask', reason: `只读模式：site ${String(a.adapter)} ${String(a.command)} 为写操作，已拦截。` }
+          if (acc !== 'read') {
+            const roReason = `只读模式：site ${String(a.adapter)} ${String(a.command)} 为写操作，已拦截。`
+            this.recordAudit(`site ${String(a.adapter)} ${String(a.command)}`, roReason)
+            return { kind: 'ask', reason: roReason }
+          }
           return await next()
         }
         // 只在确有可能 ask 时才付出缓存查询成本;其余情况 access 传占位值,判定函数自会放行
@@ -922,6 +988,7 @@ export class OpencliService extends TypertRemoteService {
         const reason = decision === 'ask-write'
           ? `site ${String(a.adapter)} ${String(a.command)} 是写操作——会在你的登录态浏览器里真实执行(发帖/点赞/下单/改数据)。`
           : `site ${String(a.adapter)} ${String(a.command)} 未能确认权限类型,按写操作审批。`
+        this.recordAudit(`site ${String(a.adapter)} ${String(a.command)}`, reason)
         return { kind: 'ask', reason }
       } catch {
         return await next()
@@ -1014,13 +1081,14 @@ export class OpencliService extends TypertRemoteService {
       if (Array.isArray(parsed.disabled)) this.state.disabled = parsed.disabled.filter((s) => typeof s === 'string')
       if (Array.isArray(parsed.schedules)) this.schedules = parsed.schedules
       if (parsed.runHistory !== undefined && typeof parsed.runHistory === 'object') this.runHistory = parsed.runHistory as typeof this.runHistory
+      if (Array.isArray(parsed.audit)) this.state.audit = parsed.audit.filter((a) => a !== null && typeof a === 'object' && typeof (a as { at?: unknown }).at === 'string')
     } catch { /* 无文件或损坏:用默认值 */ }
   }
 
   private async saveState(): Promise<void> {
     try {
       await mkdir(join(homedir(), '.dsh'), { recursive: true })
-      await writeFile(this.statePath, JSON.stringify({ ...this.state, schedules: this.schedules, runHistory: this.runHistory }, null, 2), 'utf8')
+      await writeFile(this.statePath, JSON.stringify({ ...this.state, schedules: this.schedules, runHistory: this.runHistory, audit: this.state.audit }, null, 2), 'utf8')
     } catch { /* 状态写不进(权限等):仅本次会话生效 */ }
   }
 
@@ -1060,15 +1128,31 @@ export class OpencliService extends TypertRemoteService {
   }
 
   private async runSiteCommand(siteCmd: string, id: string): Promise<void> {
-    try {
-      const r = await this.runOpencli(siteCmd.split(/\s+/), 60_000)
-      const ok = r.exitCode === 0
-      const summary = ok ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
-      const hist = this.runHistory[id] ?? []
-      hist.unshift({ at: new Date().toISOString(), ok, summary })
-      this.runHistory[id] = hist.slice(0, 5)
-      await this.saveState()
-    } catch { /* ignore */ }
+    const sch = this.schedules.find((s) => s.id === id)
+    const attempts = Math.max(1, Math.min(5, sch?.retry ?? 3))
+    const notify = sch?.notify !== false
+    const hist = this.runHistory[id] ?? []
+    let lastOk = false
+    let lastSummary = ''
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const r = await this.runOpencli(siteCmd.split(/\s+/), 60_000)
+        lastOk = r.exitCode === 0
+        lastSummary = lastOk ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
+      } catch (e) {
+        lastOk = false
+        lastSummary = e instanceof Error ? e.message.slice(0, 120) : 'failed'
+      }
+      hist.unshift({ at: new Date().toISOString(), ok: lastOk, summary: attempts > 1 ? `#${attempt}/${attempts} ${lastSummary}` : lastSummary })
+      if (lastOk) break
+      if (attempt < attempts) await new Promise((res) => setTimeout(res, 15_000))
+    }
+    this.runHistory[id] = hist.slice(0, 5)
+    if (!lastOk && notify) {
+      this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'schedule-failed', text: `定时任务连续 ${attempts} 次失败:${siteCmd} — ${lastSummary}` })
+      this.ingestEventList = this.ingestEventList.slice(0, 30)
+    }
+    await this.saveState()
   }
 
   /** 简单并发池(登录巡检限流用)。 */
