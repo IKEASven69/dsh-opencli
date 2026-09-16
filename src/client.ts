@@ -172,7 +172,7 @@ async function copyText(text: string): Promise<boolean> {
 
 /* ── 统一线性图标 sprite(1.8 描边圆角)+ 品牌鲸标 ── */
 const SPRITE = `<svg width="0" height="0" style="position:absolute">
-<symbol id="i4-brand" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M3.5 13 C3.5 10.2 6.8 8.2 11 8.2 C14.6 8.2 17.6 9.7 18.8 11.8 L21.6 9.4 C22 9.1 22.5 9.4 22.4 9.9 L22 13 L22.4 16.1 C22.5 16.6 22 16.9 21.6 16.6 L18.8 14.2 C17.6 16.3 14.6 17.8 11 17.8 C6.8 17.8 3.5 15.8 3.5 13 Z M6.6 11.4 a1 1 0 1 0 2 0 a1 1 0 1 0 -2 0 Z"/><path d="M5.9 2.9 8.5 4.7 5.9 6.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><rect x="9.9" y="3.1" width="1.7" height="3.2" rx=".55" fill="currentColor"/></symbol>
+<linearGradient id="o4g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00e5a0"/><stop offset=".5" stop-color="#00b4d8"/><stop offset="1" stop-color="#7b61ff"/></linearGradient>
 <symbol id="i4-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/></symbol>
 <symbol id="i4-zap" viewBox="0 0 24 24"><path d="M13 2.5 4.5 13.5H11L9.8 21.5 19.5 10H13z"/></symbol>
 <symbol id="i4-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
@@ -201,7 +201,7 @@ const ic = (name: IconName, sm = false): ReturnType<typeof createElement> =>
 
 /* ── v0.4 样式:基宽 800 自适应;冷灰深色 + #4A9EFF ── */
 const CSS = `
-.o4 { width:100%; max-width:800px; margin:0 auto; display:flex; flex-direction:column; gap:12px; font-family:-apple-system,'Segoe UI','Microsoft YaHei',system-ui,sans-serif; color:#E8EAED; }
+.o4 { width:100%; max-width:640px; margin:0 auto; display:flex; flex-direction:column; gap:10px; font-family:-apple-system,'Segoe UI','Microsoft YaHei',system-ui,sans-serif; color:#E8EAED; }
 .o4ic { width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none; }
 .o4ic-s { width:13px; height:13px; }
 .o4-head { display:flex; align-items:center; gap:14px; padding:16px 18px; background:#14171C; border:1px solid #262B33; border-radius:14px; }
@@ -218,7 +218,7 @@ const CSS = `
 .o4-tabs button { flex:1; border:0; background:transparent; color:#9AA3AD; font-size:13px; padding:8px 0; border-radius:8px; cursor:pointer; }
 .o4-tabs button.on { background:#1F242D; color:#E8EAED; font-weight:600; box-shadow:inset 0 0 0 1px #313845; }
 .o4-status { display:flex; align-items:center; gap:7px; flex-wrap:wrap; padding:9px 13px; background:#14171C; border:1px solid #262B33; border-radius:11px; }
-.o4-chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:#9AA3AD; background:#1A1E25; border:1px solid #262B33; border-radius:999px; padding:3px 10px; }
+.o4-chip { display:inline-flex; align-items:center; gap:5px; font-size:11px; color:#9AA3AD; background:#1A1E25; border:1px solid #262B33; border-radius:999px; padding:3px 9px; }
 .o4-chip img { width:12px; height:12px; border-radius:3px; }
 .o4-chip .o4ic { width:12px; height:12px; }
 .o4-dot { width:7px; height:7px; border-radius:50%; flex:none; }
@@ -255,7 +255,7 @@ const CSS = `
 .o4-mst .fix { color:#4A9EFF; }
 .o4-qrow { display:flex; align-items:center; gap:8px; background:#14171C; border:1px solid #262B33; border-radius:8px; padding:7px 11px; font-size:12px; cursor:pointer; }
 .o4-qrow:hover { border-color:#313845; }
-.o4-qrow .mono { font-family:ui-monospace,Consolas,monospace; color:#A9C7EC; font-size:11px; margin-left:auto; }
+.o4-qrow .mono { font-family:ui-monospace,Consolas,monospace; color:#A9C7EC; font-size:10.5px; margin-left:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:55%; }
 .o4-sites { display:flex; flex-wrap:wrap; gap:7px; }
 .o4-site { display:flex; align-items:center; gap:7px; background:#14171C; border:1px solid #262B33; border-radius:9px; padding:5px 10px 5px 5px; font-size:12px; }
 .o4-ava { width:25px; height:25px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#fff; flex:none; }
@@ -265,7 +265,7 @@ const CSS = `
 .o4-sec { border:1px solid rgba(74,158,255,.35); background:linear-gradient(180deg,rgba(74,158,255,.06),rgba(74,158,255,.015)); border-radius:12px; padding:14px 15px; }
 .o4-shield { width:44px; height:44px; border-radius:12px; background:rgba(52,199,89,.12); border:1px solid rgba(52,199,89,.35); color:#34C759; display:flex; align-items:center; justify-content:center; flex:none; }
 .o4-shield .o4ic { width:21px; height:21px; }
-.o4-cells { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:9px; }
+.o4-cells { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:9px; }
 .o4-cell { background:#1A1E25; border:1px solid #262B33; border-radius:9px; padding:8px 11px; }
 .o4-cell .l { font-size:10.5px; color:#5F6873; margin-bottom:2px; }
 .o4-cell .v { font-size:12.5px; font-weight:600; }
@@ -274,7 +274,7 @@ const CSS = `
 .o4-proof { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
 .o4-proof span { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; color:#7FD89A; background:rgba(52,199,89,.09); border:1px solid rgba(52,199,89,.22); border-radius:999px; padding:2px 9px; }
 .o4-proof .o4ic { width:10px; height:10px; stroke-width:2.2; }
-.o4-modes { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+.o4-modes { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px; }
 .o4-mode { position:relative; background:#14171C; border:1px solid #262B33; border-radius:9px; padding:8px 10px; cursor:pointer; }
 .o4-mode.on { border-color:#4A9EFF; background:rgba(74,158,255,.12); }
 .o4-mode .mi { display:flex; align-items:center; gap:6px; margin-bottom:2px; color:#9AA3AD; }
@@ -286,7 +286,8 @@ const CSS = `
 .o4-sw { width:34px; height:20px; border-radius:999px; background:#313845; position:relative; flex:none; cursor:pointer; border:0; padding:0; }
 .o4-sw::after { content:""; position:absolute; width:16px; height:16px; border-radius:50%; background:#fff; top:2px; left:2px; transition:left .15s; }
 .o4-sw.on { background:#34C759; } .o4-sw.on::after { left:16px; }
-.o4-row { display:flex; align-items:center; gap:10px; background:#14171C; border:1px solid #262B33; border-radius:10px; padding:9px 12px; }
+.o4-row { display:flex; align-items:center; gap:8px; background:#14171C; border:1px solid #262B33; border-radius:10px; padding:8px 11px; flex-wrap:wrap; }
+.o4-row .meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:10.5px; color:#5F6873; width:100%; padding-left:2px; }
 .o4-row .grow { flex:1; min-width:0; }
 .o4-tt { font-size:12.5px; font-weight:600; }
 .o4-dd { font-size:11px; color:#5F6873; margin-top:1px; }
@@ -745,19 +746,23 @@ function Panel(): ReturnType<typeof createElement> {
               const h = hist[i]
               return createElement('span', { key: i, className: `o4-hp${h === undefined ? ' n' : h.ok ? '' : ' f'}` })
             })
+            const okN = hist.filter((h) => h.ok).length
             return createElement('div', { key: s.id, className: 'o4-row' },
               createElement('span', { className: 'o4-ava', style: { background: '#313845' } }, s.site.replace('site ', '').slice(0, 2)),
-              createElement('div', { className: 'grow' },
+              createElement('div', { className: 'grow', style: { minWidth: '140px' } },
                 createElement('div', { className: 'o4-tt' }, s.site),
-                createElement('div', { className: 'o4-dd' }, `${t2('last')}: ${hist[0]?.at?.slice(5, 16) ?? '—'} · ${hist.filter((h) => h.ok).length}/${hist.length || 0}`),
               ),
               createElement('span', { className: 'o4-hpts' }, dots),
-              createElement('span', { className: 'o4-cron' }, s.cron),
-              createElement('span', { className: 'o4-bdg b' }, t2('retryN')(s.retry ?? 3)),
-              createElement('span', { className: 'o4-bdg' }, s.notify === false ? t2('notifyOff') : t2('notifyOn')),
-              createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
-              createElement('button', { className: 'o4-sw' + (s.enabled ? ' on' : ''), onClick: () => { void toggleSchedule(s.id, !s.enabled) } }),
-              createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void removeSchedule(s.id) } }, t2('del')),
+              createElement('button', { className: 'o4-sw' + (s.enabled ? ' on' : ''), title: s.enabled ? 'enabled' : 'disabled', onClick: () => { void toggleSchedule(s.id, !s.enabled) } }),
+              createElement('div', { className: 'meta' },
+                createElement('span', { className: 'o4-cron' }, s.cron),
+                createElement('span', null, `${t2('last')} ${hist[0]?.at?.slice(5, 16) ?? '—'} · ${okN}/${hist.length || 0} ✓`),
+                createElement('span', { className: 'o4-bdg b' }, t2('retryN')(s.retry ?? 3)),
+                createElement('span', { className: 'o4-bdg' }, s.notify === false ? t2('notifyOff') : t2('notifyOn')),
+                createElement('span', { style: { flex: '1' } }),
+                createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
+                createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void removeSchedule(s.id) } }, t2('del')),
+              ),
             )
           }),
         ),
@@ -896,7 +901,10 @@ function Panel(): ReturnType<typeof createElement> {
     createElement('div', { className: 'o4' },
       // 页头(品牌鲸标)
       createElement('div', { className: 'o4-head' },
-        createElement('div', { className: 'o4-logo' }, ic('brand')),
+        createElement('div', { className: 'o4-logo', title: 'OpenCLI × DeepSeek', dangerouslySetInnerHTML: { __html:
+          '<svg viewBox="0 0 64 64" width="46" height="46"><rect width="64" height="64" rx="14" fill="#0a0a0f"/>' +
+          '<path fill="#fff" fill-rule="evenodd" transform="translate(13,20) scale(1.6)" d="M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45"/>' +
+          '<text x="32" y="13" text-anchor="middle" font-family="ui-monospace,Consolas,monospace" font-weight="700" font-size="13" fill="url(#o4g)">&gt;_</text></svg>' } }),
         createElement('div', null,
           createElement('div', { className: 'o4-h1' }, t2('title')),
           createElement('div', { className: 'o4-desc' }, t2('desc')),
