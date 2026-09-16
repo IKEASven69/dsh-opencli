@@ -493,15 +493,15 @@ function Panel(): ReturnType<typeof createElement> {
     for (const step of r.steps) {
       const s = step.trim()
       if (s.length === 0) continue
-      if (s.startsWith('browser_')) await rpc('replay', { step: s } as unknown as Record<string, unknown>)
-      else await rpc('try-run', { line: s } as unknown as Record<string, unknown>)
+      if (s.startsWith('browser_')) await rpc('replay', { request: { step: s } } as unknown as Record<string, unknown>)
+      else await rpc('try-run', { request: { line: s } } as unknown as Record<string, unknown>)
     }
     showToast(t('s2runOk'), true)
   }
   const promoteRecording = async (id: string): Promise<void> => {
     const r = recordings.find((x) => x.id === id)
     if (r === undefined) return
-    const res = await rpc<{ recipeId?: string }>('promote-recording', { name: r.name, steps: r.steps } as unknown as Record<string, unknown>)
+    const res = await rpc<{ recipeId?: string }>('promote-recording', { request: { name: r.name, steps: r.steps } } as unknown as Record<string, unknown>)
     if (res.ok) { showToast(`${t('s3promoted')} ${res.value?.recipeId ?? ''}`, true); void searchAssets(assetQuery) }
     else showToast(res.error?.message ?? t('errReq'), false)
   }
@@ -513,23 +513,23 @@ function Panel(): ReturnType<typeof createElement> {
   const addSchedule = async (): Promise<void> => {
     if (scheduleSite.trim().length === 0 || schedBusy) return
     setSchedBusy(true)
-    const r = await rpc('schedule-add', { site: scheduleSite.trim(), cron: scheduleCron } as unknown as Record<string, unknown>)
+    const r = await rpc('schedule-add', { request: { site: scheduleSite.trim(), cron: scheduleCron } } as unknown as Record<string, unknown>)
     setSchedBusy(false)
     if (r.ok) { setScheduleSite(''); void loadSchedules() }
     else showToast(r.error?.message ?? t('errReq'), false)
   }
   const toggleSchedule = async (id: string, enabled: boolean): Promise<void> => {
-    const r = await rpc('schedule-toggle', { id, enabled } as unknown as Record<string, unknown>)
+    const r = await rpc('schedule-toggle', { request: { id, enabled } } as unknown as Record<string, unknown>)
     if (r.ok) void loadSchedules()
     else showToast(r.error?.message ?? t('errReq'), false)
   }
   const removeSchedule = async (id: string): Promise<void> => {
-    const r = await rpc('schedule-remove', { id } as unknown as Record<string, unknown>)
+    const r = await rpc('schedule-remove', { request: { id } } as unknown as Record<string, unknown>)
     if (r.ok) void loadSchedules()
     else showToast(r.error?.message ?? t('errReq'), false)
   }
   const runScheduleNow = async (id: string): Promise<void> => {
-    const r = await rpc('automation-run', { id } as unknown as Record<string, unknown>)
+    const r = await rpc('automation-run', { request: { id } } as unknown as Record<string, unknown>)
     showToast(r.ok ? t('s2runOk') : (r.error?.message ?? t('errReq')), r.ok)
   }
 
@@ -539,7 +539,7 @@ function Panel(): ReturnType<typeof createElement> {
     if (running) return
     setRunning(true)
     setRunOut(null)
-    const r = await rpc<{ text?: string }>('try-run', { line } as unknown as Record<string, unknown>)
+    const r = await rpc<{ text?: string }>('try-run', { request: { line } } as unknown as Record<string, unknown>)
     setRunning(false)
     if (r.ok) setRunOut({ cmd: line, text: (r.value?.text ?? '').slice(0, 4000), ok: true })
     else setRunOut({ cmd: line, text: r.error?.message ?? t('errReq'), ok: false })
@@ -549,13 +549,13 @@ function Panel(): ReturnType<typeof createElement> {
   const searchAssets = async (q: string): Promise<void> => {
     if (assetBusy) return
     setAssetBusy(true)
-    const r = await rpc<{ hits: AssetHit[] }>('automation-search', { query: q } as unknown as Record<string, unknown>)
+    const r = await rpc<{ hits: AssetHit[] }>('automation-search', { request: { query: q } } as unknown as Record<string, unknown>)
     setAssetBusy(false)
     if (r.ok && r.value !== undefined) setAssetHits(r.value.hits)
     else showToast(r.error?.message ?? t('errReq'), false)
   }
   const runAsset = async (id: string): Promise<void> => {
-    const r = await rpc('automation-run', { id } as unknown as Record<string, unknown>)
+    const r = await rpc('automation-run', { request: { id } } as unknown as Record<string, unknown>)
     showToast(r.ok ? t('s2runOk') : (r.error?.message ?? t('errReq')), r.ok)
   }
   const loadScripts = async (): Promise<void> => {
@@ -565,13 +565,13 @@ function Panel(): ReturnType<typeof createElement> {
   }
   const runBuiltin = async (name: string): Promise<void> => {
     setScriptMsg(null)
-    const r = await rpc<{ result?: string }>('script-run-builtin', { name, ...(scriptUrl.trim() ? { url: scriptUrl.trim() } : {}) } as unknown as Record<string, unknown>)
+    const r = await rpc<{ result?: string }>('script-run-builtin', { request: { name, ...(scriptUrl.trim() ? { url: scriptUrl.trim() } : {}) } } as unknown as Record<string, unknown>)
     setScriptMsg(r.ok ? (r.value?.result ?? t('s2runOk')).slice(0, 2000) : (r.error?.message ?? t('errReq')))
   }
   const runCrawl = async (): Promise<void> => {
     if (crawlUrl.trim().length === 0) return
     setCrawlMsg(null)
-    const r = await rpc('crawl', { url: crawlUrl.trim() } as unknown as Record<string, unknown>)
+    const r = await rpc('crawl', { request: { url: crawlUrl.trim() } } as unknown as Record<string, unknown>)
     setCrawlMsg(r.ok ? t('s2runOk') : (r.error?.message ?? t('errReq')))
   }
 
@@ -894,7 +894,7 @@ function Panel(): ReturnType<typeof createElement> {
           className: 'ocp-input ocp-input-sm', style: { width: '160px', flex: 'none' }, value: autoMode,
           onChange: async (e: { target: { value: string } }) => {
             const m = e.target.value
-            const r = await rpc('automation-mode-set', { mode: m } as unknown as Record<string, unknown>)
+            const r = await rpc('automation-mode-set', { request: { mode: m } } as unknown as Record<string, unknown>)
             if (r.ok) setAutoMode(m)
           },
         },
