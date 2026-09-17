@@ -543,7 +543,10 @@ export class OpencliService extends TypertRemoteService {
       return { ok: false, bin: null, version: null, daemon: null, adapterSites: null, error: `opencli 不可用(${this.bin}):${version.stderr.slice(0, 300) || version.stdout.slice(0, 300)}` }
     }
     const daemon = await this.daemonStatus()
-    const list = await this.adapterList()
+    // 目录(8MB)不阻塞健康区:有缓存给缓存,无缓存后台异步预热(adapters RPC 负责完整加载)
+    const cached = this.adapterCache !== null && Date.now() - this.adapterCache.at < ADAPTER_TTL_MS ? normalizeAdapterList(this.adapterCache.json) : null
+    void this.adapterList().catch(() => {})
+    const list = cached
     // opencli 某些版本把 --version 写到 stderr:两流合并取首个非空行
     let vraw = (version.stdout.trim() || version.stderr.trim()).split('\n')[0]?.trim() ?? ''
         return {
