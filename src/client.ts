@@ -13,6 +13,7 @@ import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
   AuditListResult, DaemonStartResult, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
 } from './types.ts'
+import { siteIconOf } from './site-icons.ts'
 
 export const inject = ['slots']
 
@@ -68,6 +69,11 @@ const STR = {
     step2: '启动 daemon,装 Chrome 扩展', step2c: 'opencli daemon restart',
     step3: '回到这里点「刷新/诊断」',
     siteEmpty: '适配器返回空(可能未登录或无数据)。请先在真实 Chrome 登录后重试。',
+    guideS1: '安装 opencli CLI:npm i -g @jackwener/opencli',
+    guideS2: '启动 daemon(opencli daemon restart),Chrome 装 BrowserBridge 扩展并登录常用站',
+    guideS3: '回到本面板看健康区全绿,即可在对话里用 site / browser_* 命令',
+    profileBody1: '登录态来自你日常使用的 Chrome:插件经 OpenCLI daemon + BrowserBridge 扩展驱动「你已登录」的真实浏览器,',
+    profileBody2: '与 dsh 内置浏览器无关;Cookie/会话留在本机,不经过任何第三方。',
     needLogin: 'daemon 未运行或浏览器桥未连接——点「启动 daemon」后重试',
     errReq: '请求失败', confirmDisable: (n: string) => `禁用 ${n}?目录将即时从 systemPrompt 收缩。`,
     enNote: '双语:i18n key 施工(zh 默认)', statesNote: '四态:检测中/正常/依赖缺失/RPC错误 —— 详见 .design/06 状态机规格',
@@ -118,6 +124,11 @@ const STR = {
     step2: 'Start daemon, install Chrome extension', step2c: 'opencli daemon restart',
     step3: 'Come back and hit Refresh',
     siteEmpty: 'Adapter returned empty (not logged in?). Log in on real Chrome first.',
+    guideS1: 'Install opencli CLI: npm i -g @jackwener/opencli',
+    guideS2: 'Start the daemon (opencli daemon restart), install the BrowserBridge Chrome extension and log in to your sites',
+    guideS3: 'Back here — when the health card is all green, use site / browser_* commands in chat',
+    profileBody1: 'Logins come from your everyday Chrome: the plugin drives your already-logged-in browser via the OpenCLI daemon + BrowserBridge extension,',
+    profileBody2: 'unrelated to the built-in dsh browser; cookies stay on this machine and never touch third parties.',
     needLogin: 'daemon down or browser bridge not connected — click Start daemon and retry',
     errReq: 'request failed', confirmDisable: (n: string) => `Disable ${n}? The catalog shrinks from systemPrompt immediately.`,
     enNote: 'i18n keys throughout (zh default)', statesNote: 'four states: loading/ok/dependency/error — see .design/06',
@@ -195,6 +206,16 @@ const SPRITE = `<svg width="0" height="0" style="position:absolute">
 </svg>`
 
 type IconName = 'play' | 'zap' | 'activity' | 'clock' | 'rec' | 'layers' | 'shield' | 'sliders' | 'plus' | 'refresh' | 'search' | 'chev-r' | 'chev-d' | 'alert' | 'check-c' | 'ext' | 'info' | 'monitor' | 'copy' | 'brand'
+
+
+const ava = (site: string, px = 26): ReturnType<typeof createElement> => {
+  const b = siteIconOf(site)
+  const inner = b !== null
+    ? createElement('svg', { viewBox: '0 0 24 24', width: px - 12, height: px - 12, dangerouslySetInnerHTML: { __html: `<path fill="#fff" d="${b.p}"/>` } })
+    : createElement('span', { style: { fontSize: String(px * 0.4) + 'px' } }, site.replace('site ', '').slice(0, 2))
+  const style = b !== null ? { background: b.c } : { background: '#313845' }
+  return createElement('span', { className: 'o4-ava', style }, inner)
+}
 
 const ic = (name: IconName, sm = false): ReturnType<typeof createElement> =>
   createElement('svg', { className: sm ? 'o4ic o4ic-s' : 'o4ic', dangerouslySetInnerHTML: { __html: `<use href="#i4-${name}"/>` } })
@@ -364,6 +385,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [starting, setStarting] = useState(false)
   const [updState, setUpdState] = useState<'idle' | 'checking' | 'latest' | string>('idle')
   const [msgInput, setMsgInput] = useState('')
+  const [accOpen, setAccOpen] = useState<string | null>(null)
   const [toastQ, setToastQ] = useState(0)
 
   const t2 = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
@@ -601,7 +623,7 @@ function Panel(): ReturnType<typeof createElement> {
             loginResults.length === 0
               ? createElement('span', { className: 'o4-chip' }, createElement('span', { className: 'o4-dot n' }), t2('unknown'))
               : loginResults.map((r) => createElement('span', { key: r.site, className: `o4-site${r.ok ? '' : ' o4-off'}` },
-                  createElement('span', { className: 'o4-ava', style: { background: '#313845' } }, r.site.slice(0, 2)),
+                  ava(r.site, 24),
                   r.site,
                   createElement('span', { className: 'o4-st', style: { color: r.ok ? '#34C759' : (r.timedOut ? '#FF9F0A' : '#FF453A') } }, r.ok ? t2('online') : (r.timedOut ? t2('timeout') : t2('expired'))),
                 )),
@@ -650,12 +672,28 @@ function Panel(): ReturnType<typeof createElement> {
             createElement('span', { key: p }, ic('check-c'), p)),
         ),
       ),
-      // 更多
+      // 更多(手风琴全部可用)
       createElement('div', null,
         createElement('div', { style: { fontSize: '12px', color: '#5F6873', margin: '2px 2px 8px' } }, t2('more')),
-        createElement('div', { className: 'o4-acc', onClick: () => { void openDiag() } }, createElement('b', null, t2('guide')), `—— ${t2('guideD')}`, createElement('span', { className: 'o4arr' }, t2('detail'), ic('chev-r', true))),
-        createElement('div', { className: 'o4-acc' }, createElement('b', null, t2('profileT')), `—— ${t2('profileD')}`, createElement('span', { className: 'o4arr' }, t2('detail'), ic('chev-r', true))),
-        createElement('div', { className: 'o4-acc', onClick: () => { window.open(DSH_URL, '_blank') } }, createElement('b', null, t2('jump')), `—— ${t2('jumpD')}`, createElement('span', { className: 'o4arr' }, t2('open'), ic('ext', true))),
+        accOpen === 'guide' ? createElement('div', { className: 'o4-card', style: { marginBottom: '8px' } },
+          createElement('div', { className: 'o4-stat' }, createElement('span', null, '1 · ', t2('guideS1')), createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void copyText('npm i -g @jackwener/opencli').then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) } }, t2('copy'))),
+          createElement('div', { className: 'o4-stat' }, createElement('span', null, '2 · ', t2('guideS2')), createElement('button', { className: 'o4-btn sm', disabled: starting, onClick: () => { void startDaemon() } }, starting ? '…' : t2('run'))),
+          createElement('div', { className: 'o4-stat' }, createElement('span', null, '3 · ', t2('guideS3'))),
+          createElement('div', { className: 'o4-note' }, 'DSH_OPENCLI_BIN / opencli.cmd(Windows pwsh)'),
+        ) : null,
+        accOpen === 'profile' ? createElement('div', { className: 'o4-card', style: { marginBottom: '8px' } },
+          createElement('div', { style: { fontSize: '12px', color: '#9AA3AD', lineHeight: '1.8' } },
+            t2('profileBody1'), createElement('br'), t2('profileBody2')),
+        ) : null,
+        createElement('div', { className: 'o4-acc', onClick: () => setAccOpen(accOpen === 'guide' ? null : 'guide') },
+          createElement('b', null, t2('guide')), `—— ${t2('guideD')}`,
+          createElement('span', { className: 'o4arr' }, accOpen === 'guide' ? t2('gateOff') : t2('detail'), accOpen === 'guide' ? ic('chev-d', true) : ic('chev-r', true))),
+        createElement('div', { className: 'o4-acc', onClick: () => setAccOpen(accOpen === 'profile' ? null : 'profile') },
+          createElement('b', null, t2('profileT')), `—— ${t2('profileD')}`,
+          createElement('span', { className: 'o4arr' }, accOpen === 'profile' ? t2('gateOff') : t2('detail'), accOpen === 'profile' ? ic('chev-d', true) : ic('chev-r', true))),
+        createElement('div', { className: 'o4-acc', onClick: () => { window.open(DSH_URL, '_blank') } },
+          createElement('b', null, t2('jump')), `—— ${t2('jumpD')}`,
+          createElement('span', { className: 'o4arr' }, t2('open'), ic('ext', true))),
       ),
       daemonOff && !loading
         ? createElement('div', { className: 'o4-diag bad', onClick: () => { void startDaemon() } },
@@ -685,9 +723,9 @@ function Panel(): ReturnType<typeof createElement> {
           const detail = details[a.name]
           return createElement('div', { key: a.name },
             createElement('div', { className: `o4-row${a.disabled === true ? ' o4-off' : ''}`, onClick: () => { void expandDetail(a.name) } },
-              createElement('span', { className: 'o4-ava', style: { background: '#313845' } }, a.name.slice(0, 2)),
+              ava(a.name),
               createElement('div', { className: 'grow' },
-                createElement('div', { className: 'o4-tt' }, a.name, ' ', a.sample !== undefined && a.sample.length > 0 ? createElement('span', { className: 'o4-bdg b', onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); fillInput(`site ${a.name} ${a.sample}`) } }, a.sample, ' ', ic('copy', true)) : null),
+                createElement('div', { className: 'o4-tt' }, a.name, ' ', a.commands.slice(0, 3).map((c) => createElement('span', { key: c, className: 'o4-bdg b', title: `site ${a.name} ${c} — 点击复制`, onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); fillInput(`site ${a.name} ${c}`) } }, c))),
                 createElement('div', { className: 'o4-dd' }, t2('commandsN')(a.commandCount), a.disabled === true ? ' · disabled' : ''),
               ),
               a.disabled === true ? null : createElement('span', { className: 'o4-bdg w' }, `write ${a.kinds.filter((k) => k === 'write').length}`),
@@ -743,7 +781,7 @@ function Panel(): ReturnType<typeof createElement> {
             })
             const okN = hist.filter((h) => h.ok).length
             return createElement('div', { key: s.id, className: 'o4-row' },
-              createElement('span', { className: 'o4-ava', style: { background: '#313845' } }, s.site.replace('site ', '').slice(0, 2)),
+              ava(s.site.replace('site ', '').split(/\s+/)[0]),
               createElement('div', { className: 'grow', style: { minWidth: '140px' } },
                 createElement('div', { className: 'o4-tt' }, s.site),
               ),
