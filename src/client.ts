@@ -399,6 +399,15 @@ const CSS = `
 .o4-skel { height:11px; border-radius:5px; background:linear-gradient(90deg,#1F242D,#262C37,#1F242D); background-size:200% 100%; animation:o4shimmer 1.4s linear infinite; margin:7px 0; }
 @keyframes o4shimmer { from { background-position:200% 0; } to { background-position:-200% 0; } }
 .o4-note { font-size:10.5px; color:rgba(249,250,251,.38); margin-top:8px; line-height:1.6; }
+/* premium 3:审美精修 */
+.o4 button:focus-visible, .o4 [role='button']:focus-visible { outline:2px solid rgba(77,107,254,.55); outline-offset:2px; border-radius:8px; }
+.o4-h3::after { content:""; flex:1; height:1px; margin-left:10px; background:linear-gradient(90deg,rgba(255,255,255,.09),transparent); }
+.o4-h3 .rt::after { content:""; flex:none; }
+.o4-cell { border-left:2px solid transparent; transition:border-left-color .18s ease, background .18s ease; }
+.o4-cell:hover { border-left-color:#4D6BFE; background:rgba(255,255,255,.03); }
+.o4-sub { letter-spacing:.1px; }
+.o4-note::before { content:"※ "; }
+
 /* premium 2:入场动画(阶梯式) */
 .o4 > * { animation: o4in .5s cubic-bezier(.22,1,.36,1) backwards; }
 .o4 > *:nth-child(1) { animation-delay: .03s; }

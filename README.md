@@ -37,6 +37,11 @@ dsh 内置的 web 工具是"检索"(web_search/web_fetch)。本插件给它补�
 | **登录态巡检** | 面板实时显示各站在线状态 |
 | **失败诊断** | daemon 诊断/一键启动;`resolveBin()` 四级回退(本地依赖优先) |
 | **限流与限域** | `usagePolicy`(延迟/并发/突发/冷却/页数上限)+ 429/5xx 自动退避;`--authProfile` 限域登录,跨域拒绝 |
+| **四 tab 面板** | 总览 / 命令 / 自动化 / 安全与设置,状态机四态(检测中骨架屏/正常/依赖缺失一键修复/错误内嵌诊断) |
+| **登录态桥** | 探测 daemon Chrome 的 CDP 端点,一键生成配置把 dsh 官方 Browser Use 接到你登录态的浏览器 |
+| **拦截审计** | 审批门拦截记录(近 7 天计数 + 明细),写操作全程可追溯 |
+| **定时可靠性** | 失败重试 ×3 + 通知事件 + 运行历史 |
+| **站点品牌图标** | 48 站 simple-icons 官方标 + 品牌色,变体站点自动归并 |
 | **中英双语** | 面板 EN / zh 一键切换 |
 
 ## 登录态到底是怎么回事(重要澄清)
@@ -77,6 +82,8 @@ dsh plugin add IKEASven69/dsh-opencli
 
 自定义二进制路径:设 `DSH_OPENCLI_BIN`(也可依赖插件自带的本地 `@jackwener/opencli`)。
 
+> **Windows 注意**:dsh 的 shell 在 Windows 走 PowerShell,`DSH_OPENCLI_BIN` 请指向 `.cmd` 结尾的 shim(如 `...\nodejs\opencli.cmd`),无扩展名文件会被静默忽略。
+
 ## 配置
 
 零配置开箱即用;需要微调时有这几处:
@@ -110,6 +117,11 @@ dsh plugin add IKEASven69/dsh-opencli
 | 真模型 E2E·写拒绝 | `site zhihu comment` → ask → 无审批通道 fail-closed 拒绝 | ✅ |
 | 真模型 E2E·浏览器原语 | `browser_open→browser_state` 往返结构化报告 | ✅ |
 | 面板 | 真实浏览器全链路(审批门/巡检/命令集合/复制/i18n) | ✅ |
+| 全权审查套件 | 19 项真机逐项验证(渲染/真执行/状态文件对账/RPC 真值),`full-review.cjs` 一键复测 | ✅ |
+
+## 更新日志
+
+完整版本历史见 [CHANGELOG.md](CHANGELOG.md) 与 [Releases](https://github.com/IKEASven69/dsh-opencli/releases)。
 
 ## 定位(不做什么)
 
