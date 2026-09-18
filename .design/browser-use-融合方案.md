@@ -32,6 +32,21 @@
 - 不做通用自动化引擎(官方在做),不做私有协议对抗。
 - 不在 0.1.6 alpha 上做实现级适配(alpha API 会动);A/C 两步无版本依赖可先行。
 
+## 配置契约(2026-09-17 已从官方文档/npm 验证)
+
+- 官方文档(docs/subsystems/browser-use.zh.md):提供方为**实验性公共 npm 包**(`@deepseek-ai/dsh-browser-use` + `@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp` 等,npm 均已发布 0.1.6-alpha.1),需显式挂载到 profile 组合。
+- **attach 模式是官方一等公民**:`mode: attach` + `endpoint`(HTTP/WS 调试端点),官方原话——"让一个 Session 接入已有浏览器,**使用其现有标签页和登录状态**";清理只断开,外部浏览器保持运行。
+- mount 形态 = profile patch 的 insert 行(与 opencli 自身 cordis.patch.yml 同机制):
+  ```yaml
+  - name: '@deepseek-ai/dsh-browser-use'
+  - name: '@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp'
+    config:
+      mode: attach
+      endpoint: http://127.0.0.1:<daemon Chrome CDP 端口>
+  ```
+- 关键约束:①提供方注册全局唯一(第二个注册即使同名也失败)——opencli **不得**注册自己的 provider,只写官方的配置;②attach 连接被一个 Session 占用后,其他 Session 激活继续运行但不重试;③config 在激活期固定,改配置需重载;④**官方自动化不经过 opencli 审批门**——桥接开启时面板必须明示此风险。
+- 依赖前提:浏览器实验包按 0.1.6-alpha.1 发布,需 host 运行 0.1.6-alpha+(0.1.5-rc.1 上未验证)。⇒ 该功能随 dsh 0.1.6 stable/r c 落地,v0.5 先交付探测+端点展示+配置生成器(生成 patch 片段给用户粘贴)。
+
 ## v0.5 落地顺序
 1. probeCDP 移植 + `browser_cdp` RPC + 面板健康区展示 CDP 端点(半天,无版本依赖)
 2. 适配器知识 → MCP Resources 文档形态(alpha 阶段先出语义,rc 后接实现)
