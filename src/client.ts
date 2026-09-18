@@ -74,6 +74,12 @@ const STR = {
     guideS3: '回到本面板看健康区全绿,即可在对话里用 site / browser_* 命令',
     profileBody1: '登录态来自你日常使用的 Chrome:插件经 OpenCLI daemon + BrowserBridge 扩展驱动「你已登录」的真实浏览器,',
     profileBody2: '与 dsh 内置浏览器无关;Cookie/会话留在本机,不经过任何第三方。',
+    bridgeT: '登录态桥(Browser Use)',
+    bridgeSub: '把 dsh 官方 Browser Use 接到你登录态的 Chrome:探测 opencli daemon Chrome 的 CDP 端点,填入 Chrome DevTools MCP 的 endpoint(mode: attach)即可。',
+    bridgeEp: 'CDP 端点',
+    bridgeNone: '未探测到 CDP —— 先启动一次浏览器会话(面板「启动 daemon」后跑一条 browser 命令)',
+    bridgeCopyCfg: '复制桥接配置',
+    bridgeWarn: '⚠ 官方自动化不经过 opencli 审批门;CDP 开放 = 本机进程可控该浏览器',
     needLogin: 'daemon 未运行或浏览器桥未连接——点「启动 daemon」后重试',
     errReq: '请求失败', confirmDisable: (n: string) => `禁用 ${n}?目录将即时从 systemPrompt 收缩。`,
     enNote: '双语:i18n key 施工(zh 默认)', statesNote: '四态:检测中/正常/依赖缺失/RPC错误 —— 详见 .design/06 状态机规格',
@@ -129,6 +135,12 @@ const STR = {
     guideS3: 'Back here — when the health card is all green, use site / browser_* commands in chat',
     profileBody1: 'Logins come from your everyday Chrome: the plugin drives your already-logged-in browser via the OpenCLI daemon + BrowserBridge extension,',
     profileBody2: 'unrelated to the built-in dsh browser; cookies stay on this machine and never touch third parties.',
+    bridgeT: 'Login-state bridge (Browser Use)',
+    bridgeSub: 'Attach official Browser Use to your logged-in Chrome: probe the daemon Chrome CDP endpoint and fill it into the Chrome DevTools MCP endpoint (mode: attach).',
+    bridgeEp: 'CDP endpoint',
+    bridgeNone: 'No CDP found — start a browser session first (run Start daemon, then a browser command)',
+    bridgeCopyCfg: 'Copy bridge config',
+    bridgeWarn: '⚠ Official automation bypasses the opencli approval gate; an open CDP lets local processes control this browser',
     needLogin: 'daemon down or browser bridge not connected — click Start daemon and retry',
     errReq: 'request failed', confirmDisable: (n: string) => `Disable ${n}? The catalog shrinks from systemPrompt immediately.`,
     enNote: 'i18n keys throughout (zh default)', statesNote: 'four states: loading/ok/dependency/error — see .design/06',
@@ -183,26 +195,53 @@ async function copyText(text: string): Promise<boolean> {
 
 /* ── 统一线性图标 sprite(1.8 描边圆角)+ 品牌鲸标 ── */
 const SPRITE = `<svg width="0" height="0" style="position:absolute">
-<linearGradient id="o4g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00e5a0"/><stop offset=".5" stop-color="#00b4d8"/><stop offset="1" stop-color="#7b61ff"/></linearGradient>
-<symbol id="i4-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/></symbol>
-<symbol id="i4-zap" viewBox="0 0 24 24"><path d="M13 2.5 4.5 13.5H11L9.8 21.5 19.5 10H13z"/></symbol>
-<symbol id="i4-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
-<symbol id="i4-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2v5l3.2 2"/></symbol>
-<symbol id="i4-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="3.4" fill="currentColor" stroke="none"/></symbol>
-<symbol id="i4-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 4.7L12 12.9 3.5 8.2z"/><path d="m4.8 12.4 7.2 4 7.2-4"/><path d="m4.8 16.2 7.2 4 7.2-4"/></symbol>
-<symbol id="i4-shield" viewBox="0 0 24 24"><path d="M12 2.8 19 5.6v5.2c0 4.9-3 8.1-7 9.6-4-1.5-7-4.7-7-9.6V5.6z"/><path d="m8.8 11.8 2.3 2.3 4.3-4.3"/></symbol>
-<symbol id="i4-sliders" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="15" cy="7" r="2.1"/><circle cx="8.5" cy="12" r="2.1"/><circle cx="17" cy="17" r="2.1"/></symbol>
-<symbol id="i4-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
-<symbol id="i4-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M18.6 2.8v3.8h-3.8"/></symbol>
-<symbol id="i4-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4-4"/></symbol>
-<symbol id="i4-chev-r" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
-<symbol id="i4-chev-d" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
-<symbol id="i4-alert" viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4z"/><path d="M12 10v4.2"/><circle cx="12" cy="16.8" r=".4" fill="currentColor"/></symbol>
-<symbol id="i4-check-c" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="m8.4 12.2 2.5 2.5 4.9-5"/></symbol>
-<symbol id="i4-ext" viewBox="0 0 24 24"><path d="M14 4.5h5.5V10"/><path d="M19.5 4.5 11 13"/><path d="M9.5 5.5H6.4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.1"/></symbol>
-<symbol id="i4-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 8.2h.01M12 11.4v5"/></symbol>
-<symbol id="i4-monitor" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12.5" rx="2"/><path d="M9 20.5h6M12 17v3.5"/></symbol>
-<symbol id="i4-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+<symbol id="i4-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3" /></symbol>
+<symbol id="i4-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" /></symbol>
+<symbol id="i4-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></symbol>
+<symbol id="i4-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <polyline points="12 6 12 12 16 14" /></symbol>
+<symbol id="i4-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <circle cx="12" cy="12" r="1" /></symbol>
+<symbol id="i4-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+  <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+  <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" /></symbol>
+<symbol id="i4-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  <path d="m9 12 2 2 4-4" /></symbol>
+<symbol id="i4-sliders" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4" />
+  <line x1="10" x2="3" y1="4" y2="4" />
+  <line x1="21" x2="12" y1="12" y2="12" />
+  <line x1="8" x2="3" y1="12" y2="12" />
+  <line x1="21" x2="16" y1="20" y2="20" />
+  <line x1="12" x2="3" y1="20" y2="20" />
+  <line x1="14" x2="14" y1="2" y2="6" />
+  <line x1="8" x2="8" y1="10" y2="14" />
+  <line x1="16" x2="16" y1="18" y2="22" /></symbol>
+<symbol id="i4-plus" viewBox="0 0 24 24"><path d="M5 12h14" />
+  <path d="M12 5v14" /></symbol>
+<symbol id="i4-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+  <path d="M21 3v5h-5" />
+  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+  <path d="M8 16H3v5" /></symbol>
+<symbol id="i4-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" />
+  <path d="m21 21-4.3-4.3" /></symbol>
+<symbol id="i4-chev-r" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+<symbol id="i4-chev-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+<symbol id="i4-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+  <path d="M12 9v4" />
+  <path d="M12 17h.01" /></symbol>
+<symbol id="i4-check-c" viewBox="0 0 24 24"><path d="M21.801 10A10 10 0 1 1 17 3.335" />
+  <path d="m9 11 3 3L22 4" /></symbol>
+<symbol id="i4-ext" viewBox="0 0 24 24"><path d="M15 3h6v6" />
+  <path d="M10 14 21 3" />
+  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></symbol>
+<symbol id="i4-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <path d="M12 16v-4" />
+  <path d="M12 8h.01" /></symbol>
+<symbol id="i4-monitor" viewBox="0 0 24 24"><rect x="2" y="3" rx="2" />
+  <line x1="8" x2="16" y1="21" y2="21" />
+  <line x1="12" x2="12" y1="17" y2="21" /></symbol>
+<symbol id="i4-copy" viewBox="0 0 24 24"><rect x="8" y="8" rx="2" ry="2" />
+  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></symbol>
 </svg>`
 
 type IconName = 'play' | 'zap' | 'activity' | 'clock' | 'rec' | 'layers' | 'shield' | 'sliders' | 'plus' | 'refresh' | 'search' | 'chev-r' | 'chev-d' | 'alert' | 'check-c' | 'ext' | 'info' | 'monitor' | 'copy' | 'brand'
@@ -224,7 +263,7 @@ const ic = (name: IconName, sm = false): ReturnType<typeof createElement> =>
 const CSS = `
 .o4 { width:100%; max-width:640px; margin:0 auto; display:flex; flex-direction:column; gap:11px; font-family:-apple-system,'Segoe UI','Microsoft YaHei',system-ui,sans-serif; color:#F9FAFB; position:relative; }
 
-.o4ic { width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+.o4ic { width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex:none; }
 .o4ic-s { width:13px; height:13px; }
 .o4-head { display:flex; align-items:center; gap:12px; padding:15px 17px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:14px; flex-wrap:wrap; box-shadow:0 1px 2px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.04); backdrop-filter:blur(10px); }
 .o4-logo { width:44px; height:44px; border-radius:13px; display:flex; align-items:center; justify-content:center; flex:none; box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 6px 20px -6px rgba(0,149,255,.35); }
@@ -302,7 +341,7 @@ const CSS = `
 .o4-proof { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
 .o4-proof span { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; color:#7FD89A; background:rgba(52,199,89,.08); border:1px solid rgba(52,199,89,.2); border-radius:999px; padding:2.5px 9px; transition:all .16s ease; }
 .o4-proof span:hover { background:rgba(52,199,89,.14); }
-.o4-proof .o4ic { width:10px; height:10px; stroke-width:2.2; }
+.o4-proof .o4ic { width:10px; height:10px; stroke-width:2.5; }
 .o4-modes { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px; }
 .o4-mode { position:relative; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:9px 11px; cursor:pointer; transition:all .18s ease; }
 .o4-mode:hover { border-color:rgba(255,255,255,.16); }
@@ -433,6 +472,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [starting, setStarting] = useState(false)
   const [updState, setUpdState] = useState<'idle' | 'checking' | 'latest' | string>('idle')
   const [msgInput, setMsgInput] = useState('')
+  const [cdp, setCdp] = useState<{ found: boolean; endpoint: string | null; hint?: string } | null>(null)
   const [accOpen, setAccOpen] = useState<string | null>(null)
   const [toastQ, setToastQ] = useState(0)
 
@@ -463,6 +503,7 @@ function Panel(): ReturnType<typeof createElement> {
   }
 
   useEffect(() => { void reload() }, [])
+  useEffect(() => { if (tab === 'sec' && cdp === null) { void rpc<{ found: boolean; endpoint: string | null; hint?: string }>('browser-cdp').then((r) => { if (r.ok && r.value !== undefined) setCdp(r.value) }) } }, [tab, cdp])
 
   const runLoginCheck = async (): Promise<void> => {
     if (checking) return
@@ -946,7 +987,24 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('span', { className: 'o4-hash' }, `${t2('shaLine')}: ${settings?.sha256 ?? '—'}`),
         ),
       ),
-      createElement('div', { className: 'o4-card', style: { display: 'flex', alignItems: 'center', gap: '11px', marginBottom: '12px' } },
+      createElement('div', { className: 'o4-card', style: { marginBottom: '11px' } },
+        createElement('div', { className: 'o4-h3' }, createElement('span', { className: 'o4-miniico' }, ic('ext', true)), t2('bridgeT')),
+        createElement('div', { className: 'o4-sub' }, t2('bridgeSub')),
+        createElement('div', { className: 'o4-kv' },
+          createElement('span', { className: 'k' }, t2('bridgeEp')),
+          createElement('span', { className: 'v' }, cdp && cdp.found ? cdp.endpoint : t2('bridgeNone')),
+        ),
+        cdp && cdp.found ? createElement('div', { className: 'o4-fixrow' },
+          createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void copyText(String(cdp.endpoint)).then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) } }, t2('bridgeCopyEp')),
+          createElement('button', { className: 'o4-btn ghost sm', onClick: () => {
+            const nl = String.fromCharCode(10);
+            const cfg = "- name: '@deepseek-ai/dsh-browser-use'" + nl + "- name: '@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp'" + nl + "  config:" + nl + "    mode: attach" + nl + "    endpoint: " + String(cdp.endpoint);
+            void copyText(cfg).then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok));
+          } }, t2('bridgeCopyCfg')),
+        ) : null,
+        createElement('div', { className: 'o4-note' }, t2('bridgeWarn')),
+      ),
+            createElement('div', { className: 'o4-card', style: { display: 'flex', alignItems: 'center', gap: '11px', marginBottom: '12px' } },
         createElement('span', { className: 'o4-miniico' }, ic('refresh', true)),
         createElement('div', { style: { flex: '1' } },
           createElement('div', { style: { fontSize: '12.5px', fontWeight: '600' } }, t2('verT')),

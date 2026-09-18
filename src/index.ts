@@ -746,6 +746,40 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, source: null, lines: diag, hint: 'opencli 未暴露日志文件;以上为最近诊断快照,可在 dsh 对话说"opencli 诊断"获取实时日志' }
   }
 
+  /** opencli launcher 启动 Chrome 时的 CDP 候选端口(launcher.js 同源)。 */
+  private static readonly CDP_PORTS = [9222, 9234, 9236, 9238]
+  private cdpCache: { at: number; found: boolean; port: number | null; browser: string | null } | null = null
+
+  /** 探测 daemon Chrome 的 CDP 端点:并发 probe /json/version,响应含 "Browser" 即命中。 */
+  private async probeCdp(): Promise<{ found: boolean; port: number | null; browser: string | null }> {
+    if (this.cdpCache !== null && Date.now() - this.cdpCache.at < 15_000) {
+      return { found: this.cdpCache.found, port: this.cdpCache.port, browser: this.cdpCache.browser }
+    }
+    const envPort = Number(process.env.OPENCLI_CDP_PORT ?? 0)
+    const ports = (envPort > 0 ? [envPort, ...OpencliService.CDP_PORTS] : OpencliService.CDP_PORTS).slice(0, 6)
+    const probeOne = async (port: number): Promise<{ port: number; browser: string } | null> => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) })
+        if (!res.ok) return null
+        const body = (await res.text()).trim()
+        if (body.includes('Browser')) return { port, browser: body.slice(0, 200) }
+        return null
+      } catch { return null }
+    }
+    const hit = (await Promise.all(ports.map(probeOne))).find((x) => x !== null) ?? null
+    this.cdpCache = { at: Date.now(), found: hit !== null, port: hit?.port ?? null, browser: hit?.browser ?? null }
+    return { found: hit !== null, port: hit?.port ?? null, browser: hit?.browser ?? null }
+  }
+
+  @Remote('browser-cdp')
+  async browserCdp(): Promise<{ ok: boolean; found: boolean; endpoint: string | null; port: number | null; browser: string | null; hint?: string }> {
+    const c = await this.probeCdp()
+    if (!c.found) {
+      return { ok: true, found: false, endpoint: null, port: null, hint: '未探测到 CDP——先启动一次浏览器会话(daemon 首条 browser 命令会带调试端口拉起 Chrome)' }
+    }
+    return { ok: true, found: true, endpoint: `http://127.0.0.1:${c.port}`, port: c.port, browser: c.browser }
+  }
+
   @Remote('schedule-run-now')
   async scheduleRunNow(p: { id: string }): Promise<{ ok: boolean; error?: string }> {
     const sch = this.schedules.find((s) => s.id === String(p.id ?? ''))
