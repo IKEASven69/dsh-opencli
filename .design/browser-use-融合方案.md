@@ -32,6 +32,18 @@
 - 不做通用自动化引擎(官方在做),不做私有协议对抗。
 - 不在 0.1.6 alpha 上做实现级适配(alpha API 会动);A/C 两步无版本依赖可先行。
 
+## W0 调研结果(2026-09-18 已查证,先行确认完成)
+
+| 项 | 结果 |
+|---|---|
+| API 存在/可达 | ✅ `api.typesafe.ai` 真实存在(无 key 403=正常拒绝,延迟 0.75s);首次 20s 超时为国际链路抖动,**kev 本地兜底的必要性成立** |
+| docs 成体系 | ✅ 三原语(choice/score/noul+概率)+ confidence 第二轴 + 四 Patterns + Model jaggedness 专页 + 双 SDK 完整 API 参考(重试/限流/超时) |
+| 生态仓库 | ✅ jev-ultrafast ★13.1k(MIT,较方案起草时 12.4k 继续增长)/ typesafe-ai/skills ★1.3k(MIT)/ jaredpalmer/kev ★1.25k(Apache-2.0,可自训) |
+| 隐私 | ✅ 官方承诺"**不用 Input 训练任何模型**";保留期有限、可要求删除;托管在美国 |
+| 计费 | ⚠️ 仍未公开(docs 索引无 pricing 页)——需注册 console 确认,W1 前完成 |
+
+**隐私边界修订(基于官方承诺)**:云 API 隐私风险从"必须本地"降级为"可接受 + 面板开关"——但登录态敏感页面(个人流/私信/账号页)默认走本地 kev 的建议保留;面板需明示"state 会发送至 TypeSafe(美国托管,不训练)"。
+
 ## 配置契约(2026-09-17 已从官方文档/npm 验证)
 
 - 官方文档(docs/subsystems/browser-use.zh.md):提供方为**实验性公共 npm 包**(`@deepseek-ai/dsh-browser-use` + `@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp` 等,npm 均已发布 0.1.6-alpha.1),需显式挂载到 profile 组合。
