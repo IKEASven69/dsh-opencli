@@ -70,3 +70,16 @@ Qwen3.5 底座 0.8B/4B/9B)API 与官方兼容,可本地起服,把 base URL 指�
 - choice 候选过多(200+ 命令)必须分层,单题候选建议 ≤30(官方 hierarchical 范式);
 - 网络不可达环境(如内网)走 kev 本地端点;
 - Typesafe 无公开定价页——接入前先在 console 确认计费,输出免费仅社区说法。
+
+
+## 调用渠道调研(2026-09-21,决定:JEV 暂缓进 backlog)
+
+| 渠道 | 结论 |
+|---|---|
+| 官方 API | 唯一真渠道;三道门槛:注册 console 拿 key / 计费未公开 / 国际链路偶发超时(实测时好时坏) |
+| OpenRouter | ❌ 446 模型零命中,不承载 jev/typesafe |
+| kev 本地 | ✅ 真实(Apache-2.0,HF 权重 0.8B/4B/9B,API 完全兼容)但需 CUDA/Apple Silicon + 大内存——本机性能带不动,否决 |
+
+**零成本准备(先行)**:W1 的 `systemone.ts` 封装层先写"接口抽象 + 降级直通"(provider/endpoint/key 全可配,默认直通现有 LLM 路径)——不调真实 API 也能合入;任一渠道成熟(拿 key / kev CPU 量化版)即插即用。
+**触发重估**:console 开放注册且计费明朗 / kev 出 CPU 量化版 / 国际链路稳定化。
+
