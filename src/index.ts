@@ -115,6 +115,10 @@ export class OpencliService extends TypertRemoteService {
       const bin = join(dirname(pkg), 'dist', 'src', 'main.js')
       if (existsSync(bin)) return `node ${bin}`
     } catch { /* 无本地依赖则回退全局 */ }
+    // npm 全局安装（vfox/nvm 结构）：node 同目录必有 @jackwener/opencli 入口。
+    // 直接用 node 执行，避开 Windows pwsh/bash 对无扩展 shim 的静默忽略。
+    const globalMain = join(dirname(process.execPath), 'node_modules', '@jackwener', 'opencli', 'dist', 'src', 'main.js')
+    if (existsSync(globalMain)) return `node "${globalMain}"`
     return 'opencli'
   }
 
@@ -696,8 +700,14 @@ export class OpencliService extends TypertRemoteService {
   async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
+    const site = request.site.trim()
+    const cron = request.cron.trim()
+    // 幂等去重:governor 队列下 add/remove 可能乱序(重试/双击),同 site+cron 的
+    // 已有任务直接复用,不再生成僵尸副本(审查复现过 3 条重复)
+    const dup = this.schedules.find((s) => s.site === site && s.cron === cron)
+    if (dup !== undefined) return { ok: true, id: dup.id }
     const id = String(Date.now())
-    const entry: typeof this.schedules[number] = { id, site: request.site.trim(), cron: request.cron.trim(), createdAt: new Date().toISOString(), enabled: true }
+    const entry: typeof this.schedules[number] = { id, site, cron, createdAt: new Date().toISOString(), enabled: true }
     if (typeof request.retry === 'number' && Number.isFinite(request.retry)) entry.retry = Math.max(1, Math.min(5, Math.round(request.retry)))
     if (typeof request.notify === 'boolean') entry.notify = request.notify
     this.schedules.push(entry)
@@ -1089,9 +1099,23 @@ export class OpencliService extends TypertRemoteService {
   private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     await this.acquireGovernor()
     try {
-      const spec = this.ctx.shell.resolve({ command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes } as ShellExecRequest)
-      const r = await this.ctx.shell.run(spec)
-      const out = { exitCode: r.exitCode ?? 1, stdout: r.stdout?.text ?? '', stderr: r.stderr?.text ?? '' }
+      const shellAny = this.ctx.shell as any
+      const spec = shellAny.resolve({ command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes } as ShellExecRequest)
+      // 双兼容:0.1.5 shell.run / 0.1.7 shell.execute(语义相同,方法改名)
+      const runner = typeof shellAny.run === 'function' ? shellAny.run.bind(shellAny) : (typeof shellAny.execute === 'function' ? shellAny.execute.bind(shellAny) : null)
+      const raw = runner !== null
+        ? await runner(spec)
+        : { exitCode: 1, stdout: 'dsh shell 能力不可用(既无 run 也无 execute)' }
+      // 归一化:0.1.5 流式 {text} 与字符串形态统一为纯文本,维持下游契约
+      const asText = (x: unknown): string => {
+        if (x && typeof x === 'object' && typeof (x as { text?: unknown }).text === 'string') return (x as { text: string }).text
+        return typeof x === 'string' ? x : ''
+      }
+      const out = {
+        exitCode: typeof raw.exitCode === 'number' ? raw.exitCode : 1,
+        stdout: asText(raw.stdout),
+        stderr: asText(raw.stderr),
+      }
       this.noteRateLimit(`${out.stdout}\n${out.stderr}`)
       return out
     } finally {

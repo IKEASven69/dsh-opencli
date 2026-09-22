@@ -5,7 +5,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 (async () => {
   const token = process.argv[2] || '';
   const browser = await puppeteer.launch({
-    executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/152.0.4191.53/msedge.exe',
+    executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/152.0.4191.53/msedge.exe'.replace('152.0.4191.53', (require('fs').readdirSync('C:/Program Files (x86)/Microsoft/Edge/Application').filter(d => /^\d+\./.test(d)).sort().reverse()[0] || '152.0.4191.53')),
     headless: true,
     args: ['--disable-gpu', '--no-first-run', '--no-sandbox', '--user-data-dir=C:/Users/20369/AppData/Local/Temp/pptr-dbg'],
     defaultViewport: { width: 1240, height: 1400 },

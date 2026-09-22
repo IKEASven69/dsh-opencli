@@ -4,7 +4,14 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/152.0.4191.53/msedge.exe';
+let EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
+try {
+  const root = 'C:/Program Files (x86)/Microsoft/Edge/Application';
+  const vers = fs.readdirSync(root).filter(d => /^\d+\./.test(d)).sort().reverse();
+  if (vers.length > 0) EDGE = root + '/' + vers[0] + '/msedge.exe';
+} catch {}
+// 保险:探测到的版本目录刚被更新移除时,回退根启动器
+if (!fs.existsSync(EDGE)) EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const OUT = 'D:/CodingProjects/dsh-opencli-release/.design/video-frames';
 const STATE = 'C:/Users/20369/.dsh/dsh-opencli-state.json';
 const BASE = 'http://127.0.0.1:3123';
