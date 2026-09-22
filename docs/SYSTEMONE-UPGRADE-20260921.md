@@ -81,5 +81,17 @@ Qwen3.5 底座 0.8B/4B/9B)API 与官方兼容,可本地起服,把 base URL 指�
 | kev 本地 | ✅ 真实(Apache-2.0,HF 权重 0.8B/4B/9B,API 完全兼容)但需 CUDA/Apple Silicon + 大内存——本机性能带不动,否决 |
 
 **零成本准备(先行)**:W1 的 `systemone.ts` 封装层先写"接口抽象 + 降级直通"(provider/endpoint/key 全可配,默认直通现有 LLM 路径)——不调真实 API 也能合入;任一渠道成熟(拿 key / kev CPU 量化版)即插即用。
+**触发重估(2026-09-22 已触发✅)**:OpenRouter 已上架 `typesafe/jev-1.13`——**JEV 解封,从 backlog 转入 v0.5 可做**:
+
+| 项 | 值 |
+|---|---|
+| 定价 | 输入 $0.042 / 1M tokens;**输出 $0 / 1M** |
+| Context | 32,000(放得下命令目录 + 页面元素表) |
+| 接入 | OpenRouter OpenAI 兼容格式,无需 TypeSafe console/私有信封 |
+| 成本模型 | verify/巡检/命令选择 = 状态输入为主几乎零输出 → 实际成本趋近 $0,高频调用无忧 |
+
+注意:OpenRouter 公开 `/api/v1/models` 目录未收录该模型(API 列表 443 个无 jev),但官网模型页存在且可直调——调研以官网模型页为准,不能只信 API 目录。
+
+**修订后的 v0.5 顺序**:W1 封装层 provider 三选一可切(openrouter / typesafe 官方 / 直通降级),默认 openrouter(用户充值即用)。
 **触发重估**:console 开放注册且计费明朗 / kev 出 CPU 量化版 / 国际链路稳定化。
 
