@@ -24,6 +24,7 @@ import type {
   LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
+import { SystemOne, noulYes } from './systemone.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -129,6 +130,7 @@ export class OpencliService extends TypertRemoteService {
     this.registerBrowserTools()
     this.registerAdvancedTools()
     this.registerSiteTool()
+    this.registerDecisionTools()
     this.registerApprovalGate()
     void this.injectSystemPrompt()
     if (this.schedules.some((s) => s.enabled)) this.startScheduler()
@@ -151,6 +153,58 @@ export class OpencliService extends TypertRemoteService {
   }
 
   // ── 模型工具 ──────────────────────────────────────────────
+
+  /** SystemOne 决策层:key 从环境变量或 ~/.dsh/typesafe-key;provider 可换(laya 本地 ONNX 同接口)。 */
+  private so: SystemOne = new SystemOne()
+
+  /** 决策工具(verify 断言 / 封闭选项集选择):亚秒返回,不消耗大模型 token。 */
+  private registerDecisionTools(): void {
+    const t = this.ctx.tools
+    t.register(defineTool({
+      name: 'so_verify',
+      description: 'SystemOne 亚秒判定:给定任务预期与页面文本,返回 P(符合预期)。比 LLM 断言省 token、快 10 倍以上。低置信(<0.7)时请回退自行判断',
+      parameters: {
+        expectation: { type: 'string', description: '任务预期(自然语言,如:页面显示的是知乎热榜列表)' },
+        page_text: { type: 'string', description: '页面文本(截取相关部分,建议 ≤2000 字)' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const r = await this.so.ask(String(a.page_text ?? ''), {
+          verify: { type: 'noul', instructions: String(a.expectation ?? '页面状态符合任务预期') },
+        })
+        if (!r.ok) return { text: `SystemOne 不可用:${r.error ?? '未知'}——请用常规方式自行判断` }
+        const v = r.answers.verify
+        const p = typeof v?.noul === 'number' ? v.noul : null
+        if (p === null) return { text: '判定失败:模型未返回有效概率,请用常规方式自行判断' }
+        const verdict = noulYes({ value: p, confidence: 1 }) ? '符合预期' : '不符合预期'
+        return { text: `判定:${verdict}(P=${p.toFixed(2)},置信 ${r.latencyMs}ms 内返回)。低于 0.7 时建议人工复核` }
+      },
+    }))
+    t.register(defineTool({
+      name: 'so_pick',
+      description: 'SystemOne 亚秒选择:给定目标与封闭选项集,返回最优选项 + 每项概率。适合路由/分类/元素操作选点',
+      parameters: {
+        goal: { type: 'string', description: '目标(自然语言)' },
+        state: { type: 'string', description: '当前状态上下文(元素表/页面摘要,建议 ≤2000 字)' },
+        options: { type: 'array', items: { type: 'string' }, description: '封闭选项集(2-30 个,再多请先分层)' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const options = Array.isArray(a.options) ? a.options.map(String).filter((o) => o.length > 0) : []
+        if (options.length < 2 || options.length > 30) return { text: `选项数量需在 2-30 之间(当前 ${options.length});过多请先分层(先选类目再选具体)` }
+        const r = await this.so.ask(String(a.state ?? ''), {
+          pick: { type: 'choice', instructions: String(a.goal ?? '选出最符合目标的选项'), criteria: Object.fromEntries(options.map((o) => [o, o])) },
+        })
+        if (!r.ok) return { text: `SystemOne 不可用:${r.error ?? '未知'}——请用常规方式自行选择` }
+        const pick = r.answers.pick
+        const choice = typeof pick?.choice === 'string' ? pick.choice : ''
+        const probs = pick?.probabilities ?? {}
+        const top = Object.entries(probs).sort((x, y) => (y[1] as number) - (x[1] as number)).slice(0, 3)
+          .map(([o, p2]) => `${o} ${(Number(p2) * 100).toFixed(0)}%`).join(' / ')
+        return { text: `选择:${choice}\n置信 ${(Number(pick?.confidence ?? 0) * 100).toFixed(0)}%\nTop3:${top}` }
+      },
+    }))
+  }
 
   private registerBrowserTools(): void {
     const t = this.ctx.tools
