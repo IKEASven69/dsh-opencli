@@ -52,6 +52,14 @@ afterAll(async () => {
   await (c.stop ?? c.dispose ?? (async () => {}))()
 })
 
+describe('测试隔离(状态文件不碰真实用户数据)', () => {
+  it('statePath 指向临时目录,绝不写 ~/.dsh/dsh-opencli-state.json', () => {
+    const sp = (svc as unknown as { statePath: string }).statePath
+    expect(sp).not.toContain('.dsh')
+    expect(sp).toContain('dsh-opencli-test-state')
+  })
+})
+
 describe('schedule 桩(schedule-add/list)', () => {
   it('空 site 拒绝', async () => {
     const r = await svc.scheduleAdd({ site: '  ', cron: '0 9 * * *' })

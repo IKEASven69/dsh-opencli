@@ -364,6 +364,7 @@ const CSS = `
 .o4-hpts { display:flex; gap:3px; align-items:center; }
 .o4-hp { width:7px; height:7px; border-radius:50%; background:#34C759; }
 .o4-hp.f { background:#FF453A; }
+.o4-hp.w { background:#FFB340; }
 .o4-hp.n { background:rgba(255,255,255,.1); }
 .o4-bdg { display:inline-flex; align-items:center; gap:4px; font-size:10px; border-radius:6px; padding:2px 7px; border:1px solid rgba(255,255,255,.08); color:rgba(249,250,251,.55); background:rgba(31,36,45,.8); }
 .o4-bdg.w { color:#FFB340; border-color:rgba(255,179,64,.3); background:rgba(255,179,64,.07); }
@@ -884,7 +885,9 @@ function Panel(): ReturnType<typeof createElement> {
             const hist = s.history ?? []
             const dots = [0, 1, 2, 3, 4].map((i) => {
               const h = hist[i]
-              return createElement('span', { key: i, className: `o4-hp${h === undefined ? ' n' : h.ok ? '' : ' f'}` })
+              // 静默失败(真实性判定拦截,exit 0 但内容无效)用琥珀区分硬失败(红)
+              const cls = h === undefined ? ' n' : h.ok ? '' : h.summary.includes('静默失败') || h.summary.includes('⚠') ? ' w' : ' f'
+              return createElement('span', { key: i, className: `o4-hp${cls}`, title: h?.summary ?? '' })
             })
             const okN = hist.filter((h) => h.ok).length
             return createElement('div', { key: s.id, className: 'o4-row' },

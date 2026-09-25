@@ -117,7 +117,7 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   const created = JSON.parse(fs.readFileSync(STATE, 'utf8')).schedules.length;
   ok('定时·创建落盘', created >= 1, 'schedules=' + created);
   await shot('R6-定时.png');
-  await page.evaluate(async () => { const sleep = (ms) => new Promise(r => setTimeout(r, ms)); for (let i = 0; i < 4; i++) { const d = [...document.querySelectorAll('button')].filter(x => (x.textContent || '').trim() === '删'); if (!d.length) break; d[0].click(); await sleep(1600); } });
+  await page.evaluate(async () => { const sleep = (ms) => new Promise(r => setTimeout(r, ms)); for (let i = 0; i < 40; i++) { const d = [...document.querySelectorAll('button')].filter(x => (x.textContent || '').trim() === '删'); if (!d.length) break; d[0].click(); await sleep(1600); } });
   const cleared = JSON.parse(fs.readFileSync(STATE, 'utf8')).schedules.length;
   ok('定时·删除落盘', cleared === 0, 'schedules=' + cleared);
 

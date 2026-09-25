@@ -84,7 +84,10 @@ export class OpencliService extends TypertRemoteService {
   private ingestEventList: IngestEvent[] = []
   /** 当前构建 sha256(懒计算) */
   private sha256Cache: string | null = null
-  private readonly statePath = join(homedir(), '.dsh', 'dsh-opencli-state.json')
+  // 状态路径可用 DSH_OPENCLI_STATE 覆盖(单测隔离用):否则单测会把定时任务/审计写进真实用户状态文件
+  private readonly statePath = process.env.DSH_OPENCLI_STATE !== undefined && process.env.DSH_OPENCLI_STATE.length > 0
+    ? process.env.DSH_OPENCLI_STATE
+    : join(homedir(), '.dsh', 'dsh-opencli-state.json')
   private loginCache: { at: number; results: LoginCheckResult } | null = null
   // usagePolicy：与 anweat 对齐的限流（并发/突发/冷却），默认与 anweat 一致
   private usagePolicy = { minDelayMs: 750, maxConcurrency: 2, burst: 3, cooldownMs: 30000, retryLimit: 2, maxPagesPerRun: 20, maxDepth: 2 }
