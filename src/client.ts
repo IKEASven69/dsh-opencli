@@ -149,7 +149,7 @@ const STR = {
 
 type StrKey = keyof typeof STR.zh
 
-interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; history?: Array<{ at: string; ok: boolean; summary: string }> }
+interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; history?: Array<{ at: string; ok: boolean; summary: string }> }
 interface AssetHit { id: string; name: string }
 interface BuiltinScript { name: string; sha256: string; description: string }
 interface ToastMsg { msg: string; ok: boolean }
@@ -467,6 +467,7 @@ function Panel(): ReturnType<typeof createElement> {
   // 自动化
   const [schedSite, setSchedSite] = useState('')
   const [schedCron, setSchedCron] = useState('0 9 * * *')
+  const [schedWatch, setSchedWatch] = useState('')
   const [schedBusy, setSchedBusy] = useState(false)
   const [recordings, setRecordings] = useState<Recording[]>(() => {
     try { return JSON.parse(localStorage.getItem('dsh-opencli-recordings') ?? '[]') as Recording[] } catch { return [] }
@@ -582,9 +583,10 @@ function Panel(): ReturnType<typeof createElement> {
   const addSchedule = async (): Promise<void> => {
     if (schedSite.trim().length === 0 || schedBusy) return
     setSchedBusy(true)
-    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true } } as unknown as Record<string, unknown>)
+    const watch = schedWatch.trim()
+    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, ...(watch.length > 0 ? { watch } : {}) } } as unknown as Record<string, unknown>)
     setSchedBusy(false)
-    if (r.ok) { setSchedSite(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
+    if (r.ok) { setSchedSite(''); setSchedWatch(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
   }
   const toggleSchedule = async (id: string, enabled: boolean): Promise<void> => {
     const r = await rpc('schedule-toggle', { request: { id, enabled } } as unknown as Record<string, unknown>)
@@ -874,9 +876,10 @@ function Panel(): ReturnType<typeof createElement> {
         ),
         createElement('div', { className: 'o4-sub' }, t2('autoSub')),
         !daemonUp ? createElement('div', { className: 'o4-diag bad', style: { marginBottom: '9px' }, onClick: () => { void startDaemon() } }, ic('alert', true), t2('depDaemon'), createElement('span', { className: 'o4arr' }, t2('fix'), ic('chev-r', true))) : null,
-        createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px' } },
+        createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' } },
           createElement('input', { className: 'o4-in', placeholder: 'site zhihu hot', value: schedSite, onChange: (e: { target: { value: string } }) => setSchedSite(e.target.value) }),
           createElement('input', { className: 'o4-in cron', style: { maxWidth: '110px' }, placeholder: 'cron', value: schedCron, onChange: (e: { target: { value: string } }) => setSchedCron(e.target.value) }),
+          createElement('input', { className: 'o4-in', style: { maxWidth: '190px' }, placeholder: '🔔 watch 关键词(可选,逗号分隔)', value: schedWatch, onChange: (e: { target: { value: string } }) => setSchedWatch(e.target.value) }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
         ),
         createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
@@ -894,6 +897,7 @@ function Panel(): ReturnType<typeof createElement> {
               ava(s.site.replace('site ', '').split(/\s+/)[0]),
               createElement('div', { className: 'grow', style: { minWidth: '140px' } },
                 createElement('div', { className: 'o4-tt' }, s.site),
+                s.watch !== undefined ? createElement('div', { className: 'o4-bdg w', style: { marginTop: '3px', display: 'inline-flex' } }, `🔔 ${s.watch}`) : null,
               ),
               createElement('span', { className: 'o4-hpts' }, dots),
               createElement('button', { className: 'o4-sw' + (s.enabled ? ' on' : ''), title: s.enabled ? 'enabled' : 'disabled', onClick: () => { void toggleSchedule(s.id, !s.enabled) } }),

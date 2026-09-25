@@ -81,6 +81,48 @@ describe('schedule 桩(schedule-add/list)', () => {
   })
 })
 
+describe('watch 关键词监控(主线 B 第一片)', () => {
+  type Svc = {
+    schedules: Array<{ id: string; site: string; cron: string; watch?: string }>
+    ingestEventList: Array<{ kind: string; text: string }>
+    runSiteCommand: (siteCmd: string, id: string) => Promise<void>
+    runOpencli: (argv: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+  }
+  const S = (): Svc => svc as unknown as Svc
+
+  it('schedule-add 落盘 watch 字段;重复 add 更新 watch 不产生僵尸副本', async () => {
+    const site = `wt-${Date.now()}`
+    const r1 = await svc.scheduleAdd({ site, cron: '0 9 * * *', watch: '国庆,放假' })
+    expect(r1.ok).toBe(true)
+    const r2 = await svc.scheduleAdd({ site, cron: '0 9 * * *', watch: '热搜第一' })
+    expect(r2.ok).toBe(true)
+    expect(r2.id).toBe(r1.id)
+    expect(S().schedules.filter((s) => s.site === site)).toHaveLength(1)
+    expect(S().schedules.find((s) => s.site === site)?.watch).toBe('热搜第一')
+    await svc.scheduleRemove({ id: r1.id! })
+  })
+
+  it('runSiteCommand:结果含关键词 → ingest 事件 watch-hit;不含 → 无事件', async () => {
+    const site = `wt2-${Date.now()}`
+    const r = await svc.scheduleAdd({ site, cron: '0 9 * * *', watch: '降薪,破产' })
+    const id = r.id!
+    const origRun = S().runOpencli.bind(svc)
+    S().runOpencli = async () => ({ exitCode: 0, stdout: '1 某大厂宣布全员降薪 热度984万 2 十一旅游推荐 热度500万', stderr: '' })
+    const eventsBefore = S().ingestEventList.length
+    await S().runSiteCommand(site, id)
+    expect(S().ingestEventList.length).toBe(eventsBefore + 1)
+    expect(S().ingestEventList[0]?.kind).toBe('watch-hit')
+    expect(S().ingestEventList[0]?.text).toContain('降薪')
+    // 不含关键词:无新事件
+    S().runOpencli = async () => ({ exitCode: 0, stdout: '1 某明星官宣结婚 热度442万', stderr: '' })
+    const n = S().ingestEventList.length
+    await S().runSiteCommand(site, id)
+    expect(S().ingestEventList.length).toBe(n)
+    S().runOpencli = origRun as Svc['runOpencli']
+    await svc.scheduleRemove({ id })
+  })
+})
+
 describe('schedule 开关/删除(schedule-toggle/remove)', () => {
   it('未知 id 拒绝', async () => {
     expect((await svc.scheduleToggle({ id: 'no-such', enabled: false })).ok).toBe(false)

@@ -48,8 +48,8 @@ const LOGIN_CHECK_CONCURRENCY = 3
 interface PluginState {
   approval: 'on' | 'off'
   disabled: string[]
-  /** 持久化定时任务:重启恢复,每分钟 tick 到期自动执行 site 命令 */
-  schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string; retry?: number; notify?: boolean }>
+  /** 持久化定时任务:重启恢复,每分钟 tick 到期自动执行 site 命令;watch=关键词监控(命中即通知) */
+  schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string; retry?: number; notify?: boolean; watch?: string }>
   /** 每任务运行历史(最近 5 条) */
   runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string }>>
   /** 审批门拦截审计(最近 50 条) */
@@ -813,19 +813,26 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
     const site = request.site.trim()
     const cron = request.cron.trim()
+    // watch:关键词监控(逗号/空格分隔,≤120 字符)。命中任一关键词 → ingest 事件 watch-hit。
+    // v1 故意用确定性匹配(noul 模糊"值得关注的变化"留 v2):真机实测 laya 判别力不足,宁缺勿误报。
+    const watch = typeof request.watch === 'string' && request.watch.trim().length > 0 ? request.watch.trim().slice(0, 120) : undefined
     // 幂等去重:governor 队列下 add/remove 可能乱序(重试/双击),同 site+cron 的
     // 已有任务直接复用,不再生成僵尸副本(审查复现过 3 条重复)
     const dup = this.schedules.find((s) => s.site === site && s.cron === cron)
-    if (dup !== undefined) return { ok: true, id: dup.id }
+    if (dup !== undefined) {
+      if (watch !== undefined && dup.watch !== watch) { dup.watch = watch; await this.saveState() }
+      return { ok: true, id: dup.id }
+    }
     const id = String(Date.now())
     const entry: typeof this.schedules[number] = { id, site, cron, createdAt: new Date().toISOString(), enabled: true }
     if (typeof request.retry === 'number' && Number.isFinite(request.retry)) entry.retry = Math.max(1, Math.min(5, Math.round(request.retry)))
     if (typeof request.notify === 'boolean') entry.notify = request.notify
+    if (watch !== undefined) entry.watch = watch
     this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
@@ -1317,11 +1324,13 @@ export class OpencliService extends TypertRemoteService {
     const [sSite = '', sCmd = ''] = siteCmd.split(/\s+/)
     let lastOk = false
     let lastSummary = ''
+    let lastOut = ''
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         const r = await this.runOpencli(siteCmd.split(/\s+/), 60_000)
         lastOk = r.exitCode === 0
         lastSummary = lastOk ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
+        lastOut = lastOk ? r.stdout : ''
         if (lastOk) {
           // 无人值守防线:规则命中或 noul 强失效(P<0.35)→ 按失败重试;noul 可疑(0.35-0.7)只标注不重试
           const v = await this.verifyResult(sSite, sCmd, r.stdout)
@@ -1343,6 +1352,15 @@ export class OpencliService extends TypertRemoteService {
       if (attempt < attempts) await new Promise((res) => setTimeout(res, 15_000))
     }
     this.runHistory[id] = hist.slice(0, 5)
+    // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)
+    if (lastOk && sch?.watch !== undefined && sch.watch.length > 0) {
+      const kws = sch.watch.split(/[,，\s]+/).filter((k) => k.length > 0)
+      const matched = kws.filter((k) => lastOut.includes(k))
+      if (matched.length > 0) {
+        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'watch-hit', text: `🔔 Watch 命中:${siteCmd} 出现 [${matched.join(', ')}]` })
+        this.ingestEventList = this.ingestEventList.slice(0, 30)
+      }
+    }
     if (!lastOk && notify) {
       this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'schedule-failed', text: `定时任务连续 ${attempts} 次失败:${siteCmd} — ${lastSummary}` })
       this.ingestEventList = this.ingestEventList.slice(0, 30)
