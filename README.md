@@ -24,6 +24,12 @@ dsh 内置的 web 工具是"检索"(web_search/web_fetch)。本插件给它补�
 
 以及:**没适配器的网站,让模型当场造一个**(`browser_do` analyze → init → verify,SKILL.md 内置创作循环)——越用越会浏览。
 
+### 回答的是三个被 116k★ 仓库用户正式提案的缺口
+
+- *"browser agents re-learn every site on every session"*——selectors/登录流/站点怪癖每次从头再来([browser-use#5841](https://github.com/browser-use/browser-use/issues/5841),10 评论)→ **176 站预置结构化命令就是成品答案**:站点知识预编译,不重学。
+- *"想在当前打开的 Chrome 实例/profile 上做自动化"*([browser-use#4709](https://github.com/browser-use/browser-use/issues/4709))→ **登录态原生**:所有 `site` 命令跑在用户已登录的 Chrome 里,不另起无头实例。
+- *"求结构化动作证据:动作到底改没改页面"*([browser-use#5137](https://github.com/browser-use/browser-use/issues/5137),13 评论;同源:[BrowserSkill#242](https://github.com/Tencent/BrowserSkill/issues/242) click 谎报成功)→ **执行真实性层**:采集结果经确定性规则+亚秒决策模型两层判定,`exit 0` 但内容无效会被标"疑似静默失败",无人值守定时任务直接按失败重试。
+
 ## 全功能面
 
 | 模块 | 能力 |
