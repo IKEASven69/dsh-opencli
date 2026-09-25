@@ -132,6 +132,8 @@ export class OpencliService extends TypertRemoteService {
     this.registerSiteTool()
     this.registerDecisionTools()
     this.registerApprovalGate()
+    // 决策层后台预热:laya 权重冷加载约 60s,不能让 agent 的首次 so_verify/so_pick 吃这个延迟。
+    void this.so.prewarm()
     void this.injectSystemPrompt()
     if (this.schedules.some((s) => s.enabled)) this.startScheduler()
     // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务。

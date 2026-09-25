@@ -64,6 +64,16 @@ export class SystemOne {
     return this.provider !== 'typesafe' || this.key.length > 0
   }
 
+  /** 后台预热:laya 权重冷加载约 60s,激活期就地把 1.6GB 装进内存,首次真调用才是亚秒。fire-and-forget,失败静默。 */
+  async prewarm(): Promise<void> {
+    if (this.provider !== 'laya' || this.layaLoaded) return
+    try {
+      const { Laya } = await import('@receptron/laya') as any
+      this.layaEngine = await (Laya as any).load()
+      this.layaLoaded = true
+    } catch { /* 权重缺失/依赖未装:等首次真实调用再走优雅降级 */ }
+  }
+
   async ask(state: string, questions: SOQuestions): Promise<SOAskResult> {
     const t0 = Date.now()
     try {
