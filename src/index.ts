@@ -1349,7 +1349,12 @@ export class OpencliService extends TypertRemoteService {
       }
       hist.unshift({ at: new Date().toISOString(), ok: lastOk, summary: attempts > 1 ? `#${attempt}/${attempts} ${lastSummary}` : lastSummary })
       if (lastOk) break
-      if (attempt < attempts) await new Promise((res) => setTimeout(res, 15_000))
+      if (attempt < attempts) {
+        // 风控感知退避:撞登录/风控墙时 15s 固定重试等于往枪口上撞(小红书封号是中文圈最真实恐惧,
+        // PM 调研 2026-09-25),改等 2 分钟让软封禁冷却;其他失败维持 15s。
+        const riskWall = lastSummary.includes('登录/风控墙')
+        await new Promise((res) => setTimeout(res, riskWall ? 120_000 : 15_000))
+      }
     }
     this.runHistory[id] = hist.slice(0, 5)
     // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)
