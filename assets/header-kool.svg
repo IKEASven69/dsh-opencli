@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 340" width="960" height="340" font-family="'Impact','Arial Black',sans-serif">
+  <title>dsh-opencli KOOL header — Login-As-You browser agent</title>
+  <defs>
+    <!-- 紫雾底色渐变 -->
+    <radialGradient id="bg" cx="50%" cy="55%" r="80%">
+      <stop offset="0%" stop-color="#1A0840"/>
+      <stop offset="55%" stop-color="#0A0A0F"/>
+      <stop offset="100%" stop-color="#050508"/>
+    </radialGradient>
+
+    <!-- 撕纸毛边滤镜（左上卷起）-->
+    <filter id="torn-tl" x="-15%" y="-15%" width="130%" height="130%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="14"/>
+    </filter>
+    <filter id="torn-br" x="-15%" y="-15%" width="130%" height="130%">
+      <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" seed="13"/>
+      <feDisplacementMap in="SourceGraphic" scale="16"/>
+    </filter>
+
+    <!-- 纸纹做旧 -->
+    <filter id="paper-grain" x="0%" y="0%" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="2.4" numOctaves="2" seed="3" result="grain"/>
+      <feColorMatrix in="grain" type="matrix"
+        values="0 0 0 0 0.6
+                0 0 0 0 0.6
+                0 0 0 0 0.7
+                0 0 0 0.07 0"/>
+      <feComposite in2="SourceGraphic" operator="in"/>
+    </filter>
+
+    <!-- 喷溅点散布（用 pattern 阵列）-->
+    <pattern id="spray-pink" x="0" y="0" width="160" height="160" patternUnits="userSpaceOnUse">
+      <circle cx="20" cy="30" r="1.4" fill="#FF2BD6" opacity="0.85"/>
+      <circle cx="55" cy="12" r="0.9" fill="#FF2BD6" opacity="0.7"/>
+      <circle cx="90" cy="55" r="2.1" fill="#FF2BD6" opacity="0.9"/>
+      <circle cx="130" cy="22" r="0.7" fill="#FF2BD6" opacity="0.6"/>
+      <circle cx="148" cy="80" r="1.1" fill="#FF2BD6" opacity="0.8"/>
+      <circle cx="35" cy="100" r="1.7" fill="#FF2BD6" opacity="0.85"/>
+      <circle cx="75" cy="130" r="0.8" fill="#FF2BD6" opacity="0.55"/>
+      <circle cx="120" cy="148" r="1.5" fill="#FF2BD6" opacity="0.75"/>
+      <circle cx="12" cy="70" r="0.6" fill="#FF2BD6" opacity="0.5"/>
+      <circle cx="105" cy="100" r="0.5" fill="#FF2BD6" opacity="0.45"/>
+    </pattern>
+    <pattern id="spray-cyan" x="0" y="0" width="160" height="160" patternUnits="userSpaceOnUse">
+      <circle cx="40" cy="20" r="1.2" fill="#00E5FF" opacity="0.8"/>
+      <circle cx="115" cy="40" r="0.8" fill="#00E5FF" opacity="0.6"/>
+      <circle cx="60" cy="90" r="1.6" fill="#00E5FF" opacity="0.85"/>
+      <circle cx="140" cy="120" r="0.9" fill="#00E5FF" opacity="0.7"/>
+      <circle cx="25" cy="140" r="1.3" fill="#00E5FF" opacity="0.75"/>
+      <circle cx="95" cy="135" r="0.6" fill="#00E5FF" opacity="0.5"/>
+    </pattern>
+
+    <!-- 撕纸卷起阴影 -->
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
+      <feOffset dx="2" dy="3" result="off"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- ===== 底色与全屏纸纹 ===== -->
+  <rect width="960" height="340" fill="url(#bg)"/>
+  <rect width="960" height="340" fill="url(#spray-pink)" opacity="0.55"/>
+  <rect width="960" height="340" fill="url(#spray-cyan)" opacity="0.5"/>
+
+  <!-- 大块紫色雾团 -->
+  <ellipse cx="220" cy="200" rx="260" ry="120" fill="#4B0082" opacity="0.55"/>
+  <ellipse cx="780" cy="140" rx="220" ry="100" fill="#4B0082" opacity="0.4"/>
+
+  <!-- 细刮痕（几条短白线）-->
+  <g stroke="#FFFFFF" stroke-width="1" opacity="0.18" fill="none">
+    <path d="M 60 70 L 140 56"/>
+    <path d="M 820 250 L 905 235"/>
+    <path d="M 460 30 L 540 38"/>
+    <path d="M 110 290 L 200 305"/>
+    <path d="M 700 60 L 760 52"/>
+  </g>
+
+  <!-- ===== 左上撕纸卷起（带胶带）===== -->
+  <g filter="url(#torn-tl)">
+    <path d="M 0 0 L 130 0 L 145 18 L 110 28 L 96 50 L 60 38 L 38 60 L 18 42 L 0 58 Z" fill="#F2EAD6"/>
+    <path d="M 0 58 L 18 42 L 38 60 L 60 38 L 96 50 L 110 28 L 145 18 L 130 0 L 0 0 Z" fill="#E6DAB8"/>
+    <path d="M 0 0 L 18 42 L 38 60 L 60 38 L 96 50 L 110 28 L 145 18 L 130 0 Z" fill="none" stroke="#8A7A50" stroke-width="0.8" opacity="0.5"/>
+    <!-- 卷起的纸边阴影 -->
+    <path d="M 130 0 L 145 18 L 110 28 L 96 50 L 60 38 L 38 60 L 18 42 L 0 58 L 0 0 Z" fill="black" opacity="0.35"/>
+  </g>
+  <!-- 胶带（黄胶带压角，半透明）-->
+  <g transform="translate(60 8) rotate(-12)" opacity="0.85">
+    <rect x="-6" y="-2" width="90" height="22" fill="#F5D547" opacity="0.78"/>
+    <rect x="-6" y="-2" width="90" height="22" fill="none" stroke="#C9A227" stroke-width="0.6" opacity="0.7"/>
+    <!-- 胶带纹理 -->
+    <g stroke="#B89A20" stroke-width="0.4" opacity="0.5">
+      <line x1="0" y1="4" x2="78" y2="4"/>
+      <line x1="0" y1="9" x2="78" y2="9"/>
+      <line x1="0" y1="14" x2="78" y2="14"/>
+    </g>
+  </g>
+
+  <!-- ===== 右下撕纸卷起 ===== -->
+  <g filter="url(#torn-br)">
+    <path d="M 960 340 L 830 340 L 815 322 L 850 312 L 864 290 L 900 302 L 922 280 L 942 298 L 960 282 Z" fill="#F2EAD6"/>
+    <path d="M 960 340 L 830 340 L 815 322 L 850 312 L 864 290 L 900 302 L 922 280 L 942 298 L 960 282 Z" fill="#E6DAB8"/>
+    <path d="M 960 340 L 942 298 L 922 280 L 900 302 L 864 290 L 850 312 L 815 322 L 830 340 Z" fill="none" stroke="#8A7A50" stroke-width="0.8" opacity="0.5"/>
+    <path d="M 960 340 L 942 298 L 922 280 L 900 302 L 864 290 L 850 312 L 815 322 L 830 340 Z" fill="black" opacity="0.35"/>
+  </g>
+  <!-- 右下胶带 -->
+  <g transform="translate(810 314) rotate(15)" opacity="0.85">
+    <rect x="-6" y="-2" width="84" height="20" fill="#F5D547" opacity="0.78"/>
+    <rect x="-6" y="-2" width="84" height="20" fill="none" stroke="#C9A227" stroke-width="0.6" opacity="0.7"/>
+  </g>
+
+  <!-- ===== 中央浏览器窗口 ===== -->
+  <g transform="translate(90 80)" filter="url(#soft-shadow)">
+    <!-- 窗口外框（撕纸毛边）-->
+    <g filter="url(#torn-tl)">
+      <rect x="0" y="0" width="520" height="210" rx="6" fill="#150A28" stroke="#FF2BD6" stroke-width="2.2"/>
+    </g>
+    <!-- 标题栏 -->
+    <rect x="0" y="0" width="520" height="28" rx="6" fill="#1F0F3A"/>
+    <rect x="0" y="0" width="520" height="28" fill="#FF2BD6" opacity="0.18"/>
+    <!-- 三圆点 -->
+    <circle cx="14" cy="14" r="5" fill="#FF5F57"/>
+    <circle cx="30" cy="14" r="5" fill="#FEBC2E"/>
+    <circle cx="46" cy="14" r="5" fill="#28C840"/>
+    <!-- 地址栏 -->
+    <rect x="70" y="6" width="370" height="16" rx="3" fill="#0A0612" stroke="#4B0082" stroke-width="1"/>
+    <text x="80" y="18" font-size="10" font-family="monospace" fill="#00E5FF" opacity="0.9">opencli://daemon · 170 sites online</text>
+    <!-- 状态点 -->
+    <circle cx="510" cy="14" r="3.5" fill="#00E5FF">
+      <animate attributeName="opacity" values="0.4;1;0.4" dur="1.6s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- 地址栏下分割 -->
+    <line x1="0" y1="28" x2="520" y2="28" stroke="#4B0082" stroke-width="1"/>
+
+    <!-- 站点网格 10x4 = 40 站点（隐喻 170+）-->
+    <g transform="translate(16 42)" font-family="monospace" font-size="9" fill="#FFFFFF">
+      <!-- 行 1 -->
+      <g><rect x="0"   y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">bilibili</text></g>
+      <g><rect x="50"  y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="56" cy="6" r="2.4" fill="#00E5FF"/><text x="62" y="15" fill="#00E5FF">zhihu</text></g>
+      <g><rect x="100" y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="106" cy="6" r="2.4" fill="#FF2BD6"/><text x="112" y="15" fill="#FF2BD6">weibo</text></g>
+      <g><rect x="150" y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="156" cy="6" r="2.4" fill="#00E5FF"/><text x="162" y="15" fill="#00E5FF">github</text></g>
+      <g><rect x="200" y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="206" cy="6" r="2.4" fill="#FF2BD6"/><text x="212" y="15" fill="#FF2BD6">xhs</text></g>
+      <g><rect x="250" y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="256" cy="6" r="2.4" fill="#00E5FF"/><text x="262" y="15" fill="#00E5FF">douban</text></g>
+      <g><rect x="300" y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="306" cy="6" r="2.4" fill="#FF2BD6"/><text x="312" y="15" fill="#FF2BD6">wechat</text></g>
+      <g><rect x="350" y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="356" cy="6" r="2.4" fill="#00E5FF"/><text x="362" y="15" fill="#00E5FF">12306</text></g>
+      <g><rect x="400" y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="406" cy="6" r="2.4" fill="#FF2BD6"/><text x="412" y="15" fill="#FF2BD6">twitter</text></g>
+      <g><rect x="450" y="0" width="46" height="22" rx="2" fill="#1A0840"/><circle cx="456" cy="6" r="2.4" fill="#00E5FF"/><text x="462" y="15" fill="#00E5FF">reddit</text></g>
+      <!-- 行 2 -->
+      <g transform="translate(0 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">yt</text></g>
+      <g transform="translate(50 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">taobao</text></g>
+      <g transform="translate(100 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">jd</text></g>
+      <g transform="translate(150 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">meituan</text></g>
+      <g transform="translate(200 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">gaode</text></g>
+      <g transform="translate(250 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">ctrip</text></g>
+      <g transform="translate(300 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">jdjr</text></g>
+      <g transform="translate(350 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">notion</text></g>
+      <g transform="translate(400 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">linear</text></g>
+      <g transform="translate(450 26)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">figma</text></g>
+      <!-- 行 3 -->
+      <g transform="translate(0 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">gitlab</text></g>
+      <g transform="translate(50 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">jira</text></g>
+      <g transform="translate(100 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">slack</text></g>
+      <g transform="translate(150 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">discord</text></g>
+      <g transform="translate(200 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">tg</text></g>
+      <g transform="translate(250 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">tiktok</text></g>
+      <g transform="translate(300 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">ig</text></g>
+      <g transform="translate(350 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">fb</text></g>
+      <g transform="translate(400 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">lkdn</text></g>
+      <g transform="translate(450 52)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#FF2BD6"/><text x="12" y="15" fill="#FF2BD6">yt-music</text></g>
+      <!-- 行 4 -->
+      <g transform="translate(0 78)"><rect width="46" height="22" rx="2" fill="#1A0840"/><circle cx="6" cy="6" r="2.4" fill="#00E5FF"/><text x="12" y="15" fill="#00E5FF">+160 more</text></g>
+    </g>
+
+    <!-- 底部 footer 文字 -->
+    <text x="16" y="200" font-size="9" font-family="monospace" fill="#FFFFFF" opacity="0.55">$ site zhihu hot · site weibo post · browser_open · browser_state · browser_click</text>
+  </g>
+
+  <!-- ===== 审批弹窗小卡（叠在浏览器右上）===== -->
+  <g transform="translate(560 110) rotate(-3)" filter="url(#soft-shadow)">
+    <g filter="url(#torn-tl)">
+      <rect x="0" y="0" width="260" height="100" rx="4" fill="#FFF6E0" stroke="#1A0840" stroke-width="1.5"/>
+    </g>
+    <!-- 撕纸胶带 -->
+    <g transform="translate(100 -10) rotate(-4)" opacity="0.85">
+      <rect x="-6" y="-2" width="68" height="16" fill="#F5D547" opacity="0.8"/>
+      <rect x="-6" y="-2" width="68" height="16" fill="none" stroke="#C9A227" stroke-width="0.5" opacity="0.7"/>
+    </g>
+    <!-- 标题 -->
+    <text x="14" y="22" font-size="13" font-weight="900" fill="#1A0840">⚠ APPROVE?</text>
+    <line x1="14" y1="28" x2="246" y2="28" stroke="#1A0840" stroke-width="0.6" opacity="0.5"/>
+    <!-- 内容 -->
+    <text x="14" y="46" font-size="10" font-family="monospace" fill="#1A0840">site weibo post --text</text>
+    <text x="14" y="60" font-size="10" font-family="monospace" fill="#4B0082">  "今晚 KOOL 到家"</text>
+    <!-- 按钮 -->
+    <g transform="translate(14 72)">
+      <rect x="0" y="0" width="70" height="20" rx="2" fill="#FF2BD6"/>
+      <text x="35" y="14" text-anchor="middle" font-size="11" font-weight="900" fill="#FFFFFF">YES</text>
+      <rect x="80" y="0" width="70" height="20" rx="2" fill="#1A0840"/>
+      <text x="115" y="14" text-anchor="middle" font-size="11" font-weight="900" fill="#FFFFFF">NO</text>
+    </g>
+  </g>
+
+  <!-- ===== 右侧"OPEN"大泡泡字（倾斜）===== -->
+  <g transform="translate(640 60) rotate(10)">
+    <!-- 黑紫描边+粉填色泡泡字 -->
+    <text x="0" y="60" font-size="74" font-weight="900" fill="#1A0840" stroke="#FF2BD6" stroke-width="3" stroke-linejoin="round" letter-spacing="-2">OPEN!</text>
+    <text x="2" y="62" font-size="74" font-weight="900" fill="#FF2BD6" stroke="#1A0840" stroke-width="1" letter-spacing="-2" opacity="0.95">OPEN!</text>
+    <!-- 闪电尾巴 -->
+    <path d="M 240 55 L 258 42 L 246 56 L 268 50 L 248 72 L 258 60 L 240 68 Z" fill="#00E5FF" stroke="#1A0840" stroke-width="1.2"/>
+  </g>
+
+  <!-- ===== 顶部左上主标语 ===== -->
+  <g transform="translate(170 56) rotate(-2)">
+    <text x="0" y="0" font-size="34" font-weight="900" fill="#FF2BD6" stroke="#1A0840" stroke-width="2" stroke-linejoin="round" letter-spacing="-1">LOGIN AS YOU.</text>
+    <text x="0" y="0" font-size="34" font-weight="900" fill="none" stroke="#00E5FF" stroke-width="0.6" letter-spacing="-1" opacity="0.85">LOGIN AS YOU.</text>
+  </g>
+
+  <!-- ===== 副标 ===== -->
+  <g transform="translate(176 92) rotate(-1)">
+    <text x="0" y="0" font-size="14" font-weight="700" fill="#00E5FF" letter-spacing="2">DSH × OPENCLI · 170+ SITES · STRUCTURED RETURNS</text>
+  </g>
+
+  <!-- ===== 底部命令行模拟 ===== -->
+  <g transform="translate(90 304)">
+    <text x="0" y="0" font-size="13" font-family="monospace" fill="#00E5FF" opacity="0.9">&gt; _</text>
+    <text x="22" y="0" font-size="13" font-family="monospace" fill="#FF2BD6" opacity="0.9">dsh ▸ site zhihu hot</text>
+    <rect x="22" y="-10" width="8" height="14" fill="#FF2BD6" opacity="0.9">
+      <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+
+  <!-- ===== 装饰性大喷溅 ===== -->
+  <g transform="translate(820 230)" opacity="0.9">
+    <circle cx="0" cy="0" r="3" fill="#FF2BD6"/>
+    <circle cx="-12" cy="-4" r="1.8" fill="#FF2BD6"/>
+    <circle cx="10" cy="-8" r="1.2" fill="#FF2BD6"/>
+    <circle cx="-6" cy="10" r="1.6" fill="#FF2BD6"/>
+    <circle cx="18" cy="6" r="0.8" fill="#FF2BD6"/>
+    <circle cx="-20" cy="2" r="0.6" fill="#FF2BD6"/>
+  </g>
+  <g transform="translate(140 240)" opacity="0.9">
+    <circle cx="0" cy="0" r="2.5" fill="#00E5FF"/>
+    <circle cx="14" cy="-3" r="1.2" fill="#00E5FF"/>
+    <circle cx="-10" cy="6" r="1.6" fill="#00E5FF"/>
+    <circle cx="6" cy="12" r="0.9" fill="#00E5FF"/>
+    <circle cx="-16" cy="-2" r="0.6" fill="#00E5FF"/>
+  </g>
+
+  <!-- ===== 右下署名（按 --sign KOOL）===== -->
+  <g transform="translate(880 332)">
+    <text x="0" y="0" font-size="10" font-weight="900" font-family="monospace" fill="#1A0840">KOOL</text>
+    <text x="0" y="0" font-size="10" font-weight="900" font-family="monospace" fill="#FF2BD6" opacity="0.95">KOOL</text>
+  </g>
+
+  <!-- ===== 顶部纸纹做旧（极淡）===== -->
+  <rect width="960" height="340" fill="white" opacity="0.04" filter="url(#paper-grain)"/>
+</svg>
