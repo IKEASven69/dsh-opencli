@@ -133,7 +133,8 @@ export class OpencliService extends TypertRemoteService {
     this.registerDecisionTools()
     this.registerApprovalGate()
     // 决策层后台预热:laya 权重冷加载约 60s,不能让 agent 的首次 so_verify/so_pick 吃这个延迟。
-    void this.so.prewarm()
+    // vitest 里跳过:测试会拉起真实 service,后台真加载权重既慢又晃动测试进程。
+    if (process.env.VITEST === undefined) void this.so.prewarm()
     void this.injectSystemPrompt()
     if (this.schedules.some((s) => s.enabled)) this.startScheduler()
     // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务。
@@ -176,7 +177,7 @@ export class OpencliService extends TypertRemoteService {
         })
         if (!r.ok) return { text: `SystemOne 不可用:${r.error ?? '未知'}——请用常规方式自行判断` }
         const v = r.answers.verify
-        const p = typeof v?.noul === 'number' ? v.noul : null
+        const p = typeof v?.value === 'number' ? v.value : null
         if (p === null) return { text: '判定失败:模型未返回有效概率,请用常规方式自行判断' }
         const verdict = noulYes({ value: p, confidence: 1 }) ? '符合预期' : '不符合预期'
         return { text: `判定:${verdict}(P=${p.toFixed(2)},置信 ${r.latencyMs}ms 内返回)。低于 0.7 时建议人工复核` }
@@ -199,7 +200,7 @@ export class OpencliService extends TypertRemoteService {
         })
         if (!r.ok) return { text: `SystemOne 不可用:${r.error ?? '未知'}——请用常规方式自行选择` }
         const pick = r.answers.pick
-        const choice = typeof pick?.choice === 'string' ? pick.choice : ''
+        const choice = typeof pick?.value === 'string' ? pick.value : ''
         const probs = pick?.probabilities ?? {}
         const top = Object.entries(probs).sort((x, y) => (y[1] as number) - (x[1] as number)).slice(0, 3)
           .map(([o, p2]) => `${o} ${(Number(p2) * 100).toFixed(0)}%`).join(' / ')
@@ -368,7 +369,7 @@ export class OpencliService extends TypertRemoteService {
     }))
     t.register(defineTool({
       name: 'site_batch',
-      description: '批量采集:一条 site 子命令 fan-out 到多个站点并行执行,汇总各站结果。例:sites=["zhihu","weibo","bilibili"], command="hot" 同时拉三站热榜。',
+      description: '批量采集:一条 site 子命令 fan-out 到多个站点并行执行,汇总各站结果;每站结果经 SystemOne noul 真实性判定(空结果/风控页会被标"疑似静默失败")。例:sites=["zhihu","weibo","bilibili"], command="hot" 同时拉三站热榜。',
       parameters: {
         command: { type: 'string', description: 'site 子命令(不含站点名),如 hot/search/recent' },
         sites: { type: 'array', items: { type: 'string' }, description: '站点名列表(2-6 个)' },
@@ -381,18 +382,29 @@ export class OpencliService extends TypertRemoteService {
         if (!command) return { text: 'command 不能为空。' }
         if (sites.length < 2) return { text: 'sites 至少 2 个站点。' }
         if (sites.some((x) => !/^[\w.-]+$/.test(x))) return { text: '站点名含非法字符。' }
+        // 派发前目录预检(只读缓存,不触发 list):站点不存在立刻提醒,省 45s 超时
+        let known: Set<string> | null = null
+        if (this.adapterCache !== null && Date.now() - this.adapterCache.at < ADAPTER_TTL_MS) {
+          known = new Set(normalizeAdapterList(this.adapterCache.json).map((x) => String(x.name).toLowerCase()))
+        }
+        const unknownSites = known === null ? [] : sites.filter((s) => !known!.has(s))
         const args = Array.isArray(a.args) ? a.args.map(String) : []
         const results = await Promise.all(sites.map(async (site) => {
           try {
             const out = await this.runOpencli([site, command, ...args], 45_000)
-            return { site, ok: out.exitCode === 0, text: (out.exitCode === 0 ? out.stdout : out.stderr).slice(0, 900) }
+            if (out.exitCode !== 0) return { site, ok: false, badge: '', text: out.stderr.slice(0, 900) }
+            const v = await this.verifyResult(site, command, out.stdout)
+            return { site, ok: true, badge: this.verifyBadge(v), text: out.stdout.slice(0, 900) }
           } catch (err: unknown) {
-            return { site, ok: false, text: err instanceof Error ? err.message.slice(0, 200) : 'failed' }
+            return { site, ok: false, badge: '', text: err instanceof Error ? err.message.slice(0, 200) : 'failed' }
           }
         }))
         const okN = results.filter((r) => r.ok).length
-        const body = results.map((r) => `== ${r.site} ${r.ok ? '✓' : '✗'} ==\n${r.text}`).join('\n\n')
-        return { text: `批量采集 ${okN}/${sites.length} 站成功:\n\n${body}` }
+        const silentN = results.filter((r) => r.badge.includes('疑似静默失败')).length
+        const head = `批量采集 ${okN}/${sites.length} 站成功${silentN > 0 ? `,其中 ${silentN} 站疑似静默失败(exit 0 但内容无效)` : ''}:\n\n`
+        const pre = unknownSites.length > 0 ? `目录预检:以下站点不在适配器目录,请确认拼写:${unknownSites.join(', ')}\n\n` : ''
+        const body = results.map((r) => `== ${r.site} ${r.ok ? '✓' : '✗'}${r.badge} ==\n${r.text}`).join('\n\n')
+        return { text: pre + head + body }
       },
     }))
 
@@ -675,6 +687,51 @@ export class OpencliService extends TypertRemoteService {
     void this.saveState()
   }
 
+  /**
+   * 执行结果真实性判定:exit 0 ≠ 拿到有效数据——上游静默失败类 issue
+   * (#2497 EMPTY_RESULT/#2469 600B 壳/#2520 假成功)的插件侧防线。site_batch/try-run/定时三处共用。
+   * 两层:①确定性规则(opencli 失败词汇表/错误 JSON/空输出)——真机实测 laya 对这类文本判别力不足(P≈0.9),规则是主力;
+   * ②laya noul 兜底判未知形态,只做标注。返回:null=不可用(调用方走原行为);verdict=false 即拦截级失败;
+   * noul 0.35-0.7 可疑(verdict=true 但 p<0.7)。真机判别数据见 docs/USER-NEEDS-RESEARCH-20260925.md。
+   */
+  private async verifyResult(site: string, command: string, text: string): Promise<{ verdict: boolean; p: number; why?: string } | null> {
+    const trimmed = text.trim()
+    if (trimmed.length === 0 || trimmed === '[]') return { verdict: false, p: 0, why: '空输出' }
+    // 规则层:opencli 已知失败词汇 + 风控/登录墙关键词(实测覆盖 #2497/#2515/#2528/#2470 类)
+    const head = trimmed.slice(0, 2000)
+    const RULES: Array<[RegExp, string]> = [
+      [/EMPTY_RESULT|NO_DATA|AUTH_REQUIRED|NOT_LOGGED_IN|RATE_LIMITED|NAVIGATION_REJECTED|COMMAND_EXEC/i, 'opencli 失败标记'],
+      [/请先登录|未登录|登录已过期|请完成验证|验证码|人机验证|扫码登录/, '登录/风控墙'],
+      [/login (first|required)|please (log ?in|sign ?in)|access denied|verifying your browser|just a moment|challenge|captcha/i, '登录/风控墙'],
+    ]
+    for (const [re, why] of RULES) {
+      if (re.test(head)) return { verdict: false, p: 0.05, why }
+    }
+    try {
+      const j = JSON.parse(head) as unknown
+      if (j !== null && typeof j === 'object' && 'error' in (j as Record<string, unknown>)) return { verdict: false, p: 0.05, why: '错误 JSON' }
+    } catch { /* 非 JSON:继续 */ }
+    // noul 兜底:只对规则放行的文本做模型判定
+    if (!this.so.configured) return null
+    const r = await this.so.ask(head, {
+      valid: { type: 'noul', instructions: `site ${site} ${command} 的输出包含真实的网站数据内容` },
+    })
+    if (!r.ok) return null
+    const v = r.answers.valid
+    // 注意:两个 provider 都归一化为 {type,value,confidence}——读 value,不要读原始字段名 noul
+    const p = typeof v?.value === 'number' ? v.value : null
+    if (p === null) return null
+    return { verdict: p >= 0.35, p, ...(p < 0.7 ? { why: '模型判定可疑' } : {}) }
+  }
+
+  /** 把判定结果翻译成人读的标注(无判定返回空串)。 */
+  private verifyBadge(v: { verdict: boolean; p: number; why?: string } | null): string {
+    if (v === null) return ''
+    if (!v.verdict) return `(⚠ 疑似静默失败:${v.why ?? `P=${v.p.toFixed(2)}`})`
+    if (v.p < 0.7) return `(⚠ 内容可疑:P=${v.p.toFixed(2)},建议复核)`
+    return `(实测有效 P=${v.p.toFixed(2)})`
+  }
+
   @Remote('approval-set')
   async approvalSet(request: ApprovalSetRequest): Promise<ApprovalSetResult> {
     this.state.approval = request.enabled ? 'on' : 'off'
@@ -891,8 +948,13 @@ export class OpencliService extends TypertRemoteService {
     const out = await this.runOpencli([adapter, command, ...args])
     const text = this.renderOut(out)
     if (out.exitCode !== 0) return { ok: false, error: text }
-    if (text.trim() === '[]') return { ok: false, error: `适配器 ${adapter} 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 ${adapter}，或运行 \`opencli ${adapter} login\` 后用面板“巡检登录态”确认。` }
-    return { ok: true, text }
+    // 真实性判定:exit 0 也可能拿到空结果/风控页/登录提示(上游静默失败类的面板侧防线)
+    const v = await this.verifyResult(adapter, command, out.stdout)
+    if (v !== null && !v.verdict) {
+      return { ok: false, error: `适配器 ${adapter} 返回的内容被判定无效(P=${v.p.toFixed(2)},${v.why ?? '内容异常'})。请先在真实 Chrome 登录 ${adapter},或运行 \`opencli ${adapter} login\` 后用面板“巡检登录态”确认。原文:${text.slice(0, 300)}` }
+    }
+    const badge = this.verifyBadge(v)
+    return { ok: true, text: badge ? `${badge} ${text}` : text }
   }
 
   @Remote('replay')
@@ -1249,6 +1311,7 @@ export class OpencliService extends TypertRemoteService {
     const attempts = Math.max(1, Math.min(5, sch?.retry ?? 3))
     const notify = sch?.notify !== false
     const hist = this.runHistory[id] ?? []
+    const [sSite = '', sCmd = ''] = siteCmd.split(/\s+/)
     let lastOk = false
     let lastSummary = ''
     for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -1256,6 +1319,18 @@ export class OpencliService extends TypertRemoteService {
         const r = await this.runOpencli(siteCmd.split(/\s+/), 60_000)
         lastOk = r.exitCode === 0
         lastSummary = lastOk ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
+        if (lastOk) {
+          // 无人值守防线:规则命中或 noul 强失效(P<0.35)→ 按失败重试;noul 可疑(0.35-0.7)只标注不重试
+          const v = await this.verifyResult(sSite, sCmd, r.stdout)
+          if (v !== null) {
+            if (!v.verdict) {
+              lastOk = false
+              lastSummary = `静默失败(${v.why ?? `P=${v.p.toFixed(2)}`}):${lastSummary}`
+            } else if (v.p < 0.7) {
+              lastSummary = `⚠ 可疑(P=${v.p.toFixed(2)}) ${lastSummary}`
+            }
+          }
+        }
       } catch (e) {
         lastOk = false
         lastSummary = e instanceof Error ? e.message.slice(0, 120) : 'failed'

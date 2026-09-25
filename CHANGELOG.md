@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+### 执行真实性层(“失败要说真话”——W2 落地)
+- 新增 `verifyResult` 两层判定,三处执行面共用:**site_batch**(每站结果标注 实测有效/疑似静默失败,汇总计数;派发前目录预检拼写错误)、**try-run**(面板“试试看”:空结果/风控页/登录墙直接报 ok:false 并给原因,不再假成功)、**定时任务**(规则命中或 noul 强失效按失败重试,可疑只标注)
+- 第一层为确定性规则(opencli 失败词汇 EMPTY_RESULT/AUTH_REQUIRED/NAVIGATION_REJECTED + 登录墙/风控关键词 + 错误 JSON),零推理、零延迟
+- 第二层 laya noul 兜底判未知形态;**真机实测:laya 对明显错误文本判别力不足(P≈0.9)**,故只对规则放行的文本做模型判定、可疑仅标注——判别数据见 docs/USER-NEEDS-RESEARCH-20260925.md
+- 修复:typesafe/laya 两 provider 应答归一化不一致(choice/noul/score → 统一 {type,value,confidence}),此前 laya(默认 provider)下 so_verify/so_pick 运行时读不到结果、整层静默失效
+- SystemOne 不可用时全部路径降级为原行为,零功能损失;测试 53→61 全绿
+
 ### SystemOne 决策层(亚秒决策,不耗大模型 token)
 - 新增 agent 工具 `so_verify`(noul 断言:P(页面符合预期),亚秒)与 `so_pick`(choice:封闭选项集选点,2-30 项,返回 Top3 概率);低置信/不可用时提示回退常规判断,零功能损失
 - provider 三选一:**laya**(默认,@receptron/laya 本地 ONNX,免费/离线/隐私,懒加载——未装权重时优雅降级)/ **typesafe**(官方 Jev API,key 取 `TYPESAFE_API_KEY` 或 `~/.dsh/typesafe-key`)/ passthrough

@@ -105,7 +105,7 @@ export class SystemOne {
     return { ok: true, answers, latencyMs: Date.now() - t0 }
   }
 
-  /** typesafe 官方 API:state+questions POST。 */
+  /** typesafe 官方 API:state+questions POST。响应与 laya 同一归一化形状({type,value,confidence}),读取方才不用分 provider。 */
   private async askTypesafe(state: string, questions: SOQuestions): Promise<SOAskResult> {
     const t0 = Date.now()
     const res = await fetch(this.endpoint, {
@@ -118,8 +118,14 @@ export class SystemOne {
       const body = (await res.text()).slice(0, 200)
       return { ok: false, answers: {}, latencyMs: Date.now() - t0, error: `HTTP ${res.status}: ${body}` }
     }
-    const j = (await res.json()) as { answers?: SOAnswer; model?: string }
-    return { ok: true, answers: j.answers ?? {}, latencyMs: Date.now() - t0 }
+    const j = (await res.json()) as { answers?: Record<string, any> }
+    const answers: SOAnswer = {}
+    for (const [name, a] of Object.entries(j.answers ?? {})) {
+      if (a.choice !== undefined) answers[name] = { type: 'choice', value: a.choice, confidence: a.confidence ?? 0.5, probabilities: a.probabilities }
+      else if (a.noul !== undefined) answers[name] = { type: 'noul', value: a.noul, confidence: a.confidence ?? 0.5 }
+      else if (a.score !== undefined) answers[name] = { type: 'score', value: a.score, confidence: a.confidence ?? 0.5 }
+    }
+    return { ok: true, answers, latencyMs: Date.now() - t0 }
   }
 }
 

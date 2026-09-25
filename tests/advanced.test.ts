@@ -21,8 +21,11 @@ class StubShell extends Service {
 }
 
 class StubTools extends Service {
+  readonly registered = new Map<string, { execute: (a: unknown) => Promise<{ text: string }> }>()
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'tools') }
-  register(): void {}
+  register(def: { name: string; execute: (a: unknown) => Promise<{ text: string }> }): void {
+    this.registered.set(def.name, def)
+  }
 }
 
 class StubSystemPrompt extends Service {
@@ -40,6 +43,8 @@ beforeAll(async () => {
   await ctx.plugin(StubSystemPrompt)
   await ctx.plugin(OpencliService)
   svc = ctx.opencli as OpencliService
+  // 默认装"SystemOne 不可用"桩:verifyResult 走 null 降级,老行为全部保持
+  ;(svc as unknown as { so: unknown }).so = { configured: false, ask: async () => ({ ok: false, answers: {}, latencyMs: 0, error: 'stub-unavailable' }) }
 })
 
 afterAll(async () => {
@@ -105,6 +110,95 @@ describe('try-run(面板“试试看”后端)', () => {
   it('合法 site 行透传桩 shell 成功', async () => {
     const r = await svc.tryRun({ line: 'site arxiv recent cs.AI' })
     expect(r.ok).toBe(true)
+  })
+})
+
+describe('真实性判定(noul 体检:site_batch/try-run 共用)', () => {
+  function installSoStub(opts: { bySite?: Record<string, number>; unavailable?: boolean }): { calls: number } {
+    const state = { calls: 0 }
+    ;(svc as unknown as { so: unknown }).so = {
+      configured: !opts.unavailable,
+      ask: async (_stateText: string, questions: { valid?: { instructions?: string } }) => {
+        state.calls++
+        if (opts.unavailable) return { ok: false, answers: {}, latencyMs: 1, error: 'mock-down' }
+        const m = /site (\S+) /.exec(questions.valid?.instructions ?? '')
+        const p = opts.bySite?.[m?.[1] ?? ''] ?? 0.95
+        return { ok: true, latencyMs: 2, answers: { valid: { type: 'noul', value: p, confidence: 0.9 } } }
+      },
+    }
+    return state
+  }
+  const verifyResult = (s: string, c: string, t: string): Promise<{ verdict: boolean; p: number; why?: string } | null> =>
+    (svc as unknown as { verifyResult: (...a: [string, string, string]) => Promise<{ verdict: boolean; p: number; why?: string } | null> }).verifyResult.call(svc, s, c, t)
+
+  it('try-run:exit 0 但内容强失效(P=0.05)→ ok:false 并说明原因', async () => {
+    installSoStub({ bySite: { arxiv: 0.05 } })
+    const r = await svc.tryRun({ line: 'site arxiv recent cs.AI' })
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('判定无效')
+    expect(r.error).toContain('P=0.05')
+  })
+
+  it('try-run:内容有效(P=0.95)→ ok:true 且带实测有效标注', async () => {
+    installSoStub({ bySite: { arxiv: 0.95 } })
+    const r = await svc.tryRun({ line: 'site arxiv recent cs.AI' })
+    expect(r.ok).toBe(true)
+    expect(r.text).toContain('实测有效')
+    expect(r.text).toContain('P=0.95')
+  })
+
+  it('verifyResult:空结果走快速通道,不消耗推理调用', async () => {
+    const state = installSoStub({})
+    const v = await verifyResult('zhihu', 'hot', '[]')
+    expect(v).toEqual({ verdict: false, p: 0, why: '空输出' })
+    expect(state.calls).toBe(0)
+  })
+
+  it('verifyResult:规则层命中失败词汇/风控墙/错误 JSON,均不消耗推理', async () => {
+    const state = installSoStub({})
+    for (const text of [
+      'EMPTY_RESULT: no data returned for this query',
+      '{"error":"Navigation rejected","code":"COMMAND_EXEC"}',
+      '请先登录后再继续操作,或运行 opencli zhihu login',
+      'Verifying your browser before accessing — click the checkbox to continue',
+    ]) {
+      const v = await verifyResult('reddit', 'hot', text)
+      expect(v?.verdict).toBe(false)
+      expect(v?.why).toBeTruthy()
+    }
+    expect(state.calls).toBe(0)
+  })
+
+  it('verifyResult:正常文本走 noul 兜底(消耗一次推理)', async () => {
+    const state = installSoStub({ bySite: { zhihu: 0.93 } })
+    const v = await verifyResult('zhihu', 'hot', '1 某大厂宣布全员降薪 热度984万 2 十一旅游推荐 热度500万')
+    expect(v).toEqual({ verdict: true, p: 0.93 })
+    expect(state.calls).toBe(1)
+  })
+
+  it('verifyResult:noul 低置信(0.5)→ 可疑但 verdict=true(只标注)', async () => {
+    installSoStub({ bySite: { zhihu: 0.5 } })
+    const v = await verifyResult('zhihu', 'hot', '一段规则放行的普通文本内容')
+    expect(v?.verdict).toBe(true)
+    expect(v?.p).toBeCloseTo(0.5)
+    expect(v?.why).toContain('可疑')
+  })
+
+  it('try-run:SystemOne 不可用 → 降级为原行为(不标注不拦截)', async () => {
+    installSoStub({ unavailable: true })
+    const r = await svc.tryRun({ line: 'site arxiv recent cs.AI' })
+    expect(r.ok).toBe(true)
+    expect(r.text).not.toContain('实测')
+  })
+
+  it('site_batch:混合结果 → 逐站标注 + 汇总疑似静默失败计数', async () => {
+    installSoStub({ bySite: { zhihu: 0.93, weibo: 0.08 } })
+    const tool = ctx.tools.registered.get('site_batch')
+    expect(tool).toBeDefined()
+    const r = await tool!.execute({ command: 'hot', sites: ['zhihu', 'weibo'] })
+    expect(r.text).toContain('1 站疑似静默失败')
+    expect(r.text).toContain('== zhihu ✓(实测有效 P=0.93)')
+    expect(r.text).toContain('== weibo ✓(⚠ 疑似静默失败')
   })
 })
 

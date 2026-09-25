@@ -34,14 +34,16 @@ describe('SystemOne 决策层(typesafe provider 对 mock 端点)', () => {
     so = new SystemOne({ provider: 'typesafe', key: 'test-key', endpoint: 'http://127.0.0.1:9245/v1/systemone' })
   })
 
-  it('ask:发 state+questions,结构化解析应答', async () => {
+  it('ask:发 state+questions,两 provider 统一归一化为 {type,value,confidence}', async () => {
     const r = await so.ask('页面状态', {
       pick: { type: 'choice', instructions: '选命令', criteria: { 'site zhihu hot': '热榜' } },
       verify: { type: 'noul', instructions: '页面符合预期' },
     })
     expect(r.ok).toBe(true)
-    expect(r.answers.pick?.choice).toBe('site zhihu hot')
-    expect(r.answers.verify?.noul).toBeCloseTo(0.91)
+    expect(r.answers.pick?.type).toBe('choice')
+    expect(r.answers.pick?.value).toBe('site zhihu hot')
+    expect(r.answers.verify?.type).toBe('noul')
+    expect(r.answers.verify?.value).toBeCloseTo(0.91)
   })
 
   it('noulYes 判定:高置信真值', () => {
