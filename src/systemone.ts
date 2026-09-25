@@ -1,18 +1,21 @@
 /**
  * SystemOne 决策层:封闭选项集的高频决策(命令选择/verify 断言/风险分级/步骤操作)
- * 下放到亚秒决策模型(TypeSafe Jev API),任何失败/超时/低置信由调用方回退现有 LLM 路径。
+ * 下放到亚秒决策模型(laya 本地 ONNX / TypeSafe Jev API),任何失败/超时/低置信由调用方回退现有 LLM 路径。
  *
- * provider 抽象:typesafe(官方 API,key)/ laya(@receptron/laya 本地 ONNX,预留)/ passthrough。
+ * provider 三选一:laya(本地 ONNX,免费/离线/隐私最优)/ typesafe(官方 API)/ passthrough(直通)。
  * key 来源:TYPESAFE_API_KEY 环境变量,或 ~/.dsh/typesafe-key 文件(优先环境变量)。
  * @module dsh-opencli/systemone
  */
 
-export type SOType = 'choice' | 'score' | 'noul'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+export type SOProviderType = 'laya' | 'typesafe' | 'passthrough'
 
 export interface SOQuestion {
-  type: SOType
+  type: 'choice' | 'score' | 'noul'
   instructions: string
-  /** choice: 选项→描述;score: 等级→描述(有序);noul 不需要 */
   criteria?: Record<string, string>
 }
 
@@ -21,7 +24,6 @@ export type SOQuestions = Record<string, SOQuestion>
 export interface SOAnswer {
   [name: string]: {
     type: SOType
-    /** choice: 选中的选项;score: 期望等级;noul: P(true) */
     value: string | number | null
     confidence: number
     probabilities?: Record<string, number>
@@ -38,33 +40,64 @@ export interface SOAskResult {
 const ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
 const TIMEOUT_MS = 15_000
 
-/** 决策层封装:读 key、发 state+questions、结构化返回。错误不吞,由调用方降级。 */
+function loadKeyFromFile(): string {
+  try {
+    return readFileSync(join(homedir(), '.dsh', 'typesafe-key'), 'utf8').trim()
+  } catch { return '' }
+}
+
+/** 决策层封装:provider 三选一,ask() 统一入口。错误不吞,由调用方降级。 */
 export class SystemOne {
+  private provider: SOProviderType
   private key: string
   private endpoint: string
+  private layaLoaded = false
+  private layaEngine: { systemOne(state: unknown, q: unknown): Promise<{ answers: Record<string, any> }> } | null = null
 
-  constructor(key?: string, endpoint?: string) {
-    this.key = key ?? SystemOne.loadKey()
-    this.endpoint = endpoint ?? ENDPOINT
-  }
-
-  static loadKey(): string {
-    if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY
-    try {
-      const p = process.platform === 'win32'
-        ? String.raw`C:\Users\${process.env.USERNAME ?? ''}\.dsh\typesafe-key`
-        : `${process.env.HOME ?? ''}/.dsh/typesafe-key`
-      return readKeyFile(p)
-    } catch { return '' }
+  constructor(opts?: { provider?: SOProviderType; key?: string; endpoint?: string }) {
+    this.provider = opts?.provider ?? 'laya'
+    this.key = opts?.key ?? loadKeyFromFile()
+    this.endpoint = opts?.endpoint ?? ENDPOINT
   }
 
   get configured(): boolean {
-    return this.key.length > 0
+    return this.provider !== 'typesafe' || this.key.length > 0
   }
 
   async ask(state: string, questions: SOQuestions): Promise<SOAskResult> {
     const t0 = Date.now()
-    if (!this.configured) return { ok: false, answers: {}, latencyMs: 0, error: 'TYPESAFE_API_KEY 未配置' }
+    try {
+      switch (this.provider) {
+        case 'laya': return await this.askLaya(state, questions)
+        case 'typesafe': return await this.askTypesafe(state, questions)
+        default: return { ok: false, answers: {}, latencyMs: 0, error: `未知 provider: ${this.provider}` }
+      }
+    } catch (e) {
+      return { ok: false, answers: {}, latencyMs: Date.now() - t0, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+
+  /** laya 本地 ONNX:单次前向,不产生文本,亚秒。 */
+  private async askLaya(state: string, questions: SOQuestions): Promise<SOAskResult> {
+    const t0 = Date.now()
+    if (!this.layaLoaded) {
+      const { Laya } = await import('@receptron/laya') as any
+      this.layaEngine = await (Laya as any).load()
+      this.layaLoaded = true
+    }
+    const raw = await this.layaEngine!.systemOne({ text: state }, questions)
+    const answers: SOAnswer = {}
+    for (const [name, a] of Object.entries(raw.answers as Record<string, any>)) {
+      if (a.choice !== undefined) answers[name] = { type: 'choice', value: a.choice, confidence: a.confidence ?? 0.5, probabilities: a.probabilities }
+      else if (a.noul !== undefined) answers[name] = { type: 'noul', value: a.noul, confidence: a.confidence ?? 0.5 }
+      else if (a.score !== undefined) answers[name] = { type: 'score', value: a.score, confidence: a.confidence ?? 0.5 }
+    }
+    return { ok: true, answers, latencyMs: Date.now() - t0 }
+  }
+
+  /** typesafe 官方 API:state+questions POST。 */
+  private async askTypesafe(state: string, questions: SOQuestions): Promise<SOAskResult> {
+    const t0 = Date.now()
     const res = await fetch(this.endpoint, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.key}`, 'Content-Type': 'application/json' },

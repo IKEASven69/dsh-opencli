@@ -2,6 +2,13 @@
 
 格式参考 Keep a Changelog;版本与 GitHub Releases 一一对应。
 
+## Unreleased
+
+### SystemOne 决策层(亚秒决策,不耗大模型 token)
+- 新增 agent 工具 `so_verify`(noul 断言:P(页面符合预期),亚秒)与 `so_pick`(choice:封闭选项集选点,2-30 项,返回 Top3 概率);低置信/不可用时提示回退常规判断,零功能损失
+- provider 三选一:**laya**(默认,@receptron/laya 本地 ONNX,免费/离线/隐私,懒加载——未装权重时优雅降级)/ **typesafe**(官方 Jev API,key 取 `TYPESAFE_API_KEY` 或 `~/.dsh/typesafe-key`)/ passthrough
+- 构建管线:@receptron/onnxruntime 原生模块标记 external,保持运行时动态导入(插件自带 node_modules 解析)
+
 ## 0.4.0 — 2026-09-18
 
 ### 面板(四 tab 重排:总览 / 命令 / 自动化 / 安全与设置)

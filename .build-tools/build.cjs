@@ -36,7 +36,7 @@ esbuild.buildSync({
   format: 'esm',
   platform: 'node',
   target: 'es2022',
-  external: ['@deepseek-ai/*', 'react', 'react/*'],
+  external: ['@deepseek-ai/*', 'react', 'react/*', '@receptron/*', 'onnxruntime-*'],
   outfile: path.join(outDir, 'index.js'),
 })
 console.log(`lib/index.js  ${(fs.statSync(path.join(outDir, 'index.js')).size / 1024).toFixed(1)} kB`)
@@ -47,7 +47,7 @@ esbuild.buildSync({
   format: 'cjs',
   platform: 'node',
   target: 'es2022',
-  external: ['@deepseek-ai/*', 'react', 'react/*'],
+  external: ['@deepseek-ai/*', 'react', 'react/*', '@receptron/*', 'onnxruntime-*'],
   outfile: path.join(__dirname, 'tmp-client.cjs'),
 })
 const cjsBody = fs.readFileSync(path.join(__dirname, 'tmp-client.cjs'), 'utf8')
