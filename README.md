@@ -24,6 +24,15 @@ dsh 内置的 web 工具是"检索"(web_search/web_fetch)。本插件给它补�
 
 以及:**没适配器的网站,让模型当场造一个**(`browser_do` analyze → init → verify,SKILL.md 内置创作循环)——越用越会浏览。
 
+### 两张牌:固定命令 × 任意网页原语
+
+不是只有适配器才能用。模型对每个站有两张牌,**先打第一张,失败自动换第二张**:
+
+1. **固定命令**(`site <站> <命令>`):预编译的站点知识,省 token、结果可验证、有失败签名恢复表;
+2. **任意网页原语**(`browser_open/state/click/fill` + 内置只读脚本 article/links/jsonld + 25 步 Playwright recipe):适配器没覆盖的页面、临时性需求("我就看一眼这个页面"),用你的登录态自由组合。
+
+动手前先让模型调 **`site_knowledge <站>`** 读知识卡:该站全部命令+已知坑(风控/登录/改版)+失败签名恢复表——不现场试错。知识卡可经面板导出为 markdown(`~/.dsh/opencli-knowledge/`),可分享、可进版本库。
+
 ### 回答的是三个被 116k★ 仓库用户正式提案的缺口
 
 - *"browser agents re-learn every site on every session"*——selectors/登录流/站点怪癖每次从头再来([browser-use#5841](https://github.com/browser-use/browser-use/issues/5841),10 评论)→ **176 站预置结构化命令就是成品答案**:站点知识预编译,不重学。

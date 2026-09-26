@@ -25,6 +25,7 @@ import type {
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
+import { buildKnowledge, renderKnowledgeMarkdown, type RawEntry } from './knowledge.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -411,6 +412,24 @@ export class OpencliService extends TypertRemoteService {
       },
     }))
 
+    t.register(defineTool({
+      name: 'site_knowledge',
+      description: '站点知识卡:对某站动手前先读——结构化命令目录+已知坑+失败签名恢复表。命中失败签名按 recovery 自救,别现场试错。知识分发上游已砍(#2539),本卡是补位',
+      parameters: {
+        site: { type: 'string', description: '站点名(如 weibo / xiaohongshu)' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const site = String(a.site ?? a.value ?? '').trim()
+        if (site.length === 0 || !/^[\w.-]+$/.test(site)) return { text: '站点名非法(如 weibo)' }
+        const list = await this.adapterList()
+        if (list === null) return { text: `目录不可用 | ${this.lastShellError ?? '未知'}` }
+        const raw = (this.adapterCache as { json?: unknown } | null)?.json
+        const k = buildKnowledge(site, Array.isArray(raw) ? raw as RawEntry[] : [])
+        if (k === null) return { text: `目录里没有 ${site}(用 opencli_catalog 确认拼写)。不在目录的通用需求直接用 browser_* 原语自由浏览` }
+        return { text: renderKnowledgeMarkdown(k).slice(0, 6000) }
+      },
+    }))
     t.register(defineTool({
       name: 'opencli_catalog',
       description: '按 query/site/access 过滤 170+ 适配器目录，单次最多 100 条（不确定命令先查它，别猜）',
@@ -934,6 +953,35 @@ export class OpencliService extends TypertRemoteService {
     await this.saveState()
     if (hit.enabled) this.startScheduler()
     return { ok: true }
+  }
+
+  /** 知识包导出:全部/指定站的知识卡写 ~\.dsh\opencli-knowledge\,可分享/进版本库。
+   * 上游 #2539 砍掉 sitemap 分发后的第三方补位;MCP Resources(dsh 0.1.6+)可用同一数据源。 */
+  @Remote('knowledge-export')
+  async knowledgeExport(request: { sites?: string[] }): Promise<{ ok: boolean; paths?: string[]; error?: string }> {
+    const list = await this.adapterList()
+    if (list === null) return { ok: false, error: `目录不可用 | ${this.lastShellError ?? '未知'}` }
+    const raw = (this.adapterCache as { json?: unknown } | null)?.json
+    const entries = Array.isArray(raw) ? raw as RawEntry[] : []
+    if (entries.length === 0) return { ok: false, error: '目录缓存为空' }
+    const requested = Array.isArray(request.sites) && request.sites.length > 0
+      ? request.sites.map((s) => String(s).trim().toLowerCase()).filter((s) => s.length > 0)
+      : [...new Set(entries.map((e) => (e.site ?? e.command?.split('/')[0] ?? '').toLowerCase()).filter((s) => s.length > 0))]
+    const dir = join(homedir(), '.dsh', 'opencli-knowledge')
+    const paths: string[] = []
+    const at = new Date().toISOString()
+    for (const site of requested.slice(0, 200)) {
+      const k = buildKnowledge(site, entries, at)
+      if (k === null) continue
+      const file = join(dir, `${site}.md`)
+      try {
+        await mkdir(dir, { recursive: true })
+        await writeFile(file, renderKnowledgeMarkdown(k), 'utf8')
+        paths.push(file)
+      } catch { /* 单站写失败不阻断其余 */ }
+    }
+    if (paths.length === 0) return { ok: false, error: '没有可导出的站点(目录为空或站点名不匹配)' }
+    return { ok: true, paths }
   }
 
   @Remote('schedule-remove')
