@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+### 登录态 preflight + 面板知识卡入口
+- **site_batch 登录态 preflight**:派发前按目录 domain 字段检测同域冲突(如 twitter + x 同属 twitter.com),同域站点自动改为组内串行并注明——对冲"同域并行互相踩登录态/标签页且无报错"(BrowserSkill #132,其用户求 preflight 而不得)
+- 面板命令页新增「导出知识卡」按钮(knowledge-export RPC,toast 报告导出数量与路径)
+- 修复 package.json description 双重编码乱码("登录态浏览器代理"曾显示为"鐧诲綍鎬佹祻…"),dsh-market 拉取的描述曾为乱码;补双语描述+keywords(score 合法抬分项)
+- 修复 puppeteer-core 误入 runtime dependencies(构建工具,回 devDependencies,免得跟着插件装进商店)
+- 74 测试绿,审查 19/19
+
 ### 站点知识包(P1:上游 #2539 砍掉 sitemap/CLI hub 后的知识分发真空)
 - 新增 agent 工具 `site_knowledge <站>`:动手前读"地形图"——该站全部结构化命令(read/write 标记)+已知坑(风控/登录/改版,人工种子覆盖微博/B站/知乎/小红书/豆瓣/淘宝/京东/YouTube 等)+**失败签名恢复表**(EMPTY_RESULT/风控墙/429/NAVIGATION_REJECTED → 含义 → 恢复动作),命中签名按表自救,不现场试错
 - 新增 `knowledge-export` RPC:全部/指定站知识卡导出为 markdown 到 `~/.dsh/opencli-knowledge/`,可分享、可进版本库;dsh 0.1.6+ MCP Resources 将复用同一数据源

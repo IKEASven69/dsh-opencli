@@ -250,6 +250,42 @@ describe('真实性判定(noul 体检:site_batch/try-run 共用)', () => {
     expect(r.text).toContain('== zhihu ✓(实测有效 P=0.93)')
     expect(r.text).toContain('== weibo ✓(⚠ 疑似静默失败')
   })
+
+  it('site_batch preflight:同域站点串行化并在输出注明;不同域照常并行', async () => {
+    installSoStub({})
+    // 目录缓存:twitter 与 x 同域(twitter.com),zhihu/bilibili 各自独立域
+    ;(svc as unknown as { adapterCache: { at: number; json: unknown } | null }).adapterCache = {
+      at: Date.now(),
+      json: [
+        { site: 'twitter', name: 'hot', access: 'read', domain: 'twitter.com' },
+        { site: 'x', name: 'hot', access: 'read', domain: 'twitter.com' },
+        { site: 'zhihu', name: 'hot', access: 'read', domain: 'zhihu.com' },
+        { site: 'bilibili', name: 'hot', access: 'read', domain: 'bilibili.com' },
+      ],
+    }
+    const tool = ctx.tools.registered.get('site_batch')!
+    const r = await tool.execute({ command: 'hot', sites: ['twitter', 'x', 'zhihu', 'bilibili'] })
+    expect(r.text).toContain('preflight:同域冲突已串行化(twitter + x → twitter.com)')
+    // 四站结果齐全且按请求顺序
+    const order = ['twitter', 'x', 'zhihu', 'bilibili'].map((s) => r.text.indexOf(`== ${s} `))
+    expect(order.every((i) => i >= 0)).toBe(true)
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+    // 不同域不产生 preflight 注记
+    const r2 = await tool.execute({ command: 'hot', sites: ['zhihu', 'bilibili'] })
+    expect(r2.text).not.toContain('preflight')
+  })
+
+  it('site_batch:目录内不存在的站给出拼写提醒', async () => {
+    installSoStub({})
+    ;(svc as unknown as { adapterCache: { at: number; json: unknown } | null }).adapterCache = {
+      at: Date.now(),
+      json: [{ site: 'zhihu', name: 'hot', access: 'read', domain: 'zhihu.com' }],
+    }
+    const tool = ctx.tools.registered.get('site_batch')!
+    const r = await tool.execute({ command: 'hot', sites: ['zhihu', 'zhihuu'] })
+    expect(r.text).toContain('目录预检:以下站点不在适配器目录')
+    expect(r.text).toContain('zhihuu')
+  })
 })
 
 describe('replay 桩', () => {

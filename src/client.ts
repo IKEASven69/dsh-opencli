@@ -49,6 +49,7 @@ const STR = {
     updFallback: '未装市场插件 → GitHub Releases 检查', updating: '检查中…',
     cmdT: '命令', cmdSearch: '搜索站点或命令,如:热榜 / search / bilibili',
     cmdFmt: '点命令行 → 复制调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)',
+    knowExp: '导出知识卡', knowExpDo: '导出中…',
     disable: '禁用', enable: '启用', commandsN: (n: number) => `${n} 命令`,
     autoT: '定时任务', autoNew: '新建', autoSub: '持久化到 dsh.schedule,重启不丢 · 失败按策略重试并通知',
     depDaemon: 'daemon 未运行——定时任务暂停执行,恢复后自动补跑', fix: '一键修复',
@@ -110,6 +111,7 @@ const STR = {
     updFallback: 'market plugin absent → check GitHub Releases', updating: 'checking…',
     cmdT: 'Commands', cmdSearch: 'Search sites or commands, e.g. trending / search / bilibili',
     cmdFmt: 'Click a command row → copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)',
+    knowExp: 'Export knowledge cards', knowExpDo: 'Exporting…',
     disable: 'Disable', enable: 'Enable', commandsN: (n: number) => `${n} cmds`,
     autoT: 'Schedules', autoNew: 'New', autoSub: 'Persisted to dsh.schedule, survives restart · retries then notifies on failure',
     depDaemon: 'daemon not running — schedules paused, will catch up when it returns', fix: 'Fix',
@@ -242,9 +244,10 @@ const SPRITE = `<svg width="0" height="0" style="position:absolute">
   <line x1="12" x2="12" y1="17" y2="21" /></symbol>
 <symbol id="i4-copy" viewBox="0 0 24 24"><rect x="8" y="8" rx="2" ry="2" />
   <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></symbol>
+<symbol id="i4-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></symbol>
 </svg>`
 
-type IconName = 'play' | 'zap' | 'activity' | 'clock' | 'rec' | 'layers' | 'shield' | 'sliders' | 'plus' | 'refresh' | 'search' | 'chev-r' | 'chev-d' | 'alert' | 'check-c' | 'ext' | 'info' | 'monitor' | 'copy' | 'brand'
+type IconName = 'play' | 'zap' | 'activity' | 'clock' | 'rec' | 'layers' | 'shield' | 'sliders' | 'plus' | 'refresh' | 'search' | 'chev-r' | 'chev-d' | 'alert' | 'check-c' | 'ext' | 'info' | 'monitor' | 'copy' | 'brand' | 'book'
 
 
 const ava = (site: string, px = 26): ReturnType<typeof createElement> => {
@@ -596,6 +599,12 @@ function Panel(): ReturnType<typeof createElement> {
     const r = await rpc('schedule-remove', { request: { id } } as unknown as Record<string, unknown>)
     if (r.ok) void loadSchedules()
   }
+  const exportKnowledge = async (): Promise<void> => {
+    showToast(t2('knowExpDo'), true)
+    const r = await rpc<{ paths?: string[] }>('knowledge-export', {} as unknown as Record<string, unknown>)
+    const n = r.value?.paths?.length ?? 0
+    showToast(r.ok && n > 0 ? `✓ ${n} 张知识卡 → ~/.dsh/opencli-knowledge/` : (r.error?.message ?? t2('errReq')), r.ok && n > 0)
+  }
   const runScheduleNow = async (id: string): Promise<void> => {
     const r = await rpc('schedule-run-now', { p: { id } } as unknown as Record<string, unknown>)
     showToast(r.ok ? 'run now ✓' : (r.error?.message ?? t2('errReq')), r.ok)
@@ -825,6 +834,7 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('input', { className: 'o4-in', style: { border: '0', padding: '8px 0' }, placeholder: t2('cmdSearch'), value: query, onChange: (e: { target: { value: string } }) => setQuery(e.target.value) }),
         ),
         createElement('span', { style: { fontSize: '11.5px', color: '#5F6873' } }, `${adapters?.length ?? 0} · ${(adapters ?? []).filter((a) => a.disabled !== true).length}`),
+        createElement('button', { className: 'o4-btn ghost sm', title: t2('knowExp'), onClick: () => { void exportKnowledge() } }, ic('book', true), t2('knowExp')),
       ),
       createElement('div', { className: 'o4-note', style: { margin: '0 0 10px' } }, t2('cmdFmt')),
       createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },

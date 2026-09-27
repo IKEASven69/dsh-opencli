@@ -388,12 +388,30 @@ export class OpencliService extends TypertRemoteService {
         if (sites.some((x) => !/^[\w.-]+$/.test(x))) return { text: '站点名含非法字符。' }
         // 派发前目录预检(只读缓存,不触发 list):站点不存在立刻提醒,省 45s 超时
         let known: Set<string> | null = null
+        const domainOf = new Map<string, string>()
         if (this.adapterCache !== null && Date.now() - this.adapterCache.at < ADAPTER_TTL_MS) {
-          known = new Set(normalizeAdapterList(this.adapterCache.json).map((x) => String(x.name).toLowerCase()))
+          known = new Set()
+          for (const x of normalizeAdapterList(this.adapterCache.json)) {
+            const n = String(x.name).toLowerCase()
+            known.add(n)
+            if (x.domain !== undefined) domainOf.set(n, String(x.domain).toLowerCase())
+          }
         }
         const unknownSites = known === null ? [] : sites.filter((s) => !known!.has(s))
+        // 登录态 preflight(BrowserSkill #132 同源问题:同域并行互相踩登录态/标签页且无报错):
+        // 同域站点改为组内串行,其余照常并行
+        const byDomain = new Map<string, string[]>()
+        for (const s of sites) {
+          const d = domainOf.get(s)
+          if (d !== undefined) { const arr = byDomain.get(d) ?? []; arr.push(s); byDomain.set(d, arr) }
+        }
+        const collisions = [...byDomain.entries()].filter(([, ss]) => ss.length > 1)
+        const chained = new Set(collisions.flatMap(([, ss]) => ss))
+        const preflightNote = collisions.length > 0
+          ? `preflight:同域冲突已串行化(${collisions.map(([d, ss]) => `${ss.join(' + ')} → ${d}`).join(';')}),避免登录态/标签页互踩\n\n`
+          : ''
         const args = Array.isArray(a.args) ? a.args.map(String) : []
-        const results = await Promise.all(sites.map(async (site) => {
+        const runOne = async (site: string): Promise<{ site: string; ok: boolean; badge: string; text: string }> => {
           try {
             const out = await this.runOpencli([site, command, ...args], 45_000)
             if (out.exitCode !== 0) return { site, ok: false, badge: '', text: out.stderr.slice(0, 900) }
@@ -402,11 +420,18 @@ export class OpencliService extends TypertRemoteService {
           } catch (err: unknown) {
             return { site, ok: false, badge: '', text: err instanceof Error ? err.message.slice(0, 200) : 'failed' }
           }
-        }))
+        }
+        const settled = await Promise.all([
+          ...sites.filter((s) => !chained.has(s)).map(runOne),
+          ...collisions.map(async ([, ss]) => { const out = []; for (const s of ss) out.push(await runOne(s)); return out }),
+        ])
+        const results = settled.flat()
+        // 按请求顺序回填输出
+        results.sort((x, y) => sites.indexOf(x.site) - sites.indexOf(y.site))
         const okN = results.filter((r) => r.ok).length
         const silentN = results.filter((r) => r.badge.includes('疑似静默失败')).length
         const head = `批量采集 ${okN}/${sites.length} 站成功${silentN > 0 ? `,其中 ${silentN} 站疑似静默失败(exit 0 但内容无效)` : ''}:\n\n`
-        const pre = unknownSites.length > 0 ? `目录预检:以下站点不在适配器目录,请确认拼写:${unknownSites.join(', ')}\n\n` : ''
+        const pre = `${unknownSites.length > 0 ? `目录预检:以下站点不在适配器目录,请确认拼写:${unknownSites.join(', ')}\n\n` : ''}${preflightNote}`
         const body = results.map((r) => `== ${r.site} ${r.ok ? '✓' : '✗'}${r.badge} ==\n${r.text}`).join('\n\n')
         return { text: pre + head + body }
       },

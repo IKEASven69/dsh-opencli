@@ -54,7 +54,7 @@
 
 ### 2.2 dsh-market 生态热度(8,643 插件全量)
 
-- **赛道位是空的但已有人坐在正中央**:全量只有 2 个插件提及 OpenCLI;而 Tencent/BrowserSkill 官方 dsh 插件已就位(#338 还暴露 peer-dep 静默失效),7,113★。
+- **本插件已收录 dsh-market**(README 有徽章);"真空"仅指第三方生态心智——全量只有 2 个插件在描述里提及 OpenCLI(无集成/无组合),而 Tencent/BrowserSkill 官方 dsh 插件已就位(#338 还暴露 peer-dep 静默失效),7,113★。要补的是**让别的插件/技能组合引用 opencli**,不是收录本身。
 - 浏览器自动化类 751 个;登录态/监控相关 448 个,score≥60 仅 120 个——头部是 BrowserSkill(89 分)。
 - score 机制:≈stars 档位+元数据完整度(双语描述/tags/homepage/多收录源),**补全元数据即可合法抬分**。
 - IM/消息类供给稀缺但均分最高(dsh-im 86 分 1,487★)——稀缺赛道溢价。
@@ -76,5 +76,5 @@
 | P1 | **watch 登录态监控** | dsh-market 微博生态空白 + last30days-skill-cn 1,813★ 验证 | ✅ 09-25 第一片落地,noul 模糊判定 v2 |
 | P1 | **知识包生态/MCP Resources 提级** | 上游 #2539 砍掉 sitemap/hub,官方真空;browser-use #5841 站点记忆正式提案 | v0.6 提到 v0.5 候选,等 dsh stable |
 | P2 | 通用原语层呈现补位("固定命令+任意网页"双模式) | V2EX t/1225086 弃用理由 | README/命令页文案 |
-| P2 | dsh-market 元数据补全抬分 + 收录 | score 机制可合法优化;分发位真空 | 待用户拍板(涉及公开发布) |
+| P2 | dsh-market 元数据补全抬分 + 第三方组合引用 | score 机制可合法优化;已收录,缺的是生态引用与元数据完整度 | 元数据可直接改;组合引用靠技能/文档 |
 | P3 | 登录态 preflight(同域冲突预检)/ daemon 鉴权 | BrowserSkill #132/#213;opencli #397/#988 长期 open | v0.5 桥接时做 |
