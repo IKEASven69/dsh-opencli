@@ -85,9 +85,9 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   const approvalBack = JSON.parse(fs.readFileSync(STATE, 'utf8')).approval;
   ok('审批门·恢复开启', onClicked === true && approvalBack === 'on');
 
-  // 命令页
+  // 命令页(站点数随上游适配器增长,1.8.8 起 180+:只断言两位数且总/启用一致)
   await clickBtn('命令'); await sleep(2800);
-  ok('命令页·176 计数', await has('176 · 176'));
+  ok('命令页·站点计数', await page.evaluate(() => { const m = [...document.querySelectorAll('span')].map(x => x.textContent || '').find(t => /^\d+ · \d+$/.test(t.trim())); if (!m) return false; const [t, e] = m.trim().split(' · ').map(Number); return t >= 170 && e <= t; }), 'total/active');
   ok('命令页·品牌头像', await page.evaluate(() => document.querySelectorAll('.o4-ava svg, .o4-ava img').length > 0));
   await shot('R3-命令页.png');
 
@@ -109,17 +109,29 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   });
   ok('RPC·browser-cdp', String(cdpTruth).includes('browser-cdp') === false && String(cdpTruth).length > 40, String(cdpTruth).slice(0, 110));
 
-  // 定时闭环
+  // RPC 真值辅助:面板同款 RPC 形状
+  const rpc2 = (m, args) => page.evaluate(async (m, args) => {
+    const res = await fetch('/api/opencli/' + m, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'rv-' + Math.random(), method: 'opencli/' + m, payload: { args } }) });
+    return (await res.json()).result?.value ?? { ok: false };
+  }, m, args);
+
+  // 知识卡 RPC:导出 + 路径落盘
+  const kx = await rpc2('knowledge-export', {});
+  ok('RPC·knowledge-export', kx?.ok === true && Array.isArray(kx.paths) && kx.paths.length > 10, `paths=${(kx.paths ?? []).length}`);
+
+  // 定时闭环(带 watch 关键词)
   await clickBtn('自动化'); await sleep(2800);
   await page.evaluate(() => { const p = [...document.querySelectorAll('div')].find(x => (x.innerText || '').includes('定时任务')); const site = p && p.querySelector("input[placeholder='site zhihu hot']"); if (site) { const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; set.call(site, 'site zhihu hot'); site.dispatchEvent(new Event('input', { bubbles: true })); } });
+  await page.evaluate(() => { const p = [...document.querySelectorAll('div')].find(x => (x.innerText || '').includes('定时任务')); const w = p && p.querySelector("input[placeholder*='watch']"); if (w) { const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; set.call(w, '降薪,热点事件'); w.dispatchEvent(new Event('input', { bubbles: true })); } });
   await page.evaluate(() => { const p = [...document.querySelectorAll('div')].find(x => (x.innerText || '').includes('定时任务')); const b = p && [...p.querySelectorAll('button')].find(x => (x.textContent || '').trim() === '创建'); if (b) b.click(); });
   await sleep(3000);
-  const created = JSON.parse(fs.readFileSync(STATE, 'utf8')).schedules.length;
-  ok('定时·创建落盘', created >= 1, 'schedules=' + created);
+  const stateNow = () => JSON.parse(fs.readFileSync(STATE, 'utf8'));
+  const createdSched = stateNow().schedules.find(s => s.site === 'site zhihu hot');
+  ok('定时·创建落盘(含 watch)', createdSched !== undefined && createdSched.watch === '降薪,热点事件', `watch=${createdSched ? createdSched.watch : 'missing'}`);
   await shot('R6-定时.png');
   await page.evaluate(async () => { const sleep = (ms) => new Promise(r => setTimeout(r, ms)); for (let i = 0; i < 40; i++) { const d = [...document.querySelectorAll('button')].filter(x => (x.textContent || '').trim() === '删'); if (!d.length) break; d[0].click(); await sleep(1600); } });
-  const cleared = JSON.parse(fs.readFileSync(STATE, 'utf8')).schedules.length;
-  ok('定时·删除落盘', cleared === 0, 'schedules=' + cleared);
+  ok('定时·删除落盘', stateNow().schedules.length === 0, 'schedules=' + stateNow().schedules.length);
 
   await browser.disconnect();
   fs.writeFileSync(path.join(OUT, '审查结果.json'), JSON.stringify(results, null, 1));

@@ -650,6 +650,12 @@ export class OpencliService extends TypertRemoteService {
 - "在微博发..."     → site weibo post...(写命令会弹审批,用户点允许才发)
 - "录一段:抓 arxiv 每天 AI 论文"   → 引导用户点"开始录" → 真实 Chrome 操作
 
+辅助工具(都在本插件,直接调):
+- site_knowledge <站> → 动手前读知识卡(命令目录+已知坑+失败签名恢复表),别现场试错
+- so_verify(页面文本+预期) / so_pick(目标+选项集) → 亚秒判定,不耗大模型 token;低置信再自己判断
+- site_batch → 多站同命令并行采集,自带同域冲突串行化(preflight)与"疑似静默失败"标注
+- 定时任务建在面板"自动化"页,可加 watch 关键词(命中即🔔通知);撞风控墙自动 2 分钟退避
+
 不要:写命令不在用户登录态时跑(先 opencli <site> login);cookie/密码不放工具参数。${state}。${gate}\n${buildAdapterDirectory(active)}`
   }
 
@@ -983,14 +989,16 @@ export class OpencliService extends TypertRemoteService {
   /** 知识包导出:全部/指定站的知识卡写 ~\.dsh\opencli-knowledge\,可分享/进版本库。
    * 上游 #2539 砍掉 sitemap 分发后的第三方补位;MCP Resources(dsh 0.1.6+)可用同一数据源。 */
   @Remote('knowledge-export')
-  async knowledgeExport(request: { sites?: string[] }): Promise<{ ok: boolean; paths?: string[]; error?: string }> {
+  async knowledgeExport(request?: { sites?: string[] }): Promise<{ ok: boolean; paths?: string[]; error?: string }> {
     const list = await this.adapterList()
     if (list === null) return { ok: false, error: `目录不可用 | ${this.lastShellError ?? '未知'}` }
     const raw = (this.adapterCache as { json?: unknown } | null)?.json
     const entries = Array.isArray(raw) ? raw as RawEntry[] : []
     if (entries.length === 0) return { ok: false, error: '目录缓存为空' }
-    const requested = Array.isArray(request.sites) && request.sites.length > 0
-      ? request.sites.map((s) => String(s).trim().toLowerCase()).filter((s) => s.length > 0)
+    // 网关对空 args 会传 undefined(真机复现):request 必须可选链
+    const reqSites = request?.sites
+    const requested = Array.isArray(reqSites) && reqSites.length > 0
+      ? reqSites.map((s) => String(s).trim().toLowerCase()).filter((s) => s.length > 0)
       : [...new Set(entries.map((e) => (e.site ?? e.command?.split('/')[0] ?? '').toLowerCase()).filter((s) => s.length > 0))]
     const dir = join(homedir(), '.dsh', 'opencli-knowledge')
     const paths: string[] = []

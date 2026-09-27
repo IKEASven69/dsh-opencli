@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+### Agent 发现性与 1.8.8 跟进
+- **SKILL.md 全工具速查表**:site/site_knowledge/site_batch/browser 原语/so_verify/so_pick 各自的使用时机 + 失败自救签名 + 无人值守说明
+- **systemPrompt 注入更新**:目录文本新增辅助工具段(site_knowledge 先读/so_verify/so_pick 亚秒判定/site_batch preflight/watch 关键词+风控退避),agent 零配置发现新能力
+- **上游 1.8.8 升级完成**(undici CVE 修复;站点 176→180):审查套件全过,插件兼容
+- 审查套件 19→**20 项**:新增 knowledge-export RPC 真值(179 张卡真机导出)+ watch 关键词落盘;站点计数改为动态断言(不再钉死 176)
+- 修复 knowledge-export 空 args 崩溃:**网关对空 args 传 undefined**,handler 参数必须可选链(真机 gateway/internal 复现)
+- dsh017 profile 依赖从 GitHub tarball 切本地 file:tarball(网络不可靠);dsh 0.1.7-alpha.1 兼容实测进行中
+
 ### 登录态 preflight + 面板知识卡入口
 - **site_batch 登录态 preflight**:派发前按目录 domain 字段检测同域冲突(如 twitter + x 同属 twitter.com),同域站点自动改为组内串行并注明——对冲"同域并行互相踩登录态/标签页且无报错"(BrowserSkill #132,其用户求 preflight 而不得)
 - 面板命令页新增「导出知识卡」按钮(knowledge-export RPC,toast 报告导出数量与路径)
