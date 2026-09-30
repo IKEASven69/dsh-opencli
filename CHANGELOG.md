@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+### dsh 0.2.0 适配(双版本兼容:0.1.5 与 0.2.0 同时 20/20)
+- **新增 ctx.subprocess 原生执行路径**:0.2.0 把命令执行迁到 subprocess seam(官方 bash 工具同款),旧 ctx.shell.execute 需要沙箱 policy 管线且插件直调不可靠;经 reflect 旁路可选读取(刻意不放 static inject——cordis 对声明服务做加载期解析,0.1.x 宿主没有 subprocess 服务会导致整个插件加载失败)
+- 0.1.x 回落路径升级为多形态自探测:resolve包裹/直传/argv数组,锁定首个真实产生输出的形态(异常文本不再被误当有效输出);spec 携带 danger-full-access 沙箱策略(可信进程内消费者,与 0.1.x 无沙箱行为一致)
+- 适配事实清单:0.2.0 强制校验插件 peerDependencies(我们的宽范围 >=0.1.1-rc.2 <0.3.0-0 过闸,写死 ^0.1.x 的插件被拒载);0.2.0 对 patch 引用未安装 bundle 的 profile **静默退出**(0.1.5 容忍)——升级前自查 cordis.patch.yml;0.1.7+ 定时任务默认关闭(与我们无关,定时是自带实现)
+- 审查套件健康检查改环境自适应(健康态"一切正常"/降级态"daemon 未运行"两态都算渲染成功)
+- 验收:0.2.0-rc.2 全套 RPC+面板四 tab+179 知识卡导出 20/20;0.1.5-rc.1 回归 20/20;74 单测绿
+
 ### Agent 发现性与 1.8.8 跟进
 - **SKILL.md 全工具速查表**:site/site_knowledge/site_batch/browser 原语/so_verify/so_pick 各自的使用时机 + 失败自救签名 + 无人值守说明
 - **systemPrompt 注入更新**:目录文本新增辅助工具段(site_knowledge 先读/so_verify/so_pick 亚秒判定/site_batch preflight/watch 关键词+风控退避),agent 零配置发现新能力

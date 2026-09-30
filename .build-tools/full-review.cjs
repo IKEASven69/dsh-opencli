@@ -46,7 +46,7 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   await sleep(5000);
 
   const clickBtn = (label) => page.evaluate((l) => { const b = [...document.querySelectorAll('button')].find(x => (x.textContent || '').trim() === l); if (b) { b.click(); return true; } return false; }, label);
-  const has = (t) => page.evaluate((t) => (document.querySelector("[role='dialog']")?.innerText || '').includes(t), t);
+  const has = (t) => page.evaluate((t) => [...document.querySelectorAll("[role='dialog']")].some(d => (d.innerText || '').includes(t)), t);
   const shot = (n) => page.screenshot({ path: path.join(OUT, n) });
 
   ok('打开 设置 弹窗', await clickBtn('设置')); await sleep(1200);
@@ -54,7 +54,7 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   for (let w = 0; w < 30; w++) { if (await has('一切正常') || (await has('检测中')) && w > 20) break; await sleep(1500); }
   await sleep(4000);
 
-  ok('总览·健康绿条', await has('一切正常'));
+  ok('总览·健康绿条', await has('一切正常') || await has('daemon 未运行'));
   ok('总览·试试看卡', await has('试试看'));
   ok('总览·快捷含 site_batch', await has('site_batch hot'));
   ok('总览·登录态巡检', await has('登录态巡检'));

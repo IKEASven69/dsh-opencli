@@ -57,6 +57,17 @@ interface PluginState {
   audit: Array<{ at: string; command: string; reason: string; mode: string }>
 }
 
+/** 0.2.0 ctx.subprocess 服务的最小形状(dsh-subprocess 的 spawn seam;只取用到的成员)。 */
+interface SubprocessSeam {
+  spawn?: (s: unknown) => {
+    done: Promise<{ exitCode?: number | null }>
+    collected?: {
+      stdout?: { readFrom: (o: number) => Promise<{ text?: string }> }
+      stderr?: { readFrom: (o: number) => Promise<{ text?: string }> }
+    }
+  }
+}
+
 interface ToolArgs {
   session?: string
   url?: string
@@ -1305,25 +1316,92 @@ export class OpencliService extends TypertRemoteService {
     return null
   }
 
+  /** shell 调用形态(跨版本自探测锁定):resolved=shell.resolve(spec) 后执行;direct=直传 spec;array=command 传 argv 数组。 */
+  private shellMode: 'resolved' | 'direct' | 'array' | null = null
+
+  /**
+   * 0.2.0+ 原生执行:ctx.subprocess.spawn(argv)(官方 bash 工具同款 seam;
+   * 旧 ctx.shell.execute 在 0.2.0 需要 sandbox policy 管线,插件直调已不可靠)。
+   * 返回 null = 该 seam 不可用,调用方回落老路径。
+   */
+  private async runSubprocess(argv: string[], timeoutMs: number, stdoutMaxBytes: number): Promise<{ exitCode: number; stdout: string; stderr: string } | null> {
+    // 不能把 'subprocess' 放进 static inject:cordis 对声明服务做加载期解析,0.1.x 宿主没有它会
+    // 让整个插件加载失败。改走 reflect 旁路(可选读取,缺失即 undefined→回落老 shell 路径)。
+    let sub: SubprocessSeam | undefined
+    try {
+      sub = (this.ctx as unknown as { reflect?: { get?: (p: string, f?: boolean) => unknown } }).reflect?.get?.('subprocess', false) as SubprocessSeam | undefined
+    } catch { return null }
+    if (sub === undefined || typeof sub.spawn !== 'function') return null
+    // bin 形态:裸命令 / node "<main.js>" / env 覆盖——按空白+引号切 argv
+    const argv0 = this.bin === 'opencli'
+      ? ['opencli']
+      : (this.bin.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [this.bin]).map((s) => s.replace(/^"|"$/g, ''))
+    const h = sub.spawn({
+      argv: [...argv0, ...argv],
+      cwd: homedir(),
+      stdio: { stdin: 'ignore', stdout: { maxBytes: stdoutMaxBytes }, stderr: { maxBytes: 262_144 } },
+      graceMs: 1_000,
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    const outcome = await h.done
+    const read = async (r: { readFrom: (o: number) => Promise<{ text?: string }> } | undefined): Promise<string> => {
+      try { return String((await r?.readFrom(0))?.text ?? '') } catch { return '' }
+    }
+    return {
+      exitCode: typeof outcome?.exitCode === 'number' ? outcome.exitCode : 1,
+      stdout: await read(h.collected?.stdout),
+      stderr: await read(h.collected?.stderr),
+    }
+  }
+
   private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     await this.acquireGovernor()
     try {
-      const shellAny = this.ctx.shell as any
-      const spec = shellAny.resolve({ command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes } as ShellExecRequest)
-      // 双兼容:0.1.5 shell.run / 0.1.7 shell.execute(语义相同,方法改名)
-      const runner = typeof shellAny.run === 'function' ? shellAny.run.bind(shellAny) : (typeof shellAny.execute === 'function' ? shellAny.execute.bind(shellAny) : null)
-      const raw = runner !== null
-        ? await runner(spec)
-        : { exitCode: 1, stdout: 'dsh shell 能力不可用(既无 run 也无 execute)' }
-      // 归一化:0.1.5 流式 {text} 与字符串形态统一为纯文本,维持下游契约
-      const asText = (x: unknown): string => {
-        if (x && typeof x === 'object' && typeof (x as { text?: unknown }).text === 'string') return (x as { text: string }).text
-        return typeof x === 'string' ? x : ''
+      // 0.2.0+ 原生 seam 优先
+      const viaSub = await this.runSubprocess(argv, timeoutMs, stdoutMaxBytes)
+      if (viaSub !== null) {
+        this.noteRateLimit(`${viaSub.stdout}\n${viaSub.stderr}`)
+        return viaSub
       }
-      const out = {
-        exitCode: typeof raw.exitCode === 'number' ? raw.exitCode : 1,
-        stdout: asText(raw.stdout),
-        stderr: asText(raw.stderr),
+      // 回落:0.1.x 的 ctx.shell 多形态(run/execute × resolve/直传/argv)
+      const shellAny = this.ctx.shell as any
+      const runner = typeof shellAny.run === 'function' ? shellAny.run.bind(shellAny) : (typeof shellAny.execute === 'function' ? shellAny.execute.bind(shellAny) : null)
+      if (runner === null) return { exitCode: 1, stdout: '', stderr: 'dsh shell 能力不可用(既无 run 也无 execute)' }
+      // 0.2.0 起 spec 必须携带沙箱策略(否则 shell 内部 destructure policy.mode 直接抛错);
+      // 插件是可信进程内消费者,用 danger-full-access(与 0.1.x 无沙箱行为一致);老版本忽略多余字段。
+      const policy = { mode: 'danger-full-access' as const, workspaceRoot: homedir() }
+      const baseSpec = { command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes, policy }
+      const argvSpec = { ...baseSpec, command: [this.bin, ...argv], policy }
+      const attempts: Array<'resolved' | 'direct' | 'array'> = this.shellMode !== null ? [this.shellMode] : ['resolved', 'direct', 'array']
+      let out: { exitCode: number; stdout: string; stderr: string } = { exitCode: 1, stdout: '', stderr: '' }
+      for (const mode of attempts) {
+        let spec: unknown
+        let threw = false
+        try {
+          spec = mode === 'resolved' ? (typeof shellAny.resolve === 'function' ? shellAny.resolve({ ...baseSpec } as ShellExecRequest) : baseSpec)
+            : mode === 'direct' ? baseSpec
+            : argvSpec
+          const raw = await runner(spec)
+          // 归一化:0.1.5 流式 {text} 与字符串形态统一为纯文本,维持下游契约
+          const asText = (x: unknown): string => {
+            if (x && typeof x === 'object' && typeof (x as { text?: unknown }).text === 'string') return (x as { text: string }).text
+            return typeof x === 'string' ? x : ''
+          }
+          out = {
+            exitCode: typeof raw?.exitCode === 'number' ? raw.exitCode : 1,
+            stdout: asText(raw?.stdout),
+            stderr: asText(raw?.stderr),
+          }
+        } catch (e) {
+          threw = true
+          out = { exitCode: 1, stdout: '', stderr: e instanceof Error ? e.message : String(e) }
+        }
+        // 形态判定:调用于抛错且(有输出或退出码 0)才锁定该形态;
+        // 抛错一律换下一形态(异常文本不是真实 stderr,不能当有效输出)
+        if (!threw && (out.stdout.length > 0 || out.stderr.length > 0 || out.exitCode === 0)) {
+          this.shellMode = mode
+          break
+        }
       }
       this.noteRateLimit(`${out.stdout}\n${out.stderr}`)
       return out
