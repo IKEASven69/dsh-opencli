@@ -1385,7 +1385,7 @@ export class OpencliService extends TypertRemoteService {
     }
   }
 
-  private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
     await this.acquireGovernor()
     try {
       // 0.2.0+ 原生 seam 优先
@@ -1436,6 +1436,14 @@ export class OpencliService extends TypertRemoteService {
       }
       this.noteRateLimit(`${out.stdout}\n${out.stderr}`)
       return out
+    } catch (e) {
+      // 沙箱不可用（家目录启动 dsh web 时 ACL temp ⊂ workspace 必然触发）:
+      // 降级为"无可用 opencli"，绝不让插件初始化把整个 dsh web 拖死
+      const msg = e instanceof Error ? e.message : String(e)
+      if (/SandboxUnavailableError|no sandbox backend|ACL restricted-token/i.test(msg)) {
+        return { exitCode: -1, stdout: '', stderr: msg.slice(0, 500), unavailable: msg.slice(0, 300) }
+      }
+      throw e
     } finally {
       this.releaseGovernor()
     }

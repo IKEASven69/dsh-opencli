@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>OpenCLI × DeepSeek 品牌标识提案</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{ --bg:#0d0f12; --panel:#14171c; --card:#1a1e25; --line:#262b33; --tx:#e8eaed; --tx2:#9aa3ad; --tx3:#5f6873; --ds:#4d6bfe; }
+  body{ background:var(--bg); color:var(--tx); font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; padding:40px 0 48px; }
+  .wrap{ width:1150px; margin:0 auto; }
+  h1{ font-size:20px; font-weight:700; }
+  .sub{ font-size:12.5px; color:var(--tx2); margin:6px 0 26px; }
+  .row{ display:flex; gap:14px; margin-bottom:26px; }
+  .tile{ flex:1; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:26px 20px 18px; display:flex; flex-direction:column; align-items:center; }
+  .mark{ width:112px; height:112px; border-radius:26px; display:flex; align-items:center; justify-content:center; margin-bottom:14px; }
+  .mark svg{ width:64px; height:64px; }
+  .g{ background:linear-gradient(135deg,#4d6bfe,#2b4bc0); color:#fff; box-shadow:0 8px 28px rgba(77,107,254,.4); }
+  .dark{ background:#10131a; border:1px solid var(--line); color:var(--ds); }
+  .light{ background:#f4f6fb; color:var(--ds); }
+  .mono{ background:#10131a; border:1px solid var(--line); color:#e8eaed; }
+  .tile b{ font-size:13px; } .tile span{ font-size:11.5px; color:var(--tx3); margin-top:2px; }
+  .ladder{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px 26px; display:flex; align-items:flex-end; gap:34px; margin-bottom:26px; }
+  .ladder .it{ display:flex; flex-direction:column; align-items:center; gap:9px; }
+  .ladder .sq{ border-radius:22%; background:linear-gradient(135deg,#4d6bfe,#2b4bc0); color:#fff; display:flex; align-items:center; justify-content:center; }
+  .ladder .it span{ font-size:11px; color:var(--tx3); }
+  .ladder .wm{ margin-left:auto; align-self:center; }
+  .wm .nm{ font-size:22px; font-weight:700; letter-spacing:.3px; }
+  .wm .nm i{ font-style:normal; color:var(--ds); }
+  .wm p{ font-size:11.5px; color:var(--tx3); }
+  .notes{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  .note{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .note b{ font-size:12.5px; display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .note .dot{ width:8px; height:8px; border-radius:2px; background:var(--ds); flex:none; }
+  .note p{ font-size:12px; color:var(--tx2); line-height:1.65; }
+  .foot{ margin-top:22px; font-size:11.5px; color:var(--tx3); text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>品牌标识提案 · OpenCLI × DeepSeek</h1>
+  <p class="sub">鲸 = DeepSeek 的图腾;❯▍ = 命令提示符与光标,从鲸鱼喷气孔"喷出" = OpenCLI 的会话入口。一图说清"DeepSeek 里的浏览器代理"。</p>
+
+  <div class="row">
+    <div class="tile">
+      <div class="mark g"><svg viewBox="0 0 24 24"><use href="#brand"/></svg></div>
+      <b>主标 · 渐变</b><span>dsh 面板页头 / 应用图标</span>
+    </div>
+    <div class="tile">
+      <div class="mark dark"><svg viewBox="0 0 24 24"><use href="#brand"/></svg></div>
+      <b>深色底 · 品牌蓝鲸</b><span>GitHub 头像 / 深色场景</span>
+    </div>
+    <div class="tile">
+      <div class="mark light"><svg viewBox="0 0 24 24"><use href="#brand"/></svg></div>
+      <b>浅色底 · 品牌蓝鲸</b><span>文档 / 浅色材料</span>
+    </div>
+    <div class="tile">
+      <div class="mark mono"><svg viewBox="0 0 24 24"><use href="#brand"/></svg></div>
+      <b>单色 · 白鲸</b><span>徽章 / 需要压暗的场景</span>
+    </div>
+  </div>
+
+  <div class="ladder">
+    <div class="it"><div class="sq" style="width:96px;height:96px"><svg viewBox="0 0 24 24" style="width:52px;height:52px"><use href="#brand"/></svg></div><span>96 · 应用/市场卡片</span></div>
+    <div class="it"><div class="sq" style="width:52px;height:52px"><svg viewBox="0 0 24 24" style="width:30px;height:30px"><use href="#brand"/></svg></div><span>52 · 面板页头</span></div>
+    <div class="it"><div class="sq" style="width:28px;height:28px"><svg viewBox="0 0 24 24" style="width:17px;height:17px"><use href="#brand"/></svg></div><span>28 · Tab/状态条</span></div>
+    <div class="it"><div class="sq" style="width:16px;height:16px"><svg viewBox="0 0 24 24" style="width:11px;height:11px"><use href="#brand"/></svg></div><span>16 · favicon</span></div>
+    <div class="wm">
+      <div class="nm"><i>dsh-</i>opencli</div>
+      <p>字标 · 系统字重 700,前缀用品牌蓝,其余继承文本色</p>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><b><span class="dot"></span>用色</b><p>标识用 DeepSeek 品牌蓝 #4D6BFE 渐变(→#2B4BC0);面板内交互强调色保持 #4A9EFF 不变——标识用色与界面用色分离,避免大面积高饱和。</p></div>
+    <div class="note"><b><span class="dot"></span>构形</b><p>鲸身一笔闭合,分叉尾鳍,眼睛以 evenodd 镂空(任何底色自动透出);喷气孔位置换成 ❯ 提示符 + 光标块,暗示"agent 正在替你输入"。</p></div>
+    <div class="note"><b><span class="dot"></span>落地</b><p>符号为纯 path SVG,随插件内置;16px 仍可辨(尾鳍分叉 + 提示符保留),PNG/ICO 由该 SVG 直接导出,不重绘。</p></div>
+  </div>
+
+  <div class="foot">opencli v0.4.0 · 品牌标识提案 —— 定稿后替换面板页头与 GitHub 头像/favicon</div>
+</div>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="brand" viewBox="0 0 24 24">
+    <path fill="currentColor" fill-rule="evenodd" d="M3.5 13 C3.5 10.2 6.8 8.2 11 8.2 C14.6 8.2 17.6 9.7 18.8 11.8 L21.6 9.4 C22 9.1 22.5 9.4 22.4 9.9 L22 13 L22.4 16.1 C22.5 16.6 22 16.9 21.6 16.6 L18.8 14.2 C17.6 16.3 14.6 17.8 11 17.8 C6.8 17.8 3.5 15.8 3.5 13 Z M6.6 11.4 a1 1 0 1 0 2 0 a1 1 0 1 0 -2 0 Z"/>
+    <path d="M5.9 2.9 8.5 4.7 5.9 6.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="9.9" y="3.1" width="1.7" height="3.2" rx=".55" fill="currentColor"/>
+  </symbol>
+</svg>
+</body>
+</html>

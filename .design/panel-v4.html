@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>opencli 面板 v4 效果图</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root{
+    --bg:#0d0f12; --panel:#14171c; --card:#1a1e25; --card2:#1f242d;
+    --line:#262b33; --line2:#313845;
+    --tx:#e8eaed; --tx2:#9aa3ad; --tx3:#5f6873;
+    --ac:#4a9eff; --ac-bg:rgba(74,158,255,.12); --ac-line:rgba(74,158,255,.35);
+    --ok:#34c759; --warn:#ff9f0a; --bad:#ff453a;
+  }
+  body{ background:var(--bg); color:var(--tx); font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; padding:24px 0 60px; }
+  /* 施工注记:基宽 800 = dsh 设置弹窗内容区实测宽度;卡片栅格 auto-fit,响应式按容器(ResizeObserver)而非视口 */
+  .wrap{ width:800px; margin:0 auto; }
+  .spec{ font-size:11px; color:var(--tx3); background:var(--panel); border:1px dashed var(--line2); border-radius:9px; padding:7px 12px; margin-bottom:12px; }
+  .spec b{ color:var(--tx2); }
+
+  /* ===== 统一线性图标 ===== */
+  .ic{ width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  .ic.sm{ width:13px; height:13px; }
+  .ic.f{ fill:currentColor; stroke:none; }
+
+  /* ===== 页头(iOS 设置式) ===== */
+  .hdr{ display:flex; align-items:center; gap:16px; padding:18px 20px; background:var(--panel); border:1px solid var(--line); border-radius:14px; }
+  .hdr .logo{ width:52px; height:52px; border-radius:13px; background:linear-gradient(135deg,#4d6bfe,#2b4bc0); color:#fff; display:flex; align-items:center; justify-content:center; flex:none; box-shadow:0 4px 14px rgba(77,107,254,.35); }
+  .hdr .logo svg{ width:28px; height:28px; }
+  .hdr h1{ font-size:20px; font-weight:700; letter-spacing:.2px; }
+  .hdr p{ font-size:12.5px; color:var(--tx2); margin-top:3px; }
+  .hdr .right{ margin-left:auto; display:flex; align-items:center; gap:10px; }
+  .seg{ display:flex; background:var(--card2); border:1px solid var(--line); border-radius:8px; padding:2px; }
+  .seg button{ border:0; background:transparent; color:var(--tx2); font-size:12px; padding:4px 12px; border-radius:6px; cursor:pointer; }
+  .seg button.on{ background:var(--ac); color:#fff; }
+  .vchip{ font-size:11.5px; color:var(--tx3); border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
+
+  /* ===== Tab 导航 ===== */
+  .tabs{ display:flex; gap:4px; margin:14px 0; background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:4px; }
+  .tabs a{ flex:1; text-align:center; padding:8px 0; border-radius:8px; color:var(--tx2); font-size:13.5px; text-decoration:none; cursor:pointer; }
+  .tabs a.on{ background:var(--card2); color:var(--tx); font-weight:600; box-shadow:inset 0 0 0 1px var(--line2); }
+
+  /* ===== 状态条 ===== */
+  .status{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 14px; background:var(--panel); border:1px solid var(--line); border-radius:11px; margin-bottom:12px; }
+  .chip{ display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--tx2); background:var(--card); border:1px solid var(--line); border-radius:999px; padding:3px 11px; }
+  .dot{ width:7px; height:7px; border-radius:50%; flex:none; }
+  .dot.g{ background:var(--ok); box-shadow:0 0 5px rgba(52,199,89,.7);} .dot.r{ background:var(--bad);} .dot.y{ background:var(--warn);}
+  .chip b{ color:var(--tx); font-weight:600; }
+  .chip .x{ color:var(--bad); } .chip .v{ color:var(--ok); }
+  .chip img{ width:12px; height:12px; border-radius:3px; display:block; }
+  .sep{ width:1px; height:16px; background:var(--line2); margin:0 2px; }
+
+  /* 诊断条(折叠) */
+  .diag{ display:flex; align-items:center; gap:10px; padding:9px 14px; border-radius:11px; margin-bottom:14px; font-size:12.5px; cursor:pointer; }
+  .diag.ok{ background:rgba(52,199,89,.08); border:1px solid rgba(52,199,89,.25); color:#7fd89a; }
+  .diag.bad{ background:rgba(255,69,58,.08); border:1px solid rgba(255,69,58,.3); color:#ff8d85; }
+  .diag .arr{ margin-left:auto; color:var(--tx3); display:flex; align-items:center; gap:5px; }
+
+  /* ===== 卡片 ===== */
+  .grid3{ display:grid; grid-template-columns:repeat(auto-fit,minmax(238px,1fr)); gap:12px; margin-bottom:12px; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .card h3{ font-size:13.5px; font-weight:600; margin-bottom:3px; display:flex; align-items:center; gap:8px; }
+  .card .sub{ font-size:11.5px; color:var(--tx3); margin-bottom:11px; }
+  .mini-ico{ width:23px; height:23px; border-radius:7px; background:var(--ac-bg); border:1px solid var(--ac-line); color:var(--ac); display:inline-flex; align-items:center; justify-content:center; flex:none; }
+
+  /* try-run */
+  .trybox{ display:flex; gap:8px; }
+  .trybox input{ flex:1; background:var(--panel); border:1px solid var(--line2); color:var(--tx); border-radius:8px; padding:7px 11px; font-size:12.5px; font-family:ui-monospace,Consolas,monospace; }
+  .trybox input::placeholder{ color:var(--tx3); }
+  .btn{ border:0; border-radius:8px; background:var(--ac); color:#fff; font-size:12.5px; padding:7px 14px; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:6px; }
+  .btn.ghost{ background:var(--card2); border:1px solid var(--line2); color:var(--tx2); font-weight:400; }
+  .btn.sm{ padding:4px 10px; font-size:11.5px; }
+  .tryout{ margin-top:9px; background:#0a0c0f; border:1px solid var(--line); border-radius:8px; padding:9px 11px; font:11.5px/1.7 ui-monospace,Consolas,monospace; color:#a9c7ec; }
+  .tryout .k{ color:var(--tx3); }
+  .tryout .hot b{ color:#ffd60a; }
+  /* try-run 三态微演示(施工规格) */
+  .micro{ display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:9px; }
+  .micro .mst{ background:var(--panel); border:1px solid var(--line); border-radius:7px; padding:6px 8px; font-size:10px; color:var(--tx3); line-height:1.5; }
+  .mst .bar{ height:6px; border-radius:3px; background:var(--line2); margin:3px 0; }
+  .mst .bar.w60{ width:60%; } .mst .bar.w80{ width:80%; }
+  .mst b{ display:block; font-size:10px; margin-bottom:2px; }
+  .mst.ok b{ color:var(--ok); } .mst.err b{ color:var(--bad); } .mst.load b{ color:var(--ac); }
+  .mst .fix{ color:var(--ac); }
+  .copyfmt{ margin-top:9px; font-size:11px; color:var(--tx3); }
+  .copyfmt code{ font:11px ui-monospace,Consolas,monospace; color:#a9c7ec; background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:1px 6px; }
+  /* daemon 离线依赖横幅(自动化页状态演示) */
+  .dep{ display:flex; align-items:center; gap:9px; margin-bottom:10px; background:rgba(255,159,10,.08); border:1px solid rgba(255,159,10,.3); border-radius:9px; padding:7px 12px; font-size:12px; color:#ffb340; }
+  .dep .btn{ margin-left:auto; }
+  .bdg.hn{ color:#c58af9; border-color:rgba(197,138,249,.35); background:rgba(197,138,249,.08); }
+
+  /* 快捷 */
+  .quick{ display:flex; flex-direction:column; gap:7px; }
+  .qrow{ display:flex; align-items:center; gap:9px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:7px 11px; font-size:12.5px; }
+  .qrow .mono{ font-family:ui-monospace,Consolas,monospace; color:#a9c7ec; font-size:11.5px; }
+  .qrow .go{ margin-left:auto; color:var(--tx3); display:flex; }
+
+  /* 巡检 */
+  .sites{ display:flex; flex-wrap:wrap; gap:7px; }
+  .site{ display:flex; align-items:center; gap:7px; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:5px 10px 5px 5px; font-size:12px; }
+  .ava{ width:26px; height:26px; border-radius:7px; display:flex; align-items:center; justify-content:center; flex:none; }
+  .ava img{ width:14px; height:14px; display:block; }
+  .site .st{ font-size:10.5px; }
+  .site.off{ opacity:.62; }
+
+  /* ===== 安全中心 ===== */
+  .sec{ border:1px solid var(--ac-line); background:linear-gradient(180deg,rgba(74,158,255,.06),rgba(74,158,255,.015)); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+  .sec .row{ display:flex; gap:12px; align-items:stretch; }
+  .shield{ width:46px; height:46px; border-radius:12px; background:rgba(52,199,89,.12); border:1px solid rgba(52,199,89,.35); color:var(--ok); display:flex; align-items:center; justify-content:center; flex:none; }
+  .shield .ic{ width:22px; height:22px; }
+  .sec .cells{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; flex:1; }
+  .cell{ background:var(--card); border:1px solid var(--line); border-radius:9px; padding:9px 12px; }
+  .cell .l{ font-size:11px; color:var(--tx3); margin-bottom:2px; }
+  .cell .v{ font-size:13px; font-weight:600; }
+  .cell .v.on{ color:var(--ok);} .cell .v.muted{ color:var(--tx2); font-weight:400; font-size:11.5px;}
+  .proof{ display:flex; gap:7px; margin-top:10px; flex-wrap:wrap; }
+  .proof span{ display:inline-flex; align-items:center; gap:5px; font-size:11px; color:#7fd89a; background:rgba(52,199,89,.09); border:1px solid rgba(52,199,89,.22); border-radius:999px; padding:2.5px 10px; }
+  .proof .ic{ width:11px; height:11px; stroke-width:2.2; }
+
+  /* 模式四档 */
+  .modes{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+  .mode{ position:relative; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:9px 11px; }
+  .mode.on{ border-color:var(--ac); background:var(--ac-bg); }
+  .mode .mi{ display:flex; align-items:center; gap:7px; margin-bottom:3px; color:var(--tx2); }
+  .mode.on .mi{ color:var(--ac); }
+  .mode b{ font-size:12.5px; display:block; }
+  .mode span{ font-size:10.5px; color:var(--tx3); line-height:1.45; display:block; margin-top:2px;}
+  .mode .mchk{ position:absolute; top:8px; right:8px; width:16px; height:16px; border-radius:50%; background:var(--ac); color:#fff; display:none; align-items:center; justify-content:center; }
+  .mode.on .mchk{ display:flex; }
+
+  /* 安全页清单行 */
+  .stat{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7.5px 0; border-bottom:1px solid var(--line); font-size:12.5px; }
+  .stat:last-child{ border-bottom:0; padding-bottom:2px; }
+  .stat span{ color:var(--tx2); }
+  .stat b{ font:500 12px ui-monospace,Consolas,monospace; color:#c6cfda; }
+  .vrow{ display:flex; align-items:center; gap:9px; padding:6.5px 0; border-bottom:1px solid var(--line); font-size:12.5px; }
+  .vrow:last-child{ border-bottom:0; padding-bottom:2px; }
+  .vrow .ic{ color:var(--ok); }
+  .vrow em{ margin-left:auto; font-style:normal; font-size:10px; color:var(--ok); border:1px solid rgba(52,199,89,.3); border-radius:999px; padding:1px 8px; flex:none; }
+  .audit{ display:flex; align-items:center; gap:9px; margin-top:12px; background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:8px 12px; font-size:12px; color:var(--tx2); }
+  .audit .lnk{ margin-left:auto; color:var(--ac); display:flex; align-items:center; gap:4px; cursor:pointer; font-size:12px; }
+  .shahash{ display:inline-block; font:11px ui-monospace,Consolas,monospace; color:var(--tx3); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:4px 9px; margin-top:10px; }
+
+  /* 开关 */
+  .sw{ width:36px; height:21px; border-radius:999px; background:var(--line2); position:relative; flex:none; }
+  .sw::after{ content:""; position:absolute; width:17px; height:17px; border-radius:50%; background:#fff; top:2px; left:2px; }
+  .sw.on{ background:var(--ok); } .sw.on::after{ left:17px; }
+
+  /* 行式列表(定时/适配器) */
+  .rows{ display:flex; flex-direction:column; gap:8px; }
+  .row{ display:flex; align-items:center; gap:12px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 13px; }
+  .row .tt{ font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .row .dd{ font-size:11.5px; color:var(--tx3); margin-top:1px; }
+  .row .grow{ flex:1; min-width:0; }
+  .hpts{ display:flex; gap:3px; align-items:center; }
+  .hp{ width:8px; height:8px; border-radius:50%; background:var(--ok); }
+  .hp.f{ background:var(--bad); } .hp.n{ background:var(--line2); }
+  .bdg{ display:inline-flex; align-items:center; gap:4px; font-size:10px; border-radius:5px; padding:2px 7px; border:1px solid var(--line2); color:var(--tx2); background:var(--card2); }
+  .bdg.w{ color:#ffb340; border-color:rgba(255,179,64,.35); background:rgba(255,179,64,.08);}
+  .bdg.r{ color:#ff8d85; border-color:rgba(255,69,58,.3); background:rgba(255,69,58,.07);}
+  .bdg.b{ color:var(--ac); border-color:var(--ac-line); background:var(--ac-bg);}
+  .bdg .hn2{ font-style:normal; font-size:8.5px; color:#c58af9; margin-left:4px; font-family:ui-monospace,monospace; }
+  .cron{ font:11px ui-monospace,Consolas,monospace; color:var(--tx2); background:var(--card2); border:1px solid var(--line); border-radius:5px; padding:2px 7px; }
+
+  /* 命令搜索头 */
+  .cmdhead{ display:flex; gap:10px; margin-bottom:12px; align-items:center; }
+  .searchbox{ flex:1; display:flex; align-items:center; gap:9px; background:var(--panel); border:1px solid var(--line2); border-radius:9px; padding:0 13px; }
+  .searchbox svg{ color:var(--tx3); }
+  .searchbox input{ flex:1; background:transparent; border:0; outline:none; border-radius:9px; color:var(--tx); padding:8px 0; font-size:13px; }
+  .searchbox input::placeholder{ color:var(--tx3); }
+  .count{ font-size:12px; color:var(--tx3); }
+
+  /* 手风琴行 */
+  .acc{ display:flex; align-items:center; gap:10px; padding:11px 14px; background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-bottom:8px; font-size:13px; color:var(--tx2); }
+  .acc b{ color:var(--tx); font-weight:600; }
+  .acc .arr{ margin-left:auto; color:var(--tx3); display:flex; align-items:center; gap:6px; font-size:12px; }
+
+  /* 诊断展开态 */
+  .diagopen{ background:var(--card); border:1px solid rgba(255,69,58,.35); border-radius:12px; margin-bottom:12px; overflow:hidden; }
+  .diagopen .bar{ display:flex; align-items:center; gap:9px; padding:10px 14px; background:rgba(255,69,58,.08); font-size:12.5px; color:#ff8d85; }
+  .diagopen .bar .arr{ margin-left:auto; color:var(--tx3); display:flex; align-items:center; gap:5px; }
+  .diagopen .body{ padding:12px 14px; font-size:12px; color:var(--tx2); }
+  .kv{ display:grid; grid-template-columns:110px 1fr; gap:4px 12px; font:11.5px/1.7 ui-monospace,Consolas,monospace; }
+  .kv .k{ color:var(--tx3); } .kv .v2{ color:#c6cfda; }
+  .fixrow{ display:flex; gap:8px; margin-top:10px; }
+
+  .foot{ margin-top:14px; font-size:11.5px; color:var(--tx3); text-align:center; }
+  h2.sec-t{ font-size:13px; color:var(--tx3); font-weight:600; margin:16px 2px 8px; letter-spacing:.3px; }
+</style>
+</head>
+<body>
+
+<!-- 统一图标库(stroke 1.8 / round / 24grid) -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-logo" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="#fff" stroke-width="2.4"/><circle cx="12" cy="12" r="2.6" fill="#fff"/></symbol>
+  <symbol id="i-brand" viewBox="0 0 24 24">
+    <path fill="currentColor" fill-rule="evenodd" d="M3.5 13 C3.5 10.2 6.8 8.2 11 8.2 C14.6 8.2 17.6 9.7 18.8 11.8 L21.6 9.4 C22 9.1 22.5 9.4 22.4 9.9 L22 13 L22.4 16.1 C22.5 16.6 22 16.9 21.6 16.6 L18.8 14.2 C17.6 16.3 14.6 17.8 11 17.8 C6.8 17.8 3.5 15.8 3.5 13 Z M6.6 11.4 a1 1 0 1 0 2 0 a1 1 0 1 0 -2 0 Z"/>
+    <path d="M5.9 2.9 8.5 4.7 5.9 6.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="9.9" y="3.1" width="1.7" height="3.2" rx=".55" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.8 12S6 5.8 12 5.8 21.2 12 21.2 12 18 18.2 12 18.2 2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.8a4 4 0 0 1 7.8-1.2"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2.5 4.5 13.5H11L9.8 21.5 19.5 10H13z"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2v5l3.2 2"/></symbol>
+  <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="3.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3.5 8.5 4.7L12 12.9 3.5 8.2z"/><path d="m4.8 12.4 7.2 4 7.2-4"/><path d="m4.8 16.2 7.2 4 7.2-4"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2.8 19 5.6v5.2c0 4.9-3 8.1-7 9.6-4-1.5-7-4.7-7-9.6V5.6z"/><path d="m8.8 11.8 2.3 2.3 4.3-4.3"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="15" cy="7" r="2.1" fill="var(--card)"/><circle cx="8.5" cy="12" r="2.1" fill="var(--card)"/><circle cx="17" cy="17" r="2.1" fill="var(--card)"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M18.6 2.8v3.8h-3.8"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4-4"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4z"/><path d="M12 10v4.2"/><circle cx="12" cy="16.8" r=".4" fill="currentColor"/></symbol>
+  <symbol id="i-check-c" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="m8.4 12.2 2.5 2.5 4.9-5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4.5h5.5V10"/><path d="M19.5 4.5 11 13"/><path d="M9.5 5.5H6.4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.1"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 8.2h.01M12 11.4v5"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12.5" rx="2"/><path d="M9 20.5h6M12 17v3.5"/></symbol>
+</svg>
+
+<div class="wrap">
+
+  <!-- 页头 -->
+  <div class="hdr">
+    <div class="logo"><svg viewBox="0 0 24 24"><use href="#i-brand"/></svg></div>
+    <div>
+      <h1>OpenCLI 浏览器代理</h1>
+      <p>驱动你登录态的真实浏览器 · 176 站 / 200+ 命令一步式执行 · 由 OpenCLI daemon 驱动</p>
+    </div>
+    <div class="right">
+      <span class="vchip">v0.4.0</span>
+      <div class="seg"><button class="on">中文</button><button>EN</button></div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <a class="on" href="?view=overview">总览</a>
+    <a href="?view=commands">命令</a>
+    <a href="?view=automation">自动化</a>
+    <a href="?view=settings">安全与设置</a>
+    <a href="?view=states">状态机规格</a>
+  </div>
+
+  <!-- 状态条 -->
+  <div class="status">
+    <span class="chip"><span class="dot g"></span>daemon <b>运行中</b></span>
+    <span class="chip"><span class="dot g"></span>BrowserBridge <b>已连接</b></span>
+    <span class="chip"><svg class="ic sm"><use href="#i-monitor"/></svg>Chrome 138</span>
+    <span class="sep"></span>
+    <span class="chip" title="知乎:已登录"><img src="icons/zhihu.svg" alt="">知乎<span class="dot g"></span></span>
+    <span class="chip" title="B站:已登录"><img src="icons/bilibili.svg" alt="">B站<span class="dot g"></span></span>
+    <span class="chip" title="GitHub:已登录"><img src="icons/github.svg" alt="">GitHub<span class="dot g"></span></span>
+    <span class="chip" title="微博:登录失效,去「登录态巡检」处理"><img src="icons/sinaweibo.svg" alt="">微博<span class="dot r"></span></span>
+    <span class="chip" style="margin-left:auto;cursor:pointer"><svg class="ic sm"><use href="#i-refresh"/></svg>重新巡检</span>
+  </div>
+  <div class="diag ok"><svg class="ic sm"><use href="#i-check-c"/></svg>一切正常 · 上次巡检 2 分钟前 · 上次命令执行 8 秒前<span class="arr">详情 <svg class="ic sm"><use href="#i-chev-d"/></svg></span></div>
+
+  <!-- ============ Tab 1 总览 ============ -->
+  <div id="v-overview">
+    <div class="card" style="margin-bottom:12px">
+      <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-play"/></svg></span>试试看<button class="btn sm" style="margin-left:auto">运行</button></h3>
+      <div class="sub">在对话里直接说,或先在这里跑一条 · 点右侧快捷/命令徽章 → 填入本输入框</div>
+      <div class="trybox">
+        <input value="site zhihu hot" readonly>
+        <button class="btn ghost sm">复制</button>
+        <button class="btn ghost sm">重跑</button>
+      </div>
+      <div class="tryout">
+        <span class="k">$ site zhihu hot</span><br>
+        <span class="hot">1. <b>某大厂宣布全员降薪…</b> 热度 984 万</span><br>
+        2. 新版个人信息保护法落地… 热度 761 万<br>
+        3. …<span class="k"> (截断于 50 条,已剥除更新横幅)</span> · <span style="color:var(--ac)">复制</span> <span style="color:var(--ac)">重跑</span> <span style="color:var(--ac)">去对话</span>
+      </div>
+      <div class="micro">
+        <div class="mst load"><b>检测中</b><div class="bar w80"></div><div class="bar w60"></div>骨架屏,按钮禁用</div>
+        <div class="mst ok"><b>成功</b>结果 + 复制 / 重跑 / 去对话</div>
+        <div class="mst err"><b>错误/未登录</b>原文错误 + <span class="fix">一键修复 ↗</span></div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-zap"/></svg></span>实用快捷</h3>
+        <div class="sub">点击 → 填入上方输入框;Ctrl+Enter 直接跑</div>
+        <div class="quick">
+          <div class="qrow">知乎热榜<span class="mono">site zhihu hot</span><span class="go"><svg class="ic sm"><use href="#i-chev-r"/></svg></span></div>
+          <div class="qrow">B站搜索<span class="mono">site bilibili search</span><span class="go"><svg class="ic sm"><use href="#i-chev-r"/></svg></span></div>
+          <div class="qrow">GitHub 通知<span class="mono">site github notifications</span><span class="go"><svg class="ic sm"><use href="#i-chev-r"/></svg></span></div>
+          <div class="qrow">三站热榜一次拉<span class="mono">site_batch hot</span><span class="go"><svg class="ic sm"><use href="#i-chev-r"/></svg></span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-activity"/></svg></span>登录态巡检</h3>
+        <div class="sub">3 / 4 站在线 · 绿=已登 黄=超时 红=未登 · 状态条只亮灯,操作在这里</div>
+        <div class="sites">
+          <span class="site"><span class="ava" style="background:#0084ff"><img src="icons/zhihu.svg" alt=""></span>知乎<span class="st" style="color:var(--ok)">在线</span></span>
+          <span class="site"><span class="ava" style="background:#00a1d6"><img src="icons/bilibili.svg" alt=""></span>B站<span class="st" style="color:var(--ok)">在线</span></span>
+          <span class="site"><span class="ava" style="background:#24292f"><img src="icons/github.svg" alt=""></span>GitHub<span class="st" style="color:var(--ok)">在线</span></span>
+          <span class="site off"><span class="ava" style="background:#e6162d"><img src="icons/sinaweibo.svg" alt=""></span>微博<span class="st" style="color:var(--bad)">失效</span></span>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn ghost sm"><svg class="ic sm"><use href="#i-refresh"/></svg>重新巡检</button>
+          <button class="btn ghost sm">打开微博登录</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 安全中心摘要 -->
+    <div class="sec">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:11px">
+        <div class="shield"><svg class="ic"><use href="#i-shield"/></svg></div>
+        <div style="flex:1">
+          <h3 style="font-size:14px">安全中心</h3>
+          <div class="sub" style="margin-bottom:0">写操作全部经过你批准 · 上一条被拦截命令:<span style="color:var(--tx2)">weibo post(未批准,未执行)</span></div>
+        </div>
+        <button class="btn ghost sm">前往设置 <svg class="ic sm"><use href="#i-chev-r"/></svg></button>
+      </div>
+      <div class="row" style="align-items:center">
+        <div class="cells">
+          <div class="cell"><div class="l">写审批门</div><div class="v on">开启</div></div>
+          <div class="cell"><div class="l">自动化模式</div><div class="v">standard</div></div>
+          <div class="cell"><div class="l">限流</div><div class="v muted">并发 2 · 冷却 30s</div></div>
+          <div class="cell"><div class="l">近 7 天拦截</div><div class="v">3 次</div></div>
+        </div>
+      </div>
+      <div class="proof">
+        <span><svg class="ic"><use href="#i-check-c"/></svg>无遥测上传</span>
+        <span><svg class="ic"><use href="#i-check-c"/></svg>无下载执行</span>
+        <span><svg class="ic"><use href="#i-check-c"/></svg>写命令 fail-closed</span>
+        <span><svg class="ic"><use href="#i-check-c"/></svg>输出截断防注入</span>
+        <span><svg class="ic"><use href="#i-check-c"/></svg>域外登录拒绝</span>
+      </div>
+    </div>
+
+    <h2 class="sec-t">更多</h2>
+    <div class="acc"><b>安装引导</b>——装 BrowserBridge 扩展 / 启动 daemon<span class="arr">展开 <svg class="ic sm"><use href="#i-chev-r"/></svg></span></div>
+    <div class="acc"><b>profile 说明</b>——登录态来自你日常浏览器,与 dsh 内置浏览器无关<span class="arr">展开 <svg class="ic sm"><use href="#i-chev-r"/></svg></span></div>
+    <div class="acc"><b>跳转 dsh 设置</b>——在对话里管理插件<span class="arr">打开 <svg class="ic sm"><use href="#i-ext"/></svg></span></div>
+
+    <div class="foot">opencli v0.4.0 效果图 · 总览视图 —— 数据均为示例</div>
+  </div>
+
+  <!-- ============ Tab 3 自动化 ============ -->
+  <div id="v-automation" style="display:none">
+    <div class="card" style="margin-bottom:12px">
+      <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-clock"/></svg></span>定时任务<button class="btn sm" style="margin-left:auto"><svg class="ic sm"><use href="#i-plus"/></svg>新建</button></h3>
+      <div class="sub">持久化到 dsh.schedule,重启不丢 · 到期自动执行,失败按策略重试并通知</div>
+      <div class="dep"><svg class="ic sm"><use href="#i-alert"/></svg>daemon 未运行——定时任务暂停执行,恢复后自动补跑<span class="btn ghost sm">一键修复</span></div>
+      <div class="rows">
+        <div class="row">
+          <span class="ava" style="background:#0084ff"><img src="icons/zhihu.svg" alt=""></span>
+          <div class="grow"><div class="tt">知乎热榜速览</div><div class="dd">上次 09:00 · 4/5 成功 · 下次 09:00</div></div>
+          <span class="hpts"><span class="hp"></span><span class="hp"></span><span class="hp"></span><span class="hp"></span><span class="hp f"></span></span>
+          <span class="cron">0 9 * * *</span>
+          <span class="bdg b">失败重试 ×3<i class="hn2">v4</i></span><span class="bdg">通知 开<i class="hn2">v4</i></span>
+          <button class="btn ghost sm">立即跑</button>
+          <div class="sw on"></div>
+        </div>
+        <div class="row">
+          <span class="ava" style="background:#24292f"><img src="icons/github.svg" alt=""></span>
+          <div class="grow"><div class="tt">GitHub 未读通知</div><div class="dd">上次 08:30 · 5/5 成功 · 下次 周一 08:00</div></div>
+          <span class="hpts"><span class="hp"></span><span class="hp"></span><span class="hp"></span><span class="hp"></span><span class="hp"></span></span>
+          <span class="cron">0 8 * * 1-5</span>
+          <span class="bdg b">失败重试 ×3<i class="hn2">v4</i></span><span class="bdg">通知 开<i class="hn2">v4</i></span>
+          <button class="btn ghost sm">立即跑</button>
+          <div class="sw on"></div>
+        </div>
+        <div class="row">
+          <span class="ava" style="background:#00a1d6"><img src="icons/bilibili.svg" alt=""></span>
+          <div class="grow"><div class="tt">B站up主更新监控</div><div class="dd">上次 22:00 · 正在重试(2/3)… · 下次 22:30</div></div>
+          <span class="hpts"><span class="hp f"></span><span class="hp f"></span><span class="hp n"></span><span class="hp n"></span><span class="hp n"></span></span>
+          <span class="cron">*/30 * * * *</span>
+          <span class="bdg r">重试中<i class="hn2">v4</i></span><span class="bdg">通知 开<i class="hn2">v4</i></span>
+          <button class="btn ghost sm">立即跑</button>
+          <div class="sw on"></div>
+        </div>
+      </div>
+      <div class="copyfmt">† 重试 / 通知 / 运行历史为 v0.4 host 新增能力(v0.3.8 已有 增删/开关/立即跑 RPC);历史圆点=运行历史面板化</div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-rec"/></svg></span>录制回放</h3>
+        <div class="sub">录制 site / browser 步骤,一键回放</div>
+        <div class="rows">
+          <div class="row"><div class="grow"><div class="tt">每日知识采集</div><div class="dd">3 步 · site zhihu hot → site juejin hot → site github trending</div></div><button class="btn ghost sm">回放</button></div>
+          <div class="row"><div class="grow"><div class="tt">电商比价</div><div class="dd">5 步 · browser open → fill → click → extract ×2</div></div><button class="btn ghost sm">回放</button></div>
+        </div>
+        <div style="margin-top:9px"><button class="btn ghost sm"><svg class="ic sm"><use href="#i-rec"/></svg>开始录制</button></div>
+      </div>
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-layers"/></svg></span>资产库</h3>
+        <div class="sub">脚本 / 配方 / 规则包</div>
+        <div class="cells" style="grid-template-columns:repeat(3,1fr)">
+          <div class="cell"><div class="l">内置脚本</div><div class="v">12</div></div>
+          <div class="cell"><div class="l">配方</div><div class="v">3</div></div>
+          <div class="cell"><div class="l">规则包</div><div class="v">2</div></div>
+        </div>
+        <div style="margin-top:10px"><button class="btn ghost sm">浏览全部 <svg class="ic sm"><use href="#i-chev-r"/></svg></button></div>
+      </div>
+    </div>
+    <div class="foot">opencli v0.4.0 效果图 · 自动化视图 —— 数据均为示例</div>
+  </div>
+
+  <!-- ============ Tab 4 安全与设置 ============ -->
+  <div id="v-settings" style="display:none">
+    <div class="sec" style="padding:16px">
+      <div style="display:flex;align-items:flex-start;gap:13px;margin-bottom:13px">
+        <div class="shield"><svg class="ic"><use href="#i-shield"/></svg></div>
+        <div style="flex:1">
+          <h3 style="font-size:14.5px">审批门</h3>
+          <div class="sub" style="margin:3px 0 0">写命令(发帖/点赞/下单)先弹审批,你点「允许」才执行;权限不明的命令一律按写处理</div>
+        </div>
+        <div style="text-align:center;flex:none">
+          <div class="sw on" style="transform:scale(1.12)"></div>
+          <div style="font-size:10.5px;color:var(--ok);margin-top:5px">已开启</div>
+        </div>
+      </div>
+      <div class="modes">
+        <div class="mode">
+          <span class="mi"><svg class="ic sm"><use href="#i-eye"/></svg><b>read-only</b></span>
+          <span>所有写命令直接拒绝,零打扰</span>
+          <span class="mchk"><svg class="ic sm"><use href="#i-check-c"/></svg></span>
+        </div>
+        <div class="mode on">
+          <span class="mi"><svg class="ic sm"><use href="#i-shield"/></svg><b>standard</b></span>
+          <span>写命令逐条审批(推荐)</span>
+          <span class="mchk"><svg class="ic sm"><use href="#i-check-c"/></svg></span>
+        </div>
+        <div class="mode">
+          <span class="mi"><svg class="ic sm"><use href="#i-zap"/></svg><b>autonomous</b></span>
+          <span>白名单站点自动放行,其余审批</span>
+          <span class="mchk"><svg class="ic sm"><use href="#i-check-c"/></svg></span>
+        </div>
+        <div class="mode">
+          <span class="mi"><svg class="ic sm"><use href="#i-alert"/></svg><b>unrestricted</b></span>
+          <span>全部放行(不建议)</span>
+          <span class="mchk"><svg class="ic sm"><use href="#i-check-c"/></svg></span>
+        </div>
+      </div>
+      <div class="audit">
+        <svg class="ic sm" style="color:var(--warn)"><use href="#i-alert"/></svg>
+        近 7 天拦截 <b style="color:var(--tx)">3 次</b> · 最近一条 <span style="font-family:ui-monospace,Consolas,monospace;color:#c6cfda">weibo post</span> — 未批准,未执行
+        <span class="lnk">审计日志 <svg class="ic sm"><use href="#i-chev-r"/></svg></span>
+      </div>
+    </div>
+
+    <h2 class="sec-t">边界</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-sliders"/></svg></span>限流与限域</h3>
+        <div class="sub">保护你的账号不被风控</div>
+        <div class="stat"><span>命令最小间隔</span><b>750 ms</b></div>
+        <div class="stat"><span>最大并发</span><b>2</b></div>
+        <div class="stat"><span>突发上限</span><b>3 次 / 冷却 30 s</b></div>
+        <div class="stat"><span>单次爬取页数</span><b>≤ 20(429/5xx 自动退避)</b></div>
+        <div class="stat"><span>authProfiles 限域</span><b>forum → forum.example.com</b></div>
+      </div>
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-check-c"/></svg></span>供应链自证</h3>
+        <div class="sub">本插件的安全边界,可核查</div>
+        <div class="vrow"><svg class="ic sm"><use href="#i-check-c"/></svg><span>无遥测上传</span><em>已核验</em></div>
+        <div class="vrow"><svg class="ic sm"><use href="#i-check-c"/></svg><span>无 curl | sh 下载执行</span><em>已核验</em></div>
+        <div class="vrow"><svg class="ic sm"><use href="#i-check-c"/></svg><span>写命令 fail-closed</span><em>已核验</em></div>
+        <div class="vrow"><svg class="ic sm"><use href="#i-check-c"/></svg><span>输出截断防提示注入</span><em>已核验</em></div>
+        <div class="vrow"><svg class="ic sm"><use href="#i-check-c"/></svg><span>来源 GitHub Releases</span><em>已核验</em></div>
+        <span class="shahash">sha256 · 9f2a…c41d · 记录于 v0.4.0 发布</span>
+      </div>
+    </div>
+
+    <!-- 版本与更新(dsh-market Update API 渐进增强:未装市场时降级为 GitHub Releases 检查) -->
+    <div class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:12px">
+      <span class="mini-ico"><svg class="ic sm"><use href="#i-refresh"/></svg></span>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600">版本与更新</div>
+        <div style="font-size:11.5px;color:var(--tx3)">当前 v0.4.0 · 渠道 stable · 供应链自证随版本记录 sha256</div>
+      </div>
+      <span class="bdg" style="font-size:11px">已是最新</span>
+      <button class="btn ghost sm">检查更新</button>
+      <span style="font-size:11px;color:var(--tx3)">经 dsh-market Update API(未装市场自动降级 GitHub Releases)</span>
+    </div>
+
+    <!-- 折叠诊断条:展开态示例 -->
+    <div class="diagopen">
+      <div class="bar"><svg class="ic sm"><use href="#i-alert"/></svg>daemon 未响应<span class="bdg r">3 次探测失败</span><span class="arr">收起 <svg class="ic sm"><use href="#i-chev-d"/></svg></span></div>
+      <div class="body">
+        <div class="kv">
+          <span class="k">二进制</span><span class="v2">C:\Users\me\AppData\Roaming\npm\opencli.cmd(全局)</span>
+          <span class="k">探测命令</span><span class="v2">opencli daemon status → exit 1(stderr: pipe connect ECONNREFUSED 127.0.0.1:8642)</span>
+          <span class="k">建议动作</span><span class="v2">启动 daemon → 重测 BrowserBridge → 复跑最近失败命令</span>
+        </div>
+        <div class="fixrow"><button class="btn sm">一键修复</button><button class="btn ghost sm">复制诊断</button><button class="btn ghost sm">查看日志</button></div>
+      </div>
+    </div>
+
+    <h2 class="sec-t">通用</h2>
+    <div class="acc"><b>安装引导</b>——前置 OpenCLI 二选一(npm / OpenCLIApp),扩展登录站点<span class="arr">展开 <svg class="ic sm"><use href="#i-chev-r"/></svg></span></div>
+    <div class="acc"><b>适配器管理</b>——禁用/启用,目录随 systemPrompt 收缩<span class="arr">前往「命令」页 <svg class="ic sm"><use href="#i-chev-r"/></svg></span></div>
+    <div class="acc"><b>关于</b>——v0.4.0 · MIT · <span style="color:var(--ac)">检查更新(经 dsh-market Update API)</span><span class="arr"><svg class="ic sm"><use href="#i-info"/></svg></span></div>
+
+    <div class="foot">opencli v0.4.0 效果图 · 安全与设置视图 —— 数据均为示例</div>
+  </div>
+
+  <!-- ============ Tab 2 命令 ============ -->
+  <div id="v-commands" style="display:none">
+    <div class="cmdhead">
+      <div class="searchbox"><svg class="ic sm"><use href="#i-search"/></svg><input placeholder="搜索站点或命令,如:热榜 / search / bilibili"></div>
+      <span class="count">176 站 · 200+ 命令 · 173 启用</span>
+    </div>
+    <div class="copyfmt" style="margin:-4px 0 10px">点命令徽章 → 复制 <code>site &lt;适配器&gt; &lt;命令&gt;</code> 调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)</div>
+    <div class="seg" style="display:inline-flex;margin-bottom:12px"><button class="on">Site 命令</button><button>App 命令</button><button>我的适配器</button></div>
+
+    <div class="rows">
+      <div class="row">
+        <span class="ava" style="background:#0084ff"><img src="icons/zhihu.svg" alt=""></span>
+        <div class="grow"><div class="tt">zhihu 知乎 <span class="bdg b">hot</span> <span class="bdg b">search</span> <span class="bdg b">question</span></div>
+        <div class="dd">18 命令 · 热榜/搜索/问题/回答,支持登录态个人流</div></div>
+        <span class="bdg w">write 3</span><button class="btn ghost sm">命令</button><button class="btn ghost sm">禁用</button>
+      </div>
+      <div class="row">
+        <span class="ava" style="background:#00a1d6"><img src="icons/bilibili.svg" alt=""></span>
+        <div class="grow"><div class="tt">bilibili B站 <span class="bdg b">search</span> <span class="bdg b">video</span> <span class="bdg b">up</span></div>
+        <div class="dd">24 命令 · 搜索/视频详情/UP主/弹幕</div></div>
+        <span class="bdg w">write 5</span><button class="btn ghost sm">命令</button><button class="btn ghost sm">禁用</button>
+      </div>
+      <div class="row">
+        <span class="ava" style="background:#24292f"><img src="icons/github.svg" alt=""></span>
+        <div class="grow"><div class="tt">github <span class="bdg b">whoami</span> <span class="bdg b">notifications</span></div>
+        <div class="dd">31 命令 · 仓库/通知/Issue,登录态可用</div></div>
+        <span class="bdg w">write 8</span><button class="btn ghost sm">命令</button><button class="btn ghost sm">禁用</button>
+      </div>
+      <div class="row" style="opacity:.6">
+        <span class="ava" style="background:#e6162d"><img src="icons/sinaweibo.svg" alt=""></span>
+        <div class="grow"><div class="tt">weibo 微博</div><div class="dd">12 命令 · 登录失效,命令可用性下降</div></div>
+        <span class="bdg r">✗ 登录失效</span><button class="btn ghost sm">重新登录</button>
+      </div>
+      <div class="row" style="opacity:.55">
+        <span class="ava" style="background:#007722"><img src="icons/douban.svg" alt=""></span>
+        <div class="grow"><div class="tt">douban 豆瓣</div><div class="dd">9 命令 · 已按你的设置禁用,目录已从 systemPrompt 收缩</div></div>
+        <span class="bdg">已禁用</span><button class="btn ghost sm">启用</button>
+      </div>
+    </div>
+    <div style="margin-top:12px;text-align:center"><button class="btn ghost sm">加载更多(173 启用 / 176)</button></div>
+    <div class="foot">opencli v0.4.0 效果图 · 命令视图 —— 数据均为示例</div>
+  </div>
+  <!-- ============ Tab 5 状态机规格(施工规格书) ============ -->
+  <div id="v-states" style="display:none">
+    <div class="spec"><b>这一页是施工规格,不是产品 UI。</b>每个区块四种状态的落地方案 + 今天真机实测的注记。状态条不压标题;状态条=指示灯,巡检卡=操作;响应式按容器 ResizeObserver(禁视口 MQ)。</div>
+    <div class="grid2" style="grid-template-columns:1fr 1fr">
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-activity"/></svg></span>状态 1 · 检测中(骨架屏)</h3>
+        <div class="sub">页面挂载 → 首批 5 个 RPC(status/settings/adapters/mode/schedules)并发返回前</div>
+        <div class="micro" style="grid-template-columns:1fr">
+          <div class="mst load"><b>健康卡</b><div class="bar w80"></div><div class="bar w60"></div><div class="bar w80"></div>按钮禁用灰置</div>
+          <div class="mst load"><b>定时/巡检卡</b><div class="bar w60"></div><div class="bar w80"></div>实测首屏 ~2-4s,超 8s 转「部分可用」并给重试</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-shield"/></svg></span>状态 2 · 正常(真数据)</h3>
+        <div class="sub">全部 RPC ok:true——即其余四页所绘</div>
+        <div class="kv" style="grid-template-columns:120px 1fr">
+          <span class="k">健康区</span><span class="v2">daemon/PID/版本/扩展 + 登录 chips + 站点数</span>
+          <span class="k">安全中心</span><span class="v2">审批门 + 模式 + 限流 + 拦截计数</span>
+          <span class="k">自动化</span><span class="v2">任务行(历史圆点+下次)+ 资产计数</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-alert"/></svg></span>状态 3 · 依赖缺失(可修复)</h3>
+        <div class="sub">今天真机实测的两种,一键修复均已验证可用</div>
+        <div class="kv" style="grid-template-columns:130px 1fr">
+          <span class="k">daemon 未运行</span><span class="v2">健康卡 → 启动 daemon(RPC 实测通过,30s 超时)</span>
+          <span class="k">bridge 未连/未登录</span><span class="v2">巡检卡黄色/红色态 + try-run 返回空 → 引导登录,不弹窗</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-alert"/></svg></span>状态 4 · RPC 错误(可诊断)</h3>
+        <div class="sub">网关层错误(arguments-invalid 等)或 opencli 崩溃</div>
+        <div class="kv" style="grid-template-columns:130px 1fr">
+          <span class="k">呈现</span><span class="v2">对应卡片内嵌错误条,原文折叠;永不 alert</span>
+          <span class="k">动作</span><span class="v2">一键修复 / 复制诊断(含 bin 路径+exit code+stderr 头)/ 查看日志</span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3><span class="mini-ico"><svg class="ic sm"><use href="#i-info"/></svg></span>施工注记(真机实测结论,2026-09-16)</h3>
+      <div class="sub">全部来自今天 3123 实例的逐按钮验证</div>
+      <div class="kv" style="grid-template-columns:150px 1fr">
+        <span class="k">RPC 通道</span><span class="v2">/api/opencli/* 直连可用(v0.3.8 已修 12 处形参包裹);host 半必须在 profile 正式安装,link:/junction 会静默不加载</span>
+        <span class="k">待修解析</span><span class="v2">opencli --version 走 stderr(status 取 stdout 得空)→ 健康区合并两流;adapters list 解析失败带上 lastShellError 原文</span>
+        <span class="k">host v0.4 新增</span><span class="v2">拦截审计(近 7 天计数+列表)/ 定时失败重试+通知 / logs-tail / 发布时 sha256 记录——效果图对应元素全部依赖这四项,施工顺序勿颠倒</span>
+        <span class="k">双语</span><span class="v2">全部文案走 i18n key(zh 默认,EN 齐套),含四态错误文案</span>
+        <span class="k">宽度</span><span class="v2">基宽 800(设置弹窗实测);三卡 auto-fit 自动降列;iframe/容器判定用 ResizeObserver,禁视口媒体查询</span>
+      </div>
+    </div>
+    <div class="foot">opencli v0.4.0 施工图 · 状态机规格页</div>
+  </div>
+
+</div>
+<script>
+  const v = new URLSearchParams(location.search).get('view') || 'overview';
+  const map = { overview:'v-overview', commands:'v-commands', automation:'v-automation', settings:'v-settings', states:'v-states' };
+  for (const [k,id] of Object.entries(map)) document.getElementById(id).style.display = (k===v)?'':'none';
+  document.querySelectorAll('.tabs a').forEach(a=>a.classList.toggle('on', a.href.includes('view='+v)));
+</script>
+</body>
+</html>

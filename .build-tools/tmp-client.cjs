@@ -311,6 +311,8 @@ var STR = {
     cmdT: "\u547D\u4EE4",
     cmdSearch: "\u641C\u7D22\u7AD9\u70B9\u6216\u547D\u4EE4,\u5982:\u70ED\u699C / search / bilibili",
     cmdFmt: "\u70B9\u547D\u4EE4\u884C \u2192 \u590D\u5236\u8C03\u7528\u683C\u5F0F;\u7981\u7528\u9002\u914D\u5668\u4F1A\u5373\u65F6\u4ECE systemPrompt \u6536\u7F29\u76EE\u5F55(\u9700\u786E\u8BA4)",
+    knowExp: "\u5BFC\u51FA\u77E5\u8BC6\u5361",
+    knowExpDo: "\u5BFC\u51FA\u4E2D\u2026",
     disable: "\u7981\u7528",
     enable: "\u542F\u7528",
     commandsN: (n) => `${n} \u547D\u4EE4`,
@@ -454,6 +456,8 @@ var STR = {
     cmdT: "Commands",
     cmdSearch: "Search sites or commands, e.g. trending / search / bilibili",
     cmdFmt: "Click a command row \u2192 copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)",
+    knowExp: "Export knowledge cards",
+    knowExpDo: "Exporting\u2026",
     disable: "Disable",
     enable: "Enable",
     commandsN: (n) => `${n} cmds`,
@@ -634,6 +638,7 @@ var SPRITE = `<svg width="0" height="0" style="position:absolute">
   <line x1="12" x2="12" y1="17" y2="21" /></symbol>
 <symbol id="i4-copy" viewBox="0 0 24 24"><rect x="8" y="8" rx="2" ry="2" />
   <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></symbol>
+<symbol id="i4-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></symbol>
 </svg>`;
 var ava = (site, px = 26) => {
   const b = siteIconOf(site);
@@ -667,6 +672,10 @@ var ic = (name, sm = false) => (0, import_react.createElement)("svg", {
 });
 var CSS = `
 .o4 { width:100%; max-width:640px; margin:0 auto; display:flex; flex-direction:column; gap:11px; font-family:-apple-system,'Segoe UI','Microsoft YaHei',system-ui,sans-serif; color:#F9FAFB; position:relative; }
+.o4 ::-webkit-scrollbar { width:7px; height:7px; }
+.o4 ::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); border-radius:4px; }
+.o4 ::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.2); }
+.o4 ::-webkit-scrollbar-track { background:transparent; }
 
 .o4ic { width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex:none; }
 .o4ic-s { width:13px; height:13px; }
@@ -680,10 +689,10 @@ var CSS = `
 .o4-seg button { border:0; background:transparent; color:rgba(249,250,251,.55); font-size:11.5px; padding:4px 11px; border-radius:7px; cursor:pointer; white-space:nowrap; transition:all .18s ease; }
 .o4-seg button.on { background:linear-gradient(135deg,#4D6BFE,#4D6BFE); color:#fff; box-shadow:0 2px 8px -2px rgba(77,107,254,.5); }
 .o4-seg button:not(.on):hover { color:#F9FAFB; }
-.o4-tabs { display:flex; gap:4px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06); border-radius:12px; padding:4px; backdrop-filter:blur(10px); }
-.o4-tabs button { flex:1; border:0; background:transparent; color:rgba(249,250,251,.55); font-size:12.5px; padding:8px 0; border-radius:9px; cursor:pointer; transition:all .18s ease; }
-.o4-tabs button:hover { color:#F9FAFB; }
-.o4-tabs button.on { background:rgba(255,255,255,.08); color:#fff; font-weight:600; box-shadow:inset 0 0 0 1px rgba(77,107,254,.35), 0 2px 10px -4px rgba(0,0,0,.6); }
+.o4-tabs { display:flex; gap:3px; background:rgba(0,0,0,.18); border:1px solid rgba(255,255,255,.06); border-radius:11px; padding:3px; backdrop-filter:blur(10px); box-shadow:inset 0 1px 3px rgba(0,0,0,.28); }
+.o4-tabs button { flex:1; border:0; background:transparent; color:rgba(249,250,251,.5); font-size:12.5px; padding:7.5px 0; border-radius:8px; cursor:pointer; transition:color .15s ease, background-color .15s ease, box-shadow .15s ease; }
+.o4-tabs button:hover { color:#F9FAFB; background:rgba(255,255,255,.045); }
+.o4-tabs button.on { background:linear-gradient(180deg,rgba(77,107,254,.22),rgba(77,107,254,.13)); color:#fff; font-weight:600; box-shadow:inset 0 0 0 1px rgba(77,107,254,.4), inset 0 1px 0 rgba(255,255,255,.07), 0 2px 8px -3px rgba(0,0,0,.5); }
 .o4-status { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06); border-radius:12px; backdrop-filter:blur(10px); }
 .o4-chip { display:inline-flex; align-items:center; gap:5px; font-size:11px; color:rgba(249,250,251,.55); background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.05); border-radius:999px; padding:3px 9px; transition:border-color .18s ease; }
 .o4-chip:hover { border-color:rgba(255,255,255,.14); }
@@ -699,22 +708,23 @@ var CSS = `
 .o4-diag.ok { background:rgba(52,199,89,.07); border:1px solid rgba(52,199,89,.25); color:#7FD89A; }
 .o4-diag.bad { background:rgba(255,69,58,.07); border:1px solid rgba(255,69,58,.3); color:#FF8D85; }
 .o4-diag .o4arr { margin-left:auto; color:rgba(249,250,251,.38); display:flex; align-items:center; gap:4px; }
-.o4-card { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.06); border-radius:12px; padding:13px 15px; box-shadow:0 1px 2px rgba(0,0,0,.25); transition:border-color .18s ease, transform .18s ease; }
-.o4-card:hover { border-color:rgba(255,255,255,.11); }
+.o4-card { position:relative; background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.035)); border:1px solid rgba(255,255,255,.07); border-radius:13px; padding:13px 15px; box-shadow:0 1px 2px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.045); transition:border-color .16s ease, box-shadow .16s ease; }
+.o4-card:hover { border-color:rgba(255,255,255,.13); box-shadow:0 3px 12px -2px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.06); }
 .o4-card + .o4-card { margin-top:11px; }
 .o4-h3 { font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:8px; letter-spacing:.2px; }
 .o4-h3 .rt { margin-left:auto; display:flex; align-items:center; gap:8px; }
-.o4-sub { font-size:11.5px; color:rgba(249,250,251,.45); margin:4px 0 10px; line-height:1.55; }
+.o4-sub { font-size:11.5px; color:rgba(249,250,251,.58); margin:4px 0 10px; line-height:1.55; }
 .o4-miniico { width:24px; height:24px; border-radius:8px; background:rgba(77,107,254,.14); border:1px solid rgba(77,107,254,.35); color:#8B9AFF; display:inline-flex; align-items:center; justify-content:center; flex:none; }
-.o4-btn { border:0; border-radius:9px; background:linear-gradient(135deg,#4D6BFE,#4263D9); color:#fff; font-size:12px; padding:6px 14px; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:6px; transition:all .18s ease; box-shadow:0 2px 10px -3px rgba(77,107,254,.45); }
+.o4-btn { border:0; border-radius:9px; background:linear-gradient(135deg,#4D6BFE,#4263D9); color:#fff; font-size:12px; padding:6px 14px; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:6px; transition:background-color .15s ease, box-shadow .15s ease, transform .15s ease; box-shadow:0 2px 10px -3px rgba(77,107,254,.45), inset 0 1px 0 rgba(255,255,255,.18); }
 .o4-btn:hover { background:linear-gradient(135deg,#5E7BF0,#4D6BFE); transform:translateY(-1px); box-shadow:0 4px 14px -3px rgba(77,107,254,.5); }
 .o4-btn:active { transform:translateY(0); }
 .o4-btn.ghost { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.09); color:rgba(249,250,251,.75); font-weight:500; box-shadow:none; }
 .o4-btn.ghost:hover { background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.16); color:#F9FAFB; transform:translateY(-1px); }
 .o4-btn.sm { padding:4px 10px; font-size:11.5px; }
 .o4-btn:disabled { opacity:.5; cursor:default; transform:none; }
-.o4-in { flex:1; min-width:0; background:rgba(0,0,0,.22); border:1px solid rgba(255,255,255,.09); color:#F9FAFB; border-radius:9px; padding:7px 11px; font-size:12.5px; transition:border-color .18s ease, box-shadow .18s ease; }
-.o4-in:focus { outline:none; border-color:rgba(77,107,254,.45); box-shadow:0 0 0 3px rgba(77,107,254,.15); }
+.o4-in { flex:1; min-width:0; background:rgba(0,0,0,.24); border:1px solid rgba(255,255,255,.1); color:#F9FAFB; border-radius:9px; padding:7px 11px; font-size:12.5px; transition:border-color .15s ease, box-shadow .15s ease; }
+.o4-in:focus { outline:none; border-color:rgba(77,107,254,.6); box-shadow:0 0 0 3px rgba(77,107,254,.16); }
+.o4-in::placeholder { color:rgba(249,250,251,.28); }
 .o4-in.mono { font-family:ui-monospace,Consolas,monospace; }
 .o4-in::placeholder { color:rgba(249,250,251,.3); }
 .o4-tryout { margin-top:9px; background:rgba(0,0,0,.24); border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:10px 12px; font:11.5px/1.7 ui-monospace,Consolas,monospace; color:rgba(249,250,251,.72); white-space:pre-wrap; word-break:break-word; max-height:200px; overflow:auto; box-shadow:inset 0 2px 8px rgba(0,0,0,.4); }
@@ -754,8 +764,8 @@ var CSS = `
 .o4-mode .mi { display:flex; align-items:center; gap:6px; margin-bottom:2px; color:rgba(249,250,251,.55); }
 .o4-mode.on .mi { color:#8B9AFF; }
 .o4-mode b { font-size:12px; }
-.o4-mode span { font-size:10px; color:rgba(249,250,251,.38); line-height:1.45; display:block; margin-top:2px; }
-.o4-mchk { position:absolute; top:7px; right:7px; width:15px; height:15px; border-radius:50%; background:linear-gradient(135deg,#4D6BFE,#4263D9); color:#fff; display:none; align-items:center; justify-content:center; box-shadow:0 2px 6px -1px rgba(77,107,254,.5); }
+.o4-mode span { font-size:10px; color:rgba(249,250,251,.52); line-height:1.45; display:block; margin-top:2px; }
+.o4-mode .o4-mchk { position:absolute; top:7px; right:7px; width:15px; height:15px; border-radius:50%; background:linear-gradient(135deg,#4D6BFE,#4263D9); color:#fff; display:none; align-items:center; justify-content:center; box-shadow:0 2px 6px -1px rgba(77,107,254,.5); font-size:0; line-height:0; margin-top:0; }
 .o4-mode.on .o4-mchk { display:flex; }
 .o4-sw { width:36px; height:20px; border-radius:999px; background:rgba(255,255,255,.14); position:relative; flex:none; cursor:pointer; border:0; padding:0; transition:background .2s ease; }
 .o4-sw::after { content:""; position:absolute; width:16px; height:16px; border-radius:50%; background:#fff; top:2px; left:2px; transition:left .2s cubic-bezier(.4,0,.2,1); box-shadow:0 1px 3px rgba(0,0,0,.4); }
@@ -769,6 +779,7 @@ var CSS = `
 .o4-hpts { display:flex; gap:3px; align-items:center; }
 .o4-hp { width:7px; height:7px; border-radius:50%; background:#34C759; }
 .o4-hp.f { background:#FF453A; }
+.o4-hp.w { background:#FFB340; }
 .o4-hp.n { background:rgba(255,255,255,.1); }
 .o4-bdg { display:inline-flex; align-items:center; gap:4px; font-size:10px; border-radius:6px; padding:2px 7px; border:1px solid rgba(255,255,255,.08); color:rgba(249,250,251,.55); background:rgba(31,36,45,.8); }
 .o4-bdg.w { color:#FFB340; border-color:rgba(255,179,64,.3); background:rgba(255,179,64,.07); }
@@ -867,6 +878,7 @@ function Panel() {
   const [copied, setCopied] = (0, import_react.useState)(null);
   const [schedSite, setSchedSite] = (0, import_react.useState)("");
   const [schedCron, setSchedCron] = (0, import_react.useState)("0 9 * * *");
+  const [schedWatch, setSchedWatch] = (0, import_react.useState)("");
   const [schedBusy, setSchedBusy] = (0, import_react.useState)(false);
   const [recordings, setRecordings] = (0, import_react.useState)(() => {
     try {
@@ -1037,17 +1049,22 @@ function Panel() {
   const addSchedule = async () => {
     if (schedSite.trim().length === 0 || schedBusy) return;
     setSchedBusy(true);
+    const watch = schedWatch.trim();
     const r = await rpc("schedule-add", {
       request: {
         site: schedSite.trim(),
         cron: schedCron,
         retry: 3,
-        notify: true
+        notify: true,
+        ...watch.length > 0 ? {
+          watch
+        } : {}
       }
     });
     setSchedBusy(false);
     if (r.ok) {
       setSchedSite("");
+      setSchedWatch("");
       void loadSchedules();
     } else showToast(r.error?.message ?? t2("errReq"), false);
   };
@@ -1067,6 +1084,12 @@ function Panel() {
       }
     });
     if (r.ok) void loadSchedules();
+  };
+  const exportKnowledge = async () => {
+    showToast(t2("knowExpDo"), true);
+    const r = await rpc("knowledge-export", {});
+    const n = r.value?.paths?.length ?? 0;
+    showToast(r.ok && n > 0 ? `\u2713 ${n} \u5F20\u77E5\u8BC6\u5361 \u2192 ~/.dsh/opencli-knowledge/` : r.error?.message ?? t2("errReq"), r.ok && n > 0);
   };
   const runScheduleNow = async (id) => {
     const r = await rpc("schedule-run-now", {
@@ -1579,7 +1602,13 @@ ${runOut.text}`);
         fontSize: "11.5px",
         color: "#5F6873"
       }
-    }, `${adapters?.length ?? 0} \xB7 ${(adapters ?? []).filter((a) => a.disabled !== true).length}`)), (0, import_react.createElement)("div", {
+    }, `${adapters?.length ?? 0} \xB7 ${(adapters ?? []).filter((a) => a.disabled !== true).length}`), (0, import_react.createElement)("button", {
+      className: "o4-btn ghost sm",
+      title: t2("knowExp"),
+      onClick: () => {
+        void exportKnowledge();
+      }
+    }, ic("book", true), t2("knowExp"))), (0, import_react.createElement)("div", {
       className: "o4-note",
       style: {
         margin: "0 0 10px"
@@ -1699,7 +1728,8 @@ ${c.description}`,
       style: {
         display: "flex",
         gap: "8px",
-        marginBottom: "10px"
+        marginBottom: "10px",
+        flexWrap: "wrap"
       }
     }, (0, import_react.createElement)("input", {
       className: "o4-in",
@@ -1714,6 +1744,15 @@ ${c.description}`,
       placeholder: "cron",
       value: schedCron,
       onChange: (e) => setSchedCron(e.target.value)
+    }), (0, import_react.createElement)("input", {
+      className: "o4-in",
+      style: {
+        maxWidth: "172px"
+      },
+      placeholder: "\u{1F514} watch \u5173\u952E\u8BCD",
+      title: "\u9017\u53F7\u5206\u9694,\u547D\u4E2D\u5373\u901A\u77E5",
+      value: schedWatch,
+      onChange: (e) => setSchedWatch(e.target.value)
     }), (0, import_react.createElement)("button", {
       className: "o4-btn sm",
       disabled: schedBusy,
@@ -1738,9 +1777,11 @@ ${c.description}`,
         4
       ].map((i) => {
         const h = hist[i];
+        const cls = h === void 0 ? " n" : h.ok ? "" : h.summary.includes("\u9759\u9ED8\u5931\u8D25") || h.summary.includes("\u26A0") ? " w" : " f";
         return (0, import_react.createElement)("span", {
           key: i,
-          className: `o4-hp${h === void 0 ? " n" : h.ok ? "" : " f"}`
+          className: `o4-hp${cls}`,
+          title: h?.summary ?? ""
         });
       });
       const okN = hist.filter((h) => h.ok).length;
@@ -1754,7 +1795,13 @@ ${c.description}`,
         }
       }, (0, import_react.createElement)("div", {
         className: "o4-tt"
-      }, s.site)), (0, import_react.createElement)("span", {
+      }, s.site), s.watch !== void 0 ? (0, import_react.createElement)("div", {
+        className: "o4-bdg w",
+        style: {
+          marginTop: "3px",
+          display: "inline-flex"
+        }
+      }, `\u{1F514} ${s.watch}`) : null), (0, import_react.createElement)("span", {
         className: "o4-hpts"
       }, dots), (0, import_react.createElement)("button", {
         className: "o4-sw" + (s.enabled ? " on" : ""),
