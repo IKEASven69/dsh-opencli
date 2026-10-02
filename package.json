@@ -1,7 +1,7 @@
 {
   "name": "dsh-opencli",
   "description": "登录态浏览器自动化 × dsh 插件:170+ 站点结构化命令(site)+ 通用 browser 原语 + SystemOne 亚秒决策层 + 执行真实性判定(失败说真话);write 命令带审批门。Logged-in browser automation for DeepSeek Harness: 176-site structured commands, generic browser primitives, sub-second decision layer, action-evidence verification.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publishConfig": {
     "access": "public"
   },

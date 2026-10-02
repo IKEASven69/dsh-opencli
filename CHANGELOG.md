@@ -2,7 +2,7 @@
 
 格式参考 Keep a Changelog;版本与 GitHub Releases 一一对应。
 
-## Unreleased
+## 0.4.1 — 2026-10-03
 
 ### dsh 0.2.0 适配(双版本兼容:0.1.5 与 0.2.0 同时 20/20)
 - **新增 ctx.subprocess 原生执行路径**:0.2.0 把命令执行迁到 subprocess seam(官方 bash 工具同款),旧 ctx.shell.execute 需要沙箱 policy 管线且插件直调不可靠;经 reflect 旁路可选读取(刻意不放 static inject——cordis 对声明服务做加载期解析,0.1.x 宿主没有 subprocess 服务会导致整个插件加载失败)
