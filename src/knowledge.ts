@@ -132,3 +132,58 @@ export function renderKnowledgeMarkdown(k: SiteKnowledge): string {
   for (const f of FAILURE_SIGNATURES) lines.push(`- **${f.pattern}** → ${f.meaning}。恢复:${f.recovery}`)
   return lines.join('\n')
 }
+
+// ── MCP Resources 知识暴露(dsh 0.2 ctx.mcpResources seam 的数据层) ──────
+
+/** 站点知识卡的 MCP 资源 URI 统一形态:opencli://sites/{site}/knowledge */
+export function knowledgeResourceUri(site: string): string {
+  return `opencli://sites/${site}/knowledge`
+}
+
+/** MCP resources 三操作(list/templates/read)的最小请求形状(与 dsh-mcp-resources 的 McpResourceRequest 同形)。 */
+export interface McpResourceRequestInput {
+  method: 'resources/list' | 'resources/templates/list' | 'resources/read'
+  cursor?: string
+  uri?: string
+}
+
+/**
+ * 纯函数处理一次 MCP resources 请求,entries 由调用方注入(零宿主依赖,可单测)。
+ * - list:目录里全部站点各一张资源卡,健康度异常站在 description 标出
+ * - templates:list 单一模板 opencli://sites/{site}/knowledge
+ * - read:按 URI 构建并渲染知识卡 markdown
+ * 返回 MCP 协议结果(普通 JSON);目录为空或 URI 未知时抛错(MCP 语义:该次工具调用失败)。
+ */
+export function handleMcpResourceRequest(req: McpResourceRequestInput, entries: RawEntry[] | undefined): unknown {
+  const list = Array.isArray(entries) ? entries : []
+  if (req.method === 'resources/list') {
+    const sites = [...new Set(list.map((e) => (e.site ?? e.command?.split('/')[0] ?? '').toLowerCase()).filter((s) => s.length > 0))].sort()
+    return {
+      resources: sites.map((site) => {
+        const h = healthOf(site)
+        return {
+          uri: knowledgeResourceUri(site),
+          name: `${site} 站点知识卡`,
+          mimeType: 'text/markdown',
+          ...(h !== null ? { description: `健康度:${SITE_HEALTH_STATUS_LABELS[h.status] ?? h.status}(${h.issues.join(';')})` } : {}),
+        }
+      }),
+    }
+  }
+  if (req.method === 'resources/templates/list') {
+    return {
+      resourceTemplates: [{
+        uriTemplate: 'opencli://sites/{site}/knowledge',
+        name: '站点知识卡(按站点名展开)',
+        mimeType: 'text/markdown',
+        description: 'site 换成适配器名(如 opencli://sites/weibo/knowledge);内容=命令目录+已知坑+健康度+失败签名恢复表',
+      }],
+    }
+  }
+  const uri = String(req.uri ?? '')
+  const m = uri.match(/^opencli:\/\/sites\/([\w@.-]+)\/knowledge$/)
+  if (m === null) throw new Error(`未知资源 URI:${uri}(合法形态 opencli://sites/{site}/knowledge)`)
+  const k = buildKnowledge(m[1], list)
+  if (k === null) throw new Error(`目录里没有 ${m[1]}(URI:${uri})`)
+  return { contents: [{ uri, mimeType: 'text/markdown', text: renderKnowledgeMarkdown(k) }] }
+}

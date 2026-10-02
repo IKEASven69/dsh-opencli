@@ -25,7 +25,7 @@ import type {
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
-import { buildKnowledge, renderKnowledgeMarkdown, type RawEntry } from './knowledge.ts'
+import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, SITE_HEALTH, type RawEntry } from './knowledge.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -66,6 +66,17 @@ interface SubprocessSeam {
       stderr?: { readFrom: (o: number) => Promise<{ text?: string }> }
     }
   }
+}
+
+/**
+ * 0.2.0+ ctx.mcpResources(dsh-mcp-resources 的 McpResourceRuntime)的最小形状。
+ * 实测于 cli017(@deepseek-ai/dsh-mcp-resources 0.2.0-rc.2):register(server, provider)
+ * 把本插件注册为一个"MCP resource server",模型经共享工具 list_mcp_resources /
+ * read_mcp_resource(server='opencli')读到 opencli://sites/{site}/knowledge。
+ * 该包不在本插件 peerDependencies 里(0.1.x 宿主没有)——必须 reflect 可选探测,缺失即退化为 RPC 路径。
+ */
+interface McpResourcesSeam {
+  register?: (server: string, provider: { request: (req: { method: string; cursor?: string; uri?: string }, exec?: unknown) => Promise<unknown> }) => () => void
 }
 
 /**
@@ -178,6 +189,7 @@ export class OpencliService extends TypertRemoteService {
     this.registerSiteTool()
     this.registerDecisionTools()
     this.registerApprovalGate()
+    this.registerKnowledgeResources()
     // 决策层后台预热:laya 权重冷加载约 60s,不能让 agent 的首次 so_verify/so_pick 吃这个延迟。
     // vitest 里跳过:测试会拉起真实 service,后台真加载权重既慢又晃动测试进程。
     if (process.env.VITEST === undefined) void this.so.prewarm()
@@ -658,6 +670,33 @@ export class OpencliService extends TypertRemoteService {
     }))
   }
 
+  // ── MCP Resources 知识暴露(dsh 0.2 seam;老宿主退化为 knowledge-get RPC) ──
+
+  /**
+   * 把知识卡注册为 MCP Resources:server='opencli',URI=opencli://sites/{site}/knowledge。
+   * seam 缺失(0.1.x 宿主)/注册失败一律静默降级——插件主体与 knowledge-get RPC 不受影响。
+   * 数据层是纯函数 handleMcpResourceRequest(src/knowledge.ts),此处只注入目录缓存。
+   */
+  private registerKnowledgeResources(): void {
+    let runtime: McpResourcesSeam | undefined
+    try {
+      runtime = (this.ctx as unknown as { reflect?: { get?: (p: string, f?: boolean) => unknown } }).reflect?.get?.('mcpResources', false) as McpResourcesSeam | undefined
+    } catch { runtime = undefined }
+    if (runtime === undefined || typeof runtime.register !== 'function') return
+    try {
+      const dispose = runtime.register('opencli', {
+        request: async (req) => {
+          const list = await this.adapterList()
+          if (list === null) throw new Error(`opencli 目录不可用 | ${this.lastShellError ?? '未知'}`)
+          const raw = (this.adapterCache as { json?: unknown } | null)?.json
+          return handleMcpResourceRequest(req as Parameters<typeof handleMcpResourceRequest>[0], Array.isArray(raw) ? raw as RawEntry[] : undefined)
+        },
+      })
+      // 注册进 runtime 的全局层,但生命周期挂回本插件:卸载时同步摘除,不留僵尸 server
+      ;(this.ctx as unknown as { effect?: (f: () => unknown) => unknown }).effect?.(() => dispose)
+    } catch { /* seam 在但注册异常(如重名):不阻断插件加载 */ }
+  }
+
   // ── systemPrompt:适配器目录(缓存 + TTL,组装时取最新) ─────
 
   private directoryText = '浏览器代理(dsh-opencli):适配器目录加载中。'
@@ -1040,7 +1079,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /** 知识包导出:全部/指定站的知识卡写 ~\.dsh\opencli-knowledge\,可分享/进版本库。
-   * 上游 #2539 砍掉 sitemap 分发后的第三方补位;MCP Resources(dsh 0.1.6+)可用同一数据源。 */
+   * 上游 #2539 砍掉 sitemap 分发后的第三方补位;在线路径见 registerKnowledgeResources(MCP Resources)与 knowledge-get RPC。 */
   @Remote('knowledge-export')
   async knowledgeExport(request?: { sites?: string[] }): Promise<{ ok: boolean; paths?: string[]; error?: string }> {
     const list = await this.adapterList()
@@ -1068,6 +1107,34 @@ export class OpencliService extends TypertRemoteService {
     }
     if (paths.length === 0) return { ok: false, error: '没有可导出的站点(目录为空或站点名不匹配)' }
     return { ok: true, paths }
+  }
+
+  /**
+   * 知识卡直取 RPC(面板/外部可调,不经模型会话):sites 缺省返回健康度异常(degraded/notice)
+   * 且在目录内的站。MCP resources seam 不可用的 0.1.x 宿主上的等价路径;机制与迁移路径见 docs/MCP-RESOURCES.md。
+   */
+  @Remote('knowledge-get')
+  async knowledgeGet(request?: { sites?: string[] }): Promise<{ ok: boolean; cards?: Array<{ site: string; uri: string; markdown: string }>; error?: string }> {
+    const list = await this.adapterList()
+    if (list === null) return { ok: false, error: `目录不可用 | ${this.lastShellError ?? '未知'}` }
+    const raw = (this.adapterCache as { json?: unknown } | null)?.json
+    const entries = Array.isArray(raw) ? raw as RawEntry[] : []
+    if (entries.length === 0) return { ok: false, error: '目录缓存为空' }
+    // 网关对空 args 会传 undefined(真机复现):request 必须可选链;同名站去重(大小写归一后可能重复)
+    const reqSites = request?.sites
+    const requested = Array.isArray(reqSites) && reqSites.length > 0
+      ? [...new Set(reqSites.map((s) => String(s).trim().toLowerCase()).filter((s) => s.length > 0))]
+      : [...new Set(Object.entries(SITE_HEALTH).filter(([, h]) => h.status === 'degraded' || h.status === 'notice')
+          .map(([s]) => s)
+          .filter((s) => entries.some((e) => (e.site ?? e.command?.split('/')[0] ?? '').toLowerCase() === s)))]
+    const cards: Array<{ site: string; uri: string; markdown: string }> = []
+    for (const site of requested.slice(0, 30)) {
+      const k = buildKnowledge(site, entries)
+      if (k === null) continue
+      cards.push({ site, uri: knowledgeResourceUri(site), markdown: renderKnowledgeMarkdown(k) })
+    }
+    if (cards.length === 0) return { ok: false, error: '没有可返回的知识卡(目录为空或站点名不匹配)' }
+    return { ok: true, cards }
   }
 
   @Remote('schedule-remove')
