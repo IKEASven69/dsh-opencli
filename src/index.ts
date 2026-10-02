@@ -14,7 +14,7 @@ import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
 import { homedir } from 'node:os'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1014,8 +1014,19 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-history')
-  async scheduleHistory(p: { id: string }): Promise<{ ok: boolean; history: Array<{ at: string; ok: boolean; summary: string }> }> {
-    return { ok: true, history: this.runHistory[String(p.id ?? '')] ?? [] }
+  async scheduleHistory(p: { id: string }): Promise<{ ok: boolean; history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }> {
+    // 时间线数据源:运行史(内存,近 5) + 快照索引(落盘,近 50,含体积用于趋势)
+    const id = String(p.id ?? '')
+    let snapshots: Array<{ at: string; bytes: number; file: string }> | undefined
+    try {
+      const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+      snapshots = readdirSync(dir).slice(-50).map((f) => {
+        let at = f.replace(/\.json$/, '').replace(/-/g, ':'), bytes = 0
+        try { bytes = JSON.parse(readFileSync(join(dir, f), 'utf8')).bytes ?? 0 } catch { /* ignore */ }
+        return { at, bytes, file: f }
+      })
+    } catch { /* 无快照目录 */ }
+    return { ok: true, history: this.runHistory[id] ?? [], ...(snapshots !== undefined ? { snapshots } : {}) }
   }
 
   @Remote('schedule-toggle')
@@ -1555,6 +1566,20 @@ export class OpencliService extends TypertRemoteService {
       }
     }
     this.runHistory[id] = hist.slice(0, 5)
+    // 采集结构化落盘(主线 B):成功执行的完整输出存快照,时间线/diff/趋势的数据源。
+    // 文件即真相:~/.dsh/opencli-snapshots/<任务id>/<时间戳>.json,保留最近 50 份自动轮转。
+    if (lastOk && lastOut.length > 0) {
+      try {
+        const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+        await mkdir(dir, { recursive: true })
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        await writeFile(join(dir, `${stamp}.json`), JSON.stringify({
+          at: new Date().toISOString(), site: siteCmd, bytes: lastOut.length, stdout: lastOut,
+        }), 'utf8')
+        const olds = readdirSync(dir).sort() // 字典序=时间序
+        if (olds.length > 50) for (const f of olds.slice(0, olds.length - 50)) { try { unlinkSync(join(dir, f)) } catch { /* ignore */ } }
+      } catch { /* 快照失败不阻断主流程 */ }
+    }
     // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)
     if (lastOk && sch?.watch !== undefined && sch.watch.length > 0) {
       const kws = sch.watch.split(/[,，\s]+/).filter((k) => k.length > 0)

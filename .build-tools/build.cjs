@@ -14,6 +14,8 @@ const outDir = path.join(root, 'lib')
 
 fs.mkdirSync(tmpDir, { recursive: true })
 fs.mkdirSync(outDir, { recursive: true })
+// 知识数据文件:拷进构建临时区,保持 src 里的相对路径(../knowledge/...)可解析
+fs.cpSync(path.join(root, 'knowledge'), path.join(__dirname, 'knowledge'), { recursive: true })
 
 const files = fs.readdirSync(srcDir).filter((f) => f.endsWith('.ts'))
 for (const f of files) {

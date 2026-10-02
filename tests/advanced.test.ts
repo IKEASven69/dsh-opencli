@@ -449,3 +449,20 @@ describe('scanOpencliAcrossNodeVersions(vfox 版本切换免疫,纯函数)', () 
     expect(scanOpencliAcrossNodeVersions([r2])).toBe(low)
   })
 })
+
+describe('采集快照落盘(主线 B)', () => {
+  it('runSiteCommand 成功执行后写快照文件,schedule-history 返回快照索引', async () => {
+    const site = `snap-${Date.now()}`
+    const r = await svc.scheduleAdd({ site, cron: '0 9 * * *' })
+    const S = svc as unknown as { runOpencli: (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>; runSiteCommand: (s: string, id: string) => Promise<void> }
+    const orig = S.runOpencli.bind(svc)
+    S.runOpencli = async () => ({ exitCode: 0, stdout: '1 热点A 热度100 2 热点B 热度90 3 热点C 热度80', stderr: '' })
+    await S.runSiteCommand(site, r.id!)
+    S.runOpencli = orig
+    const h = await svc.scheduleHistory({ id: r.id! })
+    expect(h.ok).toBe(true)
+    expect((h.snapshots ?? []).length).toBeGreaterThanOrEqual(1)
+    expect(h.snapshots![0].bytes).toBeGreaterThan(0)
+    await svc.scheduleRemove({ id: r.id! })
+  })
+})

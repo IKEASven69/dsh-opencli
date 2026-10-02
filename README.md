@@ -79,6 +79,10 @@ dsh 内置的 web 工具是"检索"(web_search/web_fetch)。本插件给它补�
 
 ## 安装
 
+> ⚠️ 升级 dsh 到 0.2 前自查 profile 的 `cordis.patch.yml` 有无引用未安装的 bundle——0.2 对此**静默退出**。
+> ⚠️ 插件目录内跑 `npm install` 会静默把宿主的 opencli 链接替换为 registry 副本([上游 #2555](https://github.com/jackwener/opencli/issues/2555))——请在本仓库外装依赖。
+> 💡 版本管理器(vfox/nvm)切换 node 版本后插件会自动扫描各版本目录找回 opencli;也可用 `DSH_OPENCLI_BIN` 指定。
+
 前置(二选一):
 
 ```sh
