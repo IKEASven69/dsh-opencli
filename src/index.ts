@@ -639,6 +639,49 @@ export class OpencliService extends TypertRemoteService {
   }
 
   private registerSiteTool(): void {
+    // W3 命令选择分层:so_pick 两步路由(先站后命令),亚秒零 token;
+    // 与 systemPrompt 目录共存——目录仍是兜底,本工具是"不想翻目录时"的快速路。
+    this.ctx.tools.register(defineTool({
+      name: 'site_route',
+      description: '亚秒命令路由:给目标(自然语言),SystemOne 两步 choice(先选站再选命令)直接给出 site 命令行+备选。不确定命令名时用它,别翻目录猜',
+      parameters: {
+        goal: { type: 'string', description: '目标(如:看微博热搜/搜 B站罗翔视频/查 arxiv agent 论文)' },
+        site: { type: 'string', description: '可选:已知站点名则锁定该站,只做命令层选择' },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs): Promise<{ text: string }> => {
+        const goal = String(a.goal ?? a.text ?? '').trim()
+        if (goal.length === 0) return { text: 'goal 不能为空' }
+        const list = await this.adapterList()
+        if (list === null) return { text: `目录不可用 | ${this.lastShellError ?? '未知'}` }
+        // 第一层:选站(候选压到 top 24 by 命令数,choice 单题候选 ≤30 官方范式)
+        let pool = list
+        if (typeof a.site === 'string' && a.site.length > 0) {
+          const lock = a.site.toLowerCase()
+          pool = list.filter((x) => x.name.toLowerCase() === lock)
+          if (pool.length === 0) return { text: `目录里没有 ${a.site}(用 opencli_catalog 确认)` }
+        }
+        let siteName = pool[0]?.name ?? ''
+        if (pool.length > 1) {
+          const cand = pool.slice(0, 24)
+          const r1 = await this.so.ask(cand.map((x) => `${x.name}(${x.commandCount} 命令,示例:${x.commands.slice(0, 3).join('/')})`).join('; '), {
+            pickSite: { type: 'choice', instructions: `目标:${goal}。选出最合适的站点`, criteria: Object.fromEntries(cand.map((x) => [x.name, `${x.commandCount} 命令:${x.commands.slice(0, 5).join(',')}...`])) },
+          })
+          if (r1.ok && typeof r1.answers.pickSite?.value === 'string' && r1.answers.pickSite.value.length > 0) siteName = r1.answers.pickSite.value
+          else return { text: '路由不可用(SystemOne down)——请直接查 systemPrompt 目录选命令' }
+        }
+        // 第二层:该站选命令
+        const detail = await this.adapterDetail({ name: siteName } as never).catch(() => null)
+        const cmds = detail?.ok === true ? detail.commands.map((c: { name: string; description?: string }) => ({ n: c.name, d: c.description ?? '' })) : pool.find((x) => x.name === siteName)?.commands.slice(0, 24).map((c) => ({ n: c, d: '' })) ?? []
+        if (cmds.length === 0) return { text: `${siteName} 无命令目录` }
+        const r2 = await this.so.ask(`站点:${siteName}。目标:${goal}`, {
+          pickCmd: { type: 'choice', instructions: '选出最合适的命令', criteria: Object.fromEntries(cmds.slice(0, 24).map((c) => [c.n, c.d])) },
+        })
+        if (!r2.ok || typeof r2.answers.pickCmd?.value !== 'string') return { text: `站点锁定 ${siteName};命令层 SystemOne 不可用,备选:${cmds.slice(0, 6).map((c) => c.n).join(', ')}` }
+        const top = Object.entries(r2.answers.pickCmd.probabilities ?? {}).sort((x, y) => (y[1] as number) - (x[1] as number)).slice(0, 3).map(([c, p]) => `${c} ${(Number(p) * 100).toFixed(0)}%`).join(' / ')
+        return { text: `命令:\`site ${siteName} ${r2.answers.pickCmd.value}\`${top ? `\nTop3:${top}` : ''}(低置信或不对时查 site_knowledge ${siteName} 或 systemPrompt 目录)` }
+      },
+    }))
     this.ctx.tools.register(defineTool({
       name: 'site',
       description: '调用站点适配器(在用户登录态上返回结构化结果,比逐页点击快且稳)。adapter/command 见 systemPrompt 里的适配器目录;示例:site bilibili search 关键词=罗翔。authProfile 限域（需配置 allowedDomains）',

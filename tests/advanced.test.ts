@@ -466,3 +466,31 @@ describe('采集快照落盘(主线 B)', () => {
     await svc.scheduleRemove({ id: r.id! })
   })
 })
+
+describe('site_route(W3 分层命令路由)', () => {
+  it('锁定站点时只做命令层选择,返回 site 命令行', async () => {
+    ;(svc as unknown as { so: unknown }).so = {
+      configured: true,
+      ask: async (_s: string, q: { pickCmd?: { criteria?: Record<string, string> } }) => {
+        const first = Object.keys(q.pickCmd?.criteria ?? {})[0] ?? 'hot'
+        return { ok: true, latencyMs: 3, answers: { pickCmd: { type: 'choice', value: first, confidence: 0.9, probabilities: { [first]: 0.9 } } } }
+      },
+    }
+    ;(svc as unknown as { adapterCache: { at: number; json: unknown } | null }).adapterCache = {
+      at: Date.now(), json: [{ site: 'weibo', name: 'hot', access: 'read', description: '微博热搜', domain: 'weibo.com' }],
+    }
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('site_route')!
+    const r = await tool.execute({ goal: '看微博热搜', site: 'weibo' })
+    expect(r.text).toContain('site weibo')
+  })
+
+  it('SystemOne 不可用时降级提示,不返回命令', async () => {
+    ;(svc as unknown as { so: unknown }).so = { configured: false, ask: async () => ({ ok: false, answers: {}, latencyMs: 0, error: 'down' }) }
+    ;(svc as unknown as { adapterCache: { at: number; json: unknown } | null }).adapterCache = {
+      at: Date.now(), json: [{ site: 'zhihu', name: 'hot', access: 'read' }],
+    }
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('site_route')!
+    const r = await tool.execute({ goal: '知乎热榜', site: 'zhihu' })
+    expect(r.text).toMatch(/不可用|目录/)
+  })
+})
