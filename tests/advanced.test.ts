@@ -7,7 +7,10 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis'
-import { OpencliService } from '../lib/index.js'
+import { OpencliService, scanOpencliAcrossNodeVersions } from '../lib/index.js'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 
 class StubShell extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
@@ -404,5 +407,45 @@ describe('rulepacks 校验', () => {
     expect(l.ok).toBe(true)
     expect(l.packs.length).toBeGreaterThan(0)
     expect((await svc.rulePacksSet({ packs: [] })).ok).toBe(true)
+  })
+})
+
+describe('scanOpencliAcrossNodeVersions(vfox 版本切换免疫,纯函数)', () => {
+  const mk = (root: string, rel: string): string => {
+    const dir = path.join(root, rel, 'dist', 'src')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'main.js'), '// opencli')
+    return path.join(dir, 'main.js')
+  }
+
+  it('vfox cache 双层结构(v-24.18.0/nodejs-24.18.0)能扫到,且取最高版本', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vfoxscan-'))
+    const old = mk(root, 'v-24.18.0/nodejs-24.18.0')
+    const neu = mk(root, 'v-24.21.0/nodejs-24.21.0')
+    const got = scanOpencliAcrossNodeVersions([root])
+    expect(got).toBe(neu)
+    expect(got).not.toBe(old)
+  })
+
+  it('sdks 平铺结构(24.18.0 直接一层)也能扫到', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sdkscan-'))
+    const p = mk(root, '24.18.0')
+    expect(scanOpencliAcrossNodeVersions([root])).toBe(p)
+  })
+
+  it('不存在的根目录/无 opencli 的根目录返回 null,不抛错', () => {
+    expect(scanOpencliAcrossNodeVersions([path.join(os.tmpdir(), 'no-such-root-xyz')])).toBeNull()
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'empty-'))
+    expect(scanOpencliAcrossNodeVersions([empty])).toBeNull()
+  })
+
+  it('多根并存时全局取最高版本(含跨根比较)', () => {
+    const r1 = fs.mkdtempSync(path.join(os.tmpdir(), 'r1-'))
+    const r2 = fs.mkdtempSync(path.join(os.tmpdir(), 'r2-'))
+    mk(r1, 'v-24.21.0/nodejs-24.21.0')
+    const low = mk(r2, 'v-22.1.0/nodejs-22.1.0')
+    // r1 的 24.21 > r2 的 22.1,应取 r1;顺序倒过来也一样
+    expect(scanOpencliAcrossNodeVersions([r2, r1])).toMatch(/24\.21\.0/)
+    expect(scanOpencliAcrossNodeVersions([r2])).toBe(low)
   })
 })

@@ -14,7 +14,7 @@ import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
 import { homedir } from 'node:os'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -66,6 +66,30 @@ interface SubprocessSeam {
       stderr?: { readFrom: (o: number) => Promise<{ text?: string }> }
     }
   }
+}
+
+/**
+ * 跨 node 版本目录扫描 opencli(vfox/nvm 切换免疫,纯函数可单测)。
+ * 目录形态兼容:vfox cache(v-24.18.0/nodejs-24.18.0)、vfox sdks 平铺、nvm-windows。
+ * 返回最高 node 版本副本的 main.js 绝对路径;没有则 null。
+ */
+export function scanOpencliAcrossNodeVersions(roots: string[]): string | null {
+  let best: { ver: number[]; main: string } | null = null
+  for (const root of roots) {
+    let dirs: string[] = []
+    try { dirs = readdirSync(root).map((d) => join(root, d)) } catch { continue }
+    for (const dir of dirs) {
+      const candidates = existsSync(join(dir, 'dist', 'src', 'main.js'))
+        ? [join(dir, 'dist', 'src', 'main.js')]
+        : (() => { try { return readdirSync(dir).map((d) => join(dir, d, 'dist', 'src', 'main.js')) } catch { return [] } })()
+      for (const main of candidates) {
+        if (!existsSync(main)) continue
+        const ver = (dir.match(/(\d+)\.(\d+)\.(\d+)/)?.slice(1) ?? ['0', '0', '0']).map(Number)
+        if (best === null || ver > best.ver) best = { ver, main }
+      }
+    }
+  }
+  return best?.main ?? null
 }
 
 interface ToolArgs {
@@ -135,6 +159,13 @@ export class OpencliService extends TypertRemoteService {
     // 直接用 node 执行，避开 Windows pwsh/bash 对无扩展 shim 的静默忽略。
     const globalMain = join(dirname(process.execPath), 'node_modules', '@jackwener', 'opencli', 'dist', 'src', 'main.js')
     if (existsSync(globalMain)) return `node "${globalMain}"`
+    // 版本管理器切换免疫(实测:vfox use 24.21 后装在 24.18 的 opencli 静默失踪)
+    const scanned = scanOpencliAcrossNodeVersions([
+      join(homedir(), '.vfox', 'cache', 'nodejs'),
+      join(homedir(), '.vfox', 'sdks', 'nodejs'),
+      join(homedir(), '.nvm'),
+    ])
+    if (scanned !== null) return `node "${scanned}"`
     return 'opencli'
   }
 
