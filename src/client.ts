@@ -14,6 +14,7 @@ import type {
   AuditListResult, DaemonStartResult, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
 } from './types.ts'
 import { siteIconOf } from './site-icons.ts'
+import { healthOf } from './knowledge.ts'
 
 export const inject = ['slots']
 
@@ -50,6 +51,7 @@ const STR = {
     cmdT: '命令', cmdSearch: '搜索站点或命令,如:热榜 / search / bilibili',
     cmdFmt: '点命令行 → 复制调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)',
     knowExp: '导出知识卡', knowExpDo: '导出中…',
+    healthDegraded: '已知受损', healthNotice: '注意', healthIssueT: (d: string) => `上游 issue 实测(${d});点击行展开命令,受损命令优先用 browser_* 兜底`,
     disable: '禁用', enable: '启用', commandsN: (n: number) => `${n} 命令`,
     autoT: '定时任务', autoNew: '新建', autoSub: '持久化到 dsh.schedule,重启不丢 · 失败按策略重试并通知',
     depDaemon: 'daemon 未运行——定时任务暂停执行,恢复后自动补跑', fix: '一键修复',
@@ -112,6 +114,7 @@ const STR = {
     cmdT: 'Commands', cmdSearch: 'Search sites or commands, e.g. trending / search / bilibili',
     cmdFmt: 'Click a command row → copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)',
     knowExp: 'Export knowledge cards', knowExpDo: 'Exporting…',
+    healthDegraded: 'degraded', healthNotice: 'notice', healthIssueT: (d: string) => `confirmed upstream issues (${d}); expand the row, prefer browser_* fallback for broken commands`,
     disable: 'Disable', enable: 'Enable', commandsN: (n: number) => `${n} cmds`,
     autoT: 'Schedules', autoNew: 'New', autoSub: 'Persisted to dsh.schedule, survives restart · retries then notifies on failure',
     depDaemon: 'daemon not running — schedules paused, will catch up when it returns', fix: 'Fix',
@@ -846,6 +849,14 @@ function Panel(): ReturnType<typeof createElement> {
         loading ? createElement('div', { className: 'o4-load' }, t2('loading')) : null,
         !loading && filtered.map((a) => {
           const detail = details[a.name]
+          // 站点健康度徽章:degraded=琥珀"已知受损"(title 列 issues),notice=灰"注意";
+          // unsupported 不渲染(本就不在目录);正常站不入表也不占位——不给"没有消息"付 UI 成本
+          const h = healthOf(a.name)
+          const hBadge = h !== null && h.status === 'degraded'
+            ? createElement('span', { className: 'o4-bdg w', title: `${t2('healthIssueT')(h.updated)}\n${h.issues.join('\n')}` }, `⚠ ${t2('healthDegraded')}`)
+            : h !== null && h.status === 'notice'
+              ? createElement('span', { className: 'o4-bdg', title: `${t2('healthIssueT')(h.updated)}\n${h.issues.join('\n')}` }, t2('healthNotice'))
+              : null
           return createElement('div', { key: a.name },
             createElement('div', { className: `o4-row${a.disabled === true ? ' o4-off' : ''}`, onClick: () => { void expandDetail(a.name) } },
               ava(a.name),
@@ -853,6 +864,7 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('div', { className: 'o4-tt' }, a.name, ' ', a.commands.slice(0, 3).map((c) => createElement('span', { key: c, className: 'o4-bdg b', title: `site ${a.name} ${c} — 点击复制`, onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); fillInput(`site ${a.name} ${c}`) } }, c))),
                 createElement('div', { className: 'o4-dd' }, t2('commandsN')(a.commandCount), a.disabled === true ? ' · disabled' : ''),
               ),
+              hBadge,
               a.disabled === true ? null : createElement('span', { className: 'o4-bdg w' }, `write ${a.kinds.filter((k) => k === 'write').length}`),
               createElement('button', { className: 'o4-btn ghost sm', onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); void toggleDisable(a.name, a.disabled !== true) } }, a.disabled === true ? t2('enable') : t2('disable')),
             ),

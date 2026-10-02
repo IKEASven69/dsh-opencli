@@ -1,5 +1,5 @@
 /**
- * 站点知识包:命令目录 + 失败签名恢复表 + 站点 pitfalls,三源合一。
+ * 站点知识包:命令目录 + 失败签名恢复表 + 站点 pitfalls + 站点健康度,四源合一。
  * 背景:上游 #2539(2026-09-24)砍掉站点地图与外部 CLI hub,站点知识分发出现官方真空;
  * browser-use #5841(10 评论)证明"每次会话从零重学站点"是被正式提案的痛点——
  * 本模块让 agent 进站点前先读一张"地形图",而不是现场试错。零宿主依赖,可单测。
@@ -24,6 +24,26 @@ export interface SiteKnowledge {
   commands: Array<{ name: string; access: string; description: string }>
   /** 站点已知坑(人工种子,随版本维护;通用站无则空) */
   pitfalls: string[]
+  /** 站点健康度(上游 issue 实测汇总;不在表内的站默认正常,不展示) */
+  health?: SiteHealth
+}
+
+/** 站点健康度状态:degraded=受损(核心命令失效) / notice=注意(小问题) / unsupported=未支持(无适配器)。 */
+export type SiteHealthStatus = 'degraded' | 'notice' | 'unsupported'
+
+export interface SiteHealth {
+  status: SiteHealthStatus
+  /** 上游 issue 摘要(如 "#2562 captcha 重定向(search)") */
+  issues: string[]
+  /** 数据采集日期(ISO 日期) */
+  updated: string
+}
+
+/** 状态→中文标签(渲染用;未知状态原样透出,不编造)。 */
+export const SITE_HEALTH_STATUS_LABELS: Record<string, string> = {
+  degraded: '受损',
+  notice: '注意',
+  unsupported: '未支持',
 }
 
 /** 失败签名→含义→恢复动作(与 index.verifyResult 的规则层同源;agent 拿到失败输出时按签名自救)。 */
@@ -44,6 +64,22 @@ export const FAILURE_SIGNATURES: Array<{ pattern: string; meaning: string; recov
 import pitfallsData from '../knowledge/pitfalls.json'
 export const PITFALLS: Record<string, string[]> = pitfallsData as Record<string, string[]>
 
+/**
+ * 站点健康度数据外移至 knowledge/health.json(同 pitfalls 机制)。
+ * 来源:上游 GitHub issues 人工汇总(2026-10-03 实测:一周 12 个新 issue 里 7 个站点失效)。
+ * 正常站点不入表——默认即正常,不为"没有消息"写数据。
+ */
+import healthData from '../knowledge/health.json'
+export const SITE_HEALTH: Record<string, SiteHealth> = healthData as Record<string, SiteHealth>
+
+/** 取站点健康度:不在表内/状态枚举非法返回 null(宁可不给也不给错)。 */
+export function healthOf(site: string): SiteHealth | null {
+  const h = SITE_HEALTH[site.trim().toLowerCase()]
+  return h !== undefined && typeof h === 'object' && SITE_HEALTH_STATUS_LABELS[h.status] !== undefined
+    ? { status: h.status, issues: Array.isArray(h.issues) ? h.issues.map(String) : [], updated: String(h.updated ?? '') }
+    : null
+}
+
 /** 从 opencli 目录原始条目构建单站知识。目录无此站返回 null(不编造)。 */
 export function buildKnowledge(site: string, entries: RawEntry[], generatedAt = new Date().toISOString()): SiteKnowledge | null {
   const norm = site.trim().toLowerCase()
@@ -54,6 +90,7 @@ export function buildKnowledge(site: string, entries: RawEntry[], generatedAt = 
     .filter((c) => c.name.length > 0)
     .sort((a, b) => a.access.localeCompare(b.access) || a.name.localeCompare(b.name))
   const domain = mine.find((e) => e.domain !== undefined)?.domain
+  const health = healthOf(norm)
   return {
     site: norm,
     ...(domain !== undefined ? { domain } : {}),
@@ -61,6 +98,7 @@ export function buildKnowledge(site: string, entries: RawEntry[], generatedAt = 
     commandCount: commands.length,
     commands,
     pitfalls: PITFALLS[norm] ?? [],
+    ...(health !== null ? { health } : {}),
   }
 }
 
@@ -74,6 +112,14 @@ export function renderKnowledgeMarkdown(k: SiteKnowledge): string {
     lines.push('')
     lines.push('## ⚠️ 已知坑')
     for (const p of k.pitfalls) lines.push(`- ${p}`)
+  }
+  if (k.health !== undefined) {
+    lines.push('')
+    const label = SITE_HEALTH_STATUS_LABELS[k.health.status] ?? k.health.status
+    const stale = k.health.updated !== '' ? `(数据 ${k.health.updated})` : ''
+    lines.push(`## 🩺 站点健康度:${label}${stale}`)
+    if (k.health.status === 'degraded') lines.push('上游 issue 实测核心命令失效——优先 browser_* 原语兜底,失败别反复重试。')
+    for (const i of k.health.issues) lines.push(`- ${i}`)
   }
   lines.push('')
   lines.push('## 命令目录')

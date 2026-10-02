@@ -1,0 +1,40 @@
+{
+  "xiaohongshu": {
+    "status": "degraded",
+    "issues": [
+      "#2562 captcha 重定向(search)",
+      "#2552 publish --images 必败",
+      "#2550 filter 检测失效",
+      "#2549 MutationObserver 抛错"
+    ],
+    "updated": "2026-10-03"
+  },
+  "instagram": {
+    "status": "degraded",
+    "issues": [
+      "#2553 /user /search 报 SyntaxError"
+    ],
+    "updated": "2026-10-03"
+  },
+  "zhihu": {
+    "status": "notice",
+    "issues": [
+      "#2551 answer-comments 翻页被服务端改写(可能已修)"
+    ],
+    "updated": "2026-10-03"
+  },
+  "bilibili": {
+    "status": "notice",
+    "issues": [
+      "#2545 subtitle 输出暴露 track-type 元数据(小问题)"
+    ],
+    "updated": "2026-10-03"
+  },
+  "threads": {
+    "status": "unsupported",
+    "issues": [
+      "#2564 无适配器(需求)"
+    ],
+    "updated": "2026-10-03"
+  }
+}
