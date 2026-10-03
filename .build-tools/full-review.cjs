@@ -120,8 +120,13 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   const kx = await rpc2('knowledge-export', {});
   ok('RPC·knowledge-export', kx?.ok === true && Array.isArray(kx.paths) && kx.paths.length > 10, `paths=${(kx.paths ?? []).length}`);
 
-  // 定时闭环(带 watch 关键词)
+  // 定时闭环(带 watch 关键词)+ fetch 拦截:录面板真实收到的网关信封(定位 r.ok=false 而 host 成功的缺口)
   await clickBtn('自动化'); await sleep(2800);
+  await page.evaluate(() => {
+    window.__fx = [];
+    const of = window.fetch;
+    window.fetch = async (...a) => { const r = await of(...a); try { const u = String(a[0]); if (u.includes('/api/opencli/')) { const t = await r.clone().text(); window.__fx.push(u.replace(/^.*\/api\/opencli\//, '') + ' :: ' + t.slice(0, 150)); } } catch {} return r; };
+  });
   await page.evaluate(() => { const p = [...document.querySelectorAll('div')].find(x => (x.innerText || '').includes('定时任务')); const site = p && p.querySelector("input[placeholder='site zhihu hot']"); if (site) { const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; set.call(site, 'site zhihu hot'); site.dispatchEvent(new Event('input', { bubbles: true })); } });
   await page.evaluate(() => { const p = [...document.querySelectorAll('div')].find(x => (x.innerText || '').includes('定时任务')); const w = p && p.querySelector("input[placeholder*='watch']"); if (w) { const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; set.call(w, '降薪,热点事件'); w.dispatchEvent(new Event('input', { bubbles: true })); } });
   await page.evaluate(() => { const p = [...document.querySelectorAll('div')].find(x => (x.innerText || '').includes('定时任务')); const b = p && [...p.querySelectorAll('button')].find(x => (x.textContent || '').trim() === '创建'); if (b) b.click(); });
@@ -129,6 +134,9 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   const stateNow = () => JSON.parse(fs.readFileSync(STATE, 'utf8'));
   const createdSched = stateNow().schedules.find(s => s.site === 'site zhihu hot');
   ok('定时·创建落盘(含 watch)', createdSched !== undefined && createdSched.watch === '降薪,热点事件', `watch=${createdSched ? createdSched.watch : 'missing'}`);
+  // 信封取证:打印面板收到的全部 opencli RPC 响应前 150 字符
+  const fxDump = await page.evaluate(() => (window.__fx ?? []).join('\n'));
+  console.log('FETCH-TRACE:\n' + (fxDump || '(none)'));
   // 时间线:展开任务行的时间线面板(快照趋势+运行史)
   const tlBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find(x => (x.textContent || '').trim() === '时间线'); if (b) { b.click(); return true; } return false; });
   await sleep(2600);
