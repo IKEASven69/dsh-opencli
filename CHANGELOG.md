@@ -2,6 +2,16 @@
 
 格式参考 Keep a Changelog;版本与 GitHub Releases 一一对应。
 
+## Unreleased
+
+### 本周冲刺(10-03):健康度/MCP Resources/W3 路由/采集快照
+- **站点健康度**:`knowledge/health.json`(上游 issue 实测:小红书/instagram 已知受损、zhihu/bilibili 注意)——命令页站点行徽章+知识卡健康度段,受损站给 browser_* 兜底提示
+- **MCP Resources 知识暴露**:dsh 0.2 `ctx.mcpResources` seam 实测存在——`opencli://sites/{site}/knowledge` 资源(list/templates/read);0.1.x 宿主走 knowledge-get RPC 回退;数据层纯函数,换 seam 只动接线
+- **W3 分层命令路由**:`site_route` 工具——so_pick 两步 choice(先站后命令,≤24 候选分层范式)亚秒出命令行+Top3;锁定站点跳过站层;SystemOne 不可用降级回目录
+- **采集结构化快照**:定时成功执行存 `~/.dsh/opencli-snapshots/<id>/<ts>.json`(50 份轮转);`schedule-history` 返回快照索引(时间线/diff/趋势数据源)
+- **知识数据外移**:pitfalls → `knowledge/pitfalls.json`(知识更新不动代码)
+- resolveBin 版本切换免疫(vfox/nvm 多版本目录扫描);95 测试绿;详见 v0.4.1 Release
+
 ## 0.4.1 — 2026-10-03
 
 ### dsh 0.2.0 适配(双版本兼容:0.1.5 与 0.2.0 同时 20/20)
