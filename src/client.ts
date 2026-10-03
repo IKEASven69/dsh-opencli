@@ -527,6 +527,8 @@ function Panel(): ReturnType<typeof createElement> {
   }
 
   useEffect(() => { void reload() }, [])
+  // 进入自动化 tab 即拉任务列表:此前仅在增删改后拉取,面板重开/刷新后已有任务不显示(真机复现)
+  useEffect(() => { if (tab === 'auto') void loadSchedules() }, [tab])
   useEffect(() => { if (tab === 'sec' && cdp === null) { void rpc<{ found: boolean; endpoint: string | null; hint?: string }>('browser-cdp').then((r) => { if (r.ok && r.value !== undefined) setCdp(r.value) }) } }, [tab, cdp])
 
   const runLoginCheck = async (): Promise<void> => {

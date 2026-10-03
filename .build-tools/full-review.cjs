@@ -129,6 +129,11 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   const stateNow = () => JSON.parse(fs.readFileSync(STATE, 'utf8'));
   const createdSched = stateNow().schedules.find(s => s.site === 'site zhihu hot');
   ok('定时·创建落盘(含 watch)', createdSched !== undefined && createdSched.watch === '降薪,热点事件', `watch=${createdSched ? createdSched.watch : 'missing'}`);
+  // 时间线:展开任务行的时间线面板(快照趋势+运行史)
+  const tlBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find(x => (x.textContent || '').trim() === '时间线'); if (b) { b.click(); return true; } return false; });
+  await sleep(2600);
+  const tlVisible = tlBtn && await has('采集快照');
+  ok('定时·时间线面板', tlVisible === true, `btn=${tlBtn}`);
   await shot('R6-定时.png');
   await page.evaluate(async () => { const sleep = (ms) => new Promise(r => setTimeout(r, ms)); for (let i = 0; i < 40; i++) { const d = [...document.querySelectorAll('button')].filter(x => (x.textContent || '').trim() === '删'); if (!d.length) break; d[0].click(); await sleep(1600); } });
   ok('定时·删除落盘', stateNow().schedules.length === 0, 'schedules=' + stateNow().schedules.length);
