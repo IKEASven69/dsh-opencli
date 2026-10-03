@@ -51,6 +51,7 @@ const STR = {
     cmdT: '命令', cmdSearch: '搜索站点或命令,如:热榜 / search / bilibili',
     cmdFmt: '点命令行 → 复制调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)',
     knowExp: '导出知识卡', knowExpDo: '导出中…',
+    timeline: '时间线', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=内容规模)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计',
     healthDegraded: '已知受损', healthNotice: '注意', healthIssueT: (d: string) => `上游 issue 实测(${d});点击行展开命令,受损命令优先用 browser_* 兜底`,
     disable: '禁用', enable: '启用', commandsN: (n: number) => `${n} 命令`,
     autoT: '定时任务', autoNew: '新建', autoSub: '持久化到 dsh.schedule,重启不丢 · 失败按策略重试并通知',
@@ -114,6 +115,7 @@ const STR = {
     cmdT: 'Commands', cmdSearch: 'Search sites or commands, e.g. trending / search / bilibili',
     cmdFmt: 'Click a command row → copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)',
     knowExp: 'Export knowledge cards', knowExpDo: 'Exporting…',
+    timeline: 'Timeline', tlT: 'Collection snapshot trend', tlSub: 'Each bar = one successful collection (size = content scale)', tlEmpty: 'No snapshots yet — they grow after scheduled runs', tlN: (n: number) => `${n} snapshots`, tlTotal: 'total',
     healthDegraded: 'degraded', healthNotice: 'notice', healthIssueT: (d: string) => `confirmed upstream issues (${d}); expand the row, prefer browser_* fallback for broken commands`,
     disable: 'Disable', enable: 'Enable', commandsN: (n: number) => `${n} cmds`,
     autoT: 'Schedules', autoNew: 'New', autoSub: 'Persisted to dsh.schedule, survives restart · retries then notifies on failure',
@@ -613,6 +615,8 @@ function Panel(): ReturnType<typeof createElement> {
     const n = r.value?.paths?.length ?? 0
     showToast(r.ok && n > 0 ? `✓ ${n} 张知识卡 → ~/.dsh/opencli-knowledge/` : (r.error?.message ?? t2('errReq')), r.ok && n > 0)
   }
+  const [timelineFor, setTimelineFor] = useState<string | null>(null)
+  const toggleTimeline = (id: string): void => setTimelineFor(timelineFor === id ? null : id)
   const runScheduleNow = async (id: string): Promise<void> => {
     const r = await rpc('schedule-run-now', { p: { id } } as unknown as Record<string, unknown>)
     showToast(r.ok ? 'run now ✓' : (r.error?.message ?? t2('errReq')), r.ok)
@@ -935,9 +939,11 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('span', { className: 'o4-bdg' }, s.notify === false ? t2('notifyOff') : t2('notifyOn')),
                 createElement('span', { style: { flex: '1' } }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
+                createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void toggleTimeline(s.id) } }, t2('timeline')),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void removeSchedule(s.id) } }, t2('del')),
               ),
-            )
+            ),
+            timelineFor === s.id ? createElement(TimelinePanel, { id: s.id }) : null
           }),
         ),
         createElement('div', { className: 'o4-note' }, t2('v4host')),
@@ -1143,4 +1149,42 @@ export function apply(ctx: ClientContext): void {
     { name: 'settings.section', id: 'opencli-proxy', order: 41, label: '浏览器代理' },
     () => createElement(Panel),
   ))
+}
+
+/** 时间线面板:某定时任务的快照趋势(体积=采集规模的粗代理)+ 最近运行史。数据源 schedule-history。 */
+function TimelinePanel(props: { id: string }): ReturnType<typeof createElement> {
+  const { id } = props
+  const [snaps, setSnaps] = useState<Array<{ at: string; bytes: number; file: string }> | null>(null)
+  const [hist, setHist] = useState<Array<{ at: string; ok: boolean; summary: string }>>([])
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const r = await rpc<{ history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }>('schedule-history', { request: { id } } as unknown as Record<string, unknown>)
+      if (!alive) return
+      if (r.ok) { setHist(r.value?.history ?? []); setSnaps(r.value?.snapshots ?? []) } else setErr(r.error?.message ?? 'err')
+    })()
+    return () => { alive = false }
+  }, [id])
+  if (err.length > 0) return createElement('div', { className: 'o4-card', style: { padding: '8px 12px', margin: '4px 0 8px', borderRadius: '10px' } }, createElement('div', { className: 'o4-load' }, err))
+  const bars = snaps ?? []
+  const maxB = Math.max(1, ...bars.map((b) => b.bytes))
+  return createElement('div', { className: 'o4-card', style: { padding: '10px 12px', margin: '4px 0 8px', borderRadius: '10px' } },
+    createElement('div', { className: 'o4-h3', style: { fontSize: '12px' } }, ic('activity', true), t2('tlT')),
+    createElement('div', { className: 'o4-sub', style: { margin: '3px 0 8px' } }, t2('tlSub')),
+    createElement('div', { style: { display: 'flex', alignItems: 'flex-end', gap: '3px', height: '46px', marginBottom: '6px' } },
+      bars.length === 0 ? createElement('div', { className: 'o4-load' }, t2('tlEmpty')) : null,
+      bars.slice(-30).map((b, i) => createElement('div', {
+        key: b.file, title: `${b.at.slice(0, 19).replace('T', ' ')} · ${(b.bytes / 1024).toFixed(1)} KB`,
+        style: { flex: '1', minWidth: '4px', height: `${Math.max(6, Math.round((b.bytes / maxB) * 44))}px`, background: 'linear-gradient(180deg,#4D6BFE,#4263D9)', borderRadius: '2px 2px 0 0', opacity: 0.55 + (i % 5) * 0.09 },
+      })),
+    ),
+    createElement('div', { style: { fontSize: '10px', color: '#5F6873' } }, bars.length > 0 ? `${t2('tlN')(bars.length)} · ${(bars.reduce((s, b) => s + b.bytes, 0) / 1024).toFixed(0)} KB ${t2('tlTotal')}` : ''),
+    createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '8px' } },
+      hist.slice(0, 5).map((h, i) => createElement('div', { key: i, style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)', display: 'flex', gap: '6px' } },
+        createElement('span', null, h.at.slice(5, 16).replace('T', ' ')),
+        createElement('span', { style: { color: h.ok ? '#34C759' : '#FF8D85', flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, h.summary || (h.ok ? 'ok' : 'fail')),
+      )),
+    ),
+  )
 }
