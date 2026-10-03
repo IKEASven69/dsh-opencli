@@ -137,10 +137,18 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   // 信封取证:打印面板收到的全部 opencli RPC 响应前 150 字符
   const fxDump = await page.evaluate(() => (window.__fx ?? []).join('\n'));
   console.log('FETCH-TRACE:\n' + (fxDump || '(none)'));
+  // 卡片内容取证:定时任务卡此刻的 DOM 真容(定位 setSchedules 后渲染丢失)
+  const cardDump = await page.evaluate(() => {
+    const d = [...document.querySelectorAll("[role='dialog']")].find(x => (x.innerText || '').includes('定时任务'));
+    return { rows: document.querySelectorAll('.o4-row').length, card: (d?.innerText || '(no-card)').slice(0, 450) };
+  });
+  console.log('CARD-DUMP: rows=' + cardDump.rows + ' :: ' + cardDump.card.replace(/\n/g, '|'));
   // 时间线:展开任务行的时间线面板(快照趋势+运行史)
   const tlBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find(x => (x.textContent || '').trim() === '时间线'); if (b) { b.click(); return true; } return false; });
   await sleep(2600);
   const tlVisible = tlBtn && await has('采集快照');
+  const tlProbe = await page.evaluate(() => ({ anywhere: [...document.querySelectorAll('*')].filter(el => el.children.length === 0 && /采集快照趋势/.test(el.textContent || '')).length, rows: document.querySelectorAll('.o4-row').length, dlgCount: document.querySelectorAll("[role='dialog']").length }));
+  console.log('TL-PROBE: ' + JSON.stringify(tlProbe));
   ok('定时·时间线面板', tlVisible === true, `btn=${tlBtn}`);
   await shot('R6-定时.png');
   await page.evaluate(async () => { const sleep = (ms) => new Promise(r => setTimeout(r, ms)); for (let i = 0; i < 40; i++) { const d = [...document.querySelectorAll('button')].filter(x => (x.textContent || '').trim() === '删'); if (!d.length) break; d[0].click(); await sleep(1600); } });

@@ -371,6 +371,12 @@ var STR = {
     cmdFmt: "\u70B9\u547D\u4EE4\u884C \u2192 \u590D\u5236\u8C03\u7528\u683C\u5F0F;\u7981\u7528\u9002\u914D\u5668\u4F1A\u5373\u65F6\u4ECE systemPrompt \u6536\u7F29\u76EE\u5F55(\u9700\u786E\u8BA4)",
     knowExp: "\u5BFC\u51FA\u77E5\u8BC6\u5361",
     knowExpDo: "\u5BFC\u51FA\u4E2D\u2026",
+    timeline: "\u65F6\u95F4\u7EBF",
+    tlT: "\u91C7\u96C6\u5FEB\u7167\u8D8B\u52BF",
+    tlSub: "\u6BCF\u6839\u67F1 = \u4E00\u6B21\u6210\u529F\u91C7\u96C6(\u4F53\u79EF=\u5185\u5BB9\u89C4\u6A21)",
+    tlEmpty: "\u6682\u65E0\u5FEB\u7167\u2014\u2014\u5230\u70B9\u91C7\u96C6\u540E\u8FD9\u91CC\u4F1A\u957F\u51FA\u6765",
+    tlN: (n) => `${n} \u4EFD\u5FEB\u7167`,
+    tlTotal: "\u7D2F\u8BA1",
     healthDegraded: "\u5DF2\u77E5\u53D7\u635F",
     healthNotice: "\u6CE8\u610F",
     healthIssueT: (d) => `\u4E0A\u6E38 issue \u5B9E\u6D4B(${d});\u70B9\u51FB\u884C\u5C55\u5F00\u547D\u4EE4,\u53D7\u635F\u547D\u4EE4\u4F18\u5148\u7528 browser_* \u515C\u5E95`,
@@ -519,6 +525,12 @@ var STR = {
     cmdFmt: "Click a command row \u2192 copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)",
     knowExp: "Export knowledge cards",
     knowExpDo: "Exporting\u2026",
+    timeline: "Timeline",
+    tlT: "Collection snapshot trend",
+    tlSub: "Each bar = one successful collection (size = content scale)",
+    tlEmpty: "No snapshots yet \u2014 they grow after scheduled runs",
+    tlN: (n) => `${n} snapshots`,
+    tlTotal: "total",
     healthDegraded: "degraded",
     healthNotice: "notice",
     healthIssueT: (d) => `confirmed upstream issues (${d}); expand the row, prefer browser_* fallback for broken commands`,
@@ -997,6 +1009,11 @@ function Panel() {
     void reload();
   }, []);
   (0, import_react.useEffect)(() => {
+    if (tab === "auto") void loadSchedules();
+  }, [
+    tab
+  ]);
+  (0, import_react.useEffect)(() => {
     if (tab === "sec" && cdp === null) {
       void rpc("browser-cdp").then((r) => {
         if (r.ok && r.value !== void 0) setCdp(r.value);
@@ -1155,6 +1172,8 @@ function Panel() {
     const n = r.value?.paths?.length ?? 0;
     showToast(r.ok && n > 0 ? `\u2713 ${n} \u5F20\u77E5\u8BC6\u5361 \u2192 ~/.dsh/opencli-knowledge/` : r.error?.message ?? t2("errReq"), r.ok && n > 0);
   };
+  const [timelineFor, setTimelineFor] = (0, import_react.useState)(null);
+  const toggleTimeline = (id) => setTimelineFor(timelineFor === id ? null : id);
   const runScheduleNow = async (id) => {
     const r = await rpc("schedule-run-now", {
       p: {
@@ -1900,7 +1919,11 @@ ${c.description}`,
         onClick: () => {
           void runScheduleNow(s.id);
         }
-      }, t2("runNow")), (0, import_react.createElement)("button", {
+      }, t2("runNow")), (0, import_react.createElement)(TimelineToggle, {
+        id: s.id,
+        lang,
+        label: t2("timeline")
+      }), (0, import_react.createElement)("button", {
         className: "o4-btn ghost sm",
         onClick: () => {
           void removeSchedule(s.id);
@@ -2427,6 +2450,128 @@ function apply(ctx) {
     order: 41,
     label: "\u6D4F\u89C8\u5668\u4EE3\u7406"
   }, () => (0, import_react.createElement)(Panel)));
+}
+function TimelineToggle(props) {
+  const { id, lang, label } = props;
+  const [open, setOpen] = (0, import_react.useState)(false);
+  const tt = (k) => STR[lang][k] ?? STR.zh[k];
+  return (0, import_react.createElement)("div", {
+    style: {
+      display: "contents"
+    }
+  }, (0, import_react.createElement)("button", {
+    className: "o4-btn ghost sm",
+    onClick: () => setOpen(!open)
+  }, label), open ? (0, import_react.createElement)(TimelinePanel, {
+    id,
+    lang
+  }) : null);
+}
+function TimelinePanel(props) {
+  const { id, lang } = props;
+  const tt = (k) => STR[lang][k] ?? STR.zh[k];
+  const [snaps, setSnaps] = (0, import_react.useState)(null);
+  const [hist, setHist] = (0, import_react.useState)([]);
+  const [err, setErr] = (0, import_react.useState)("");
+  (0, import_react.useEffect)(() => {
+    let alive = true;
+    void (async () => {
+      const r = await rpc("schedule-history", {
+        request: {
+          id
+        }
+      });
+      if (!alive) return;
+      if (r.ok) {
+        setHist(r.value?.history ?? []);
+        setSnaps(r.value?.snapshots ?? []);
+      } else setErr(r.error?.message ?? "err");
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [
+    id
+  ]);
+  if (err.length > 0) return (0, import_react.createElement)("div", {
+    className: "o4-card",
+    style: {
+      padding: "8px 12px",
+      margin: "4px 0 8px",
+      borderRadius: "10px"
+    }
+  }, (0, import_react.createElement)("div", {
+    className: "o4-load"
+  }, err));
+  const bars = snaps ?? [];
+  const maxB = Math.max(1, ...bars.map((b) => b.bytes));
+  return (0, import_react.createElement)("div", {
+    className: "o4-card",
+    style: {
+      padding: "10px 12px",
+      margin: "4px 0 8px",
+      borderRadius: "10px"
+    }
+  }, (0, import_react.createElement)("div", {
+    className: "o4-h3",
+    style: {
+      fontSize: "12px"
+    }
+  }, ic("activity", true), tt("tlT")), (0, import_react.createElement)("div", {
+    className: "o4-sub",
+    style: {
+      margin: "3px 0 8px"
+    }
+  }, tt("tlSub")), (0, import_react.createElement)("div", {
+    style: {
+      display: "flex",
+      alignItems: "flex-end",
+      gap: "3px",
+      height: "46px",
+      marginBottom: "6px"
+    }
+  }, bars.length === 0 ? (0, import_react.createElement)("div", {
+    className: "o4-load"
+  }, tt("tlEmpty")) : null, bars.slice(-30).map((b, i) => (0, import_react.createElement)("div", {
+    key: b.file,
+    title: `${b.at.slice(0, 19).replace("T", " ")} \xB7 ${(b.bytes / 1024).toFixed(1)} KB`,
+    style: {
+      flex: "1",
+      minWidth: "4px",
+      height: `${Math.max(6, Math.round(b.bytes / maxB * 44))}px`,
+      background: "linear-gradient(180deg,#4D6BFE,#4263D9)",
+      borderRadius: "2px 2px 0 0",
+      opacity: 0.55 + i % 5 * 0.09
+    }
+  }))), (0, import_react.createElement)("div", {
+    style: {
+      fontSize: "10px",
+      color: "#5F6873"
+    }
+  }, bars.length > 0 ? `${tt("tlN")(bars.length)} \xB7 ${(bars.reduce((s, b) => s + b.bytes, 0) / 1024).toFixed(0)} KB ${tt("tlTotal")}` : ""), (0, import_react.createElement)("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: "2px",
+      marginTop: "8px"
+    }
+  }, hist.slice(0, 5).map((h, i) => (0, import_react.createElement)("div", {
+    key: i,
+    style: {
+      fontSize: "10.5px",
+      color: "rgba(249,250,251,.6)",
+      display: "flex",
+      gap: "6px"
+    }
+  }, (0, import_react.createElement)("span", null, h.at.slice(5, 16).replace("T", " ")), (0, import_react.createElement)("span", {
+    style: {
+      color: h.ok ? "#34C759" : "#FF8D85",
+      flex: "1",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap"
+    }
+  }, h.summary || (h.ok ? "ok" : "fail"))))));
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

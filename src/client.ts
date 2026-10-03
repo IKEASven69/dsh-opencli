@@ -941,11 +941,10 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('span', { className: 'o4-bdg' }, s.notify === false ? t2('notifyOff') : t2('notifyOn')),
                 createElement('span', { style: { flex: '1' } }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
-                createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void toggleTimeline(s.id) } }, t2('timeline')),
+                createElement(TimelineToggle, { id: s.id, lang, label: t2('timeline') }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void removeSchedule(s.id) } }, t2('del')),
               ),
-            ),
-            timelineFor === s.id ? createElement(TimelinePanel, { id: s.id }) : null
+                          )
           }),
         ),
         createElement('div', { className: 'o4-note' }, t2('v4host')),
@@ -1154,8 +1153,21 @@ export function apply(ctx: ClientContext): void {
 }
 
 /** 时间线面板:某定时任务的快照趋势(体积=采集规模的粗代理)+ 最近运行史。数据源 schedule-history。 */
-function TimelinePanel(props: { id: string }): ReturnType<typeof createElement> {
-  const { id } = props
+/** 行内时间线开关:按钮+面板自带局部状态(不依赖父组件 state,杜绝跨实例展开失效)。 */
+function TimelineToggle(props: { id: string; lang: Lang; label: string }): ReturnType<typeof createElement> {
+  const { id, lang, label } = props
+  const [open, setOpen] = useState(false)
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
+  return createElement('div', { style: { display: 'contents' } },
+    createElement('button', { className: 'o4-btn ghost sm', onClick: () => setOpen(!open) }, label),
+    open ? createElement(TimelinePanel, { id, lang }) : null,
+  )
+}
+
+function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof createElement> {
+  const { id, lang } = props
+  // 模块级组件拿不到 Panel 内部的 t2/lang——经 props 自建同款查表
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
   const [snaps, setSnaps] = useState<Array<{ at: string; bytes: number; file: string }> | null>(null)
   const [hist, setHist] = useState<Array<{ at: string; ok: boolean; summary: string }>>([])
   const [err, setErr] = useState('')
@@ -1172,16 +1184,16 @@ function TimelinePanel(props: { id: string }): ReturnType<typeof createElement> 
   const bars = snaps ?? []
   const maxB = Math.max(1, ...bars.map((b) => b.bytes))
   return createElement('div', { className: 'o4-card', style: { padding: '10px 12px', margin: '4px 0 8px', borderRadius: '10px' } },
-    createElement('div', { className: 'o4-h3', style: { fontSize: '12px' } }, ic('activity', true), t2('tlT')),
-    createElement('div', { className: 'o4-sub', style: { margin: '3px 0 8px' } }, t2('tlSub')),
+    createElement('div', { className: 'o4-h3', style: { fontSize: '12px' } }, ic('activity', true), tt('tlT')),
+    createElement('div', { className: 'o4-sub', style: { margin: '3px 0 8px' } }, tt('tlSub')),
     createElement('div', { style: { display: 'flex', alignItems: 'flex-end', gap: '3px', height: '46px', marginBottom: '6px' } },
-      bars.length === 0 ? createElement('div', { className: 'o4-load' }, t2('tlEmpty')) : null,
+      bars.length === 0 ? createElement('div', { className: 'o4-load' }, tt('tlEmpty')) : null,
       bars.slice(-30).map((b, i) => createElement('div', {
         key: b.file, title: `${b.at.slice(0, 19).replace('T', ' ')} · ${(b.bytes / 1024).toFixed(1)} KB`,
         style: { flex: '1', minWidth: '4px', height: `${Math.max(6, Math.round((b.bytes / maxB) * 44))}px`, background: 'linear-gradient(180deg,#4D6BFE,#4263D9)', borderRadius: '2px 2px 0 0', opacity: 0.55 + (i % 5) * 0.09 },
       })),
     ),
-    createElement('div', { style: { fontSize: '10px', color: '#5F6873' } }, bars.length > 0 ? `${t2('tlN')(bars.length)} · ${(bars.reduce((s, b) => s + b.bytes, 0) / 1024).toFixed(0)} KB ${t2('tlTotal')}` : ''),
+    createElement('div', { style: { fontSize: '10px', color: '#5F6873' } }, bars.length > 0 ? `${tt('tlN')(bars.length)} · ${(bars.reduce((s, b) => s + b.bytes, 0) / 1024).toFixed(0)} KB ${tt('tlTotal')}` : ''),
     createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '8px' } },
       hist.slice(0, 5).map((h, i) => createElement('div', { key: i, style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)', display: 'flex', gap: '6px' } },
         createElement('span', null, h.at.slice(5, 16).replace('T', ' ')),
