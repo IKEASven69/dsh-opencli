@@ -73,6 +73,7 @@ describe('site 预览卡(命令行样式:徽章+命令+exit 状态色)', () => {
     expect(t).toContain('$ site zhihu hot 关键词=x')
     expect(t).toContain('热度984万')
     expect(t).toContain('十一旅游推荐')
+    expect(t).not.toContain('👉')
   })
 
   it('失败:✗ exit N,失败前缀行去重、stdout/stderr 原文保留', () => {
@@ -107,6 +108,24 @@ describe('site 预览卡(命令行样式:徽章+命令+exit 状态色)', () => {
     expect(t2).toContain('— ✗ 被拦截')
   })
 
+  it('失败卡末尾人工接管提示:✗ 且无登录指引才加,已含登录指引的不重复加', () => {
+    // site exit N 失败(无登录指引)→ 加
+    const fail = siteCardRender({ adapter: 'weibo', command: 'post' }, { text: '命令失败(退出码 1):\nError: boom' })[0]!.text
+    expect(fail).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    // 空结果(⚠ 且文案自带"请先在真实 Chrome 登录")→ 不加
+    const empty = siteCardRender({ adapter: 'zhihu', command: 'hot' }, { text: '适配器 zhihu 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 zhihu，或运行 `opencli zhihu login` 后用面板“巡检登录态”确认。' })[0]!.text
+    expect(empty).not.toContain('👉')
+    // 导航被拒(✗ 但文案自带"已登录"指引)→ 不加
+    const nav = siteCardRender({ adapter: 'zhihu', command: 'hot' }, { text: '导航被拒（zhihu）：请确认 Chrome 扩展已连接且已登录 zhihu，或先 `opencli zhihu login`。原错：timeout' })[0]!.text
+    expect(nav).not.toContain('👉')
+    // 被拦截(✗ 无登录指引)→ 加
+    const off = siteCardRender({ adapter: 'weibo', command: 'post' }, { text: '适配器 weibo 已被禁用(设置→浏览器代理 可重新启用)。' })[0]!.text
+    expect(off).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    // 判定标注 ⚠(疑似静默失败,非硬失败)→ 不加
+    const warn = siteCardRender({ adapter: 'weibo', command: 'hot' }, { text: '(⚠ 疑似静默失败:登录/风控墙) 请先登录后再继续操作' })[0]!.text
+    expect(warn).not.toContain('👉')
+  })
+
   it('防御:非法输入不抛,退化为空卡/占位徽章', () => {
     expect(siteCardRender({}, null)).toEqual([{ type: 'text', text: '' }])
     expect(siteCardRender(undefined, { text: 'ok' })[0]!.text).toContain('▣ site · ? · ?')
@@ -120,7 +139,7 @@ describe('site 预览卡(命令行样式:徽章+命令+exit 状态色)', () => {
 })
 
 describe('site_batch 预览卡(汇总头 + 每站一行:站名+状态+P 值)', () => {
-  it('混合结果:⚠ 汇总 + 逐站表 + 原文分节围栏逐字保留', () => {
+  it('混合结果:⚠ 汇总 + 逐站表 + 原文分节围栏逐字保留;存在 ✗ 失败站 → 末尾附人工接管提示', () => {
     const text = '批量采集 2/3 站成功,其中 1 站疑似静默失败(exit 0 但内容无效):\n\n== zhihu ✓(实测有效 P=0.93) ==\n1 标题A 热度984万\n\n== weibo ✓(⚠ 疑似静默失败:P=0.08) ==\n请先登录\n\n== bilibili ✗ ==\nError: timeout'
     const blocks = siteBatchCardRender({ command: 'hot', sites: ['zhihu', 'weibo', 'bilibili'] }, { text })
     expect(blocks).toHaveLength(1)
@@ -134,14 +153,16 @@ describe('site_batch 预览卡(汇总头 + 每站一行:站名+状态+P 值)', (
     expect(t).toContain('== weibo ✓(⚠ 疑似静默失败:P=0.08) ==')
     expect(t).toContain('热度984万')
     expect(t).toContain('Error: timeout')
+    expect(t).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
   })
 
-  it('全成功:✓ 汇总,无判定标注的站 P 列为 —', () => {
+  it('全成功:✓ 汇总,无判定标注的站 P 列为 —;无 ✗ 失败站不加接管提示', () => {
     const text = '批量采集 2/2 站成功:\n\n== twitter ✓ ==\nA 数据\n\n== x ✓ ==\nB 数据'
     const t = siteBatchCardRender({ command: 'hot', sites: ['twitter', 'x'] }, { text })[0]!.text
     expect(t).toContain('— ✓ 2/2 站成功')
     expect(t).toContain('| twitter | ✓ 成功 | — |')
     expect(t).not.toContain('疑似静默失败')
+    expect(t).not.toContain('👉')
   })
 
   it('前置注记(目录预检/preflight)在汇总表上方逐行保留', () => {
@@ -151,10 +172,25 @@ describe('site_batch 预览卡(汇总头 + 每站一行:站名+状态+P 值)', (
     expect(t).toContain('preflight:同域冲突已串行化(twitter + x → twitter.com),避免登录态/标签页互踩')
   })
 
-  it('无分节(参数校验拒绝):✗ 被拒绝 + 原因原文', () => {
+  it('无分节(参数校验拒绝):✗ 被拒绝 + 原因原文 + 人工接管提示', () => {
     const t = siteBatchCardRender({}, { text: 'sites 至少 2 个站点。' })[0]!.text
     expect(t).toContain('▣ site_batch · ? — ✗ 被拒绝')
     expect(t).toContain('sites 至少 2 个站点。')
+    expect(t).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+  })
+
+  it('失败兜底互斥(与 site/browser_do 同族):失败站原文已含登录指引不加;纯 ⚠ 疑似静默失败站不触发', () => {
+    // 全部失败站原文都自带登录指引(如"请先登录")→ 不重复加
+    const login = siteBatchCardRender({ command: 'hot', sites: ['weibo', 'zhihu'] }, { text: '批量采集 0/2 站成功:\n\n== weibo ✗ ==\nAUTH_REQUIRED: 请先登录后重试\n\n== zhihu ✗ ==\n请先在真实 Chrome 登录 zhihu' })[0]!.text
+    expect(login).toContain('— ✗ 0/2 站成功')
+    expect(login).not.toContain('👉')
+    // 部分 ✗ 失败站无登录指引(超时)→ 加一次
+    const mixed = siteBatchCardRender({ command: 'hot', sites: ['weibo', 'zhihu'] }, { text: '批量采集 0/2 站成功:\n\n== weibo ✗ ==\nAUTH_REQUIRED: 请先登录后重试\n\n== zhihu ✗ ==\nError: timeout' })[0]!.text
+    expect(mixed).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    // 仅 ⚠ 疑似静默失败站(exit 0,ok=true)无 ✗ 失败站 → 不加
+    const silentOnly = siteBatchCardRender({ command: 'hot', sites: ['weibo'] }, { text: '批量采集 1/1 站成功,其中 1 站疑似静默失败(exit 0 但内容无效):\n\n== weibo ✓(⚠ 疑似静默失败:P=0.08) ==\n请先登录' })[0]!.text
+    expect(silentOnly).toContain('— ⚠ 1/1 站成功 · 1 疑似静默失败')
+    expect(silentOnly).not.toContain('👉')
   })
 
   it('正文里的分节头 lookalike 不产生幻影汇总行(站点集过滤),原文仍保留', () => {
@@ -192,6 +228,7 @@ describe('browser_do 预览卡(步骤式:命令/结果分段)', () => {
     expect(t).toContain('**结果**')
     expect(t).toContain('$ browser_do analyze --json')
     expect(t).toContain('"stack":"next"')
+    expect(t).not.toContain('👉')
   })
 
   it('非默认会话入徽章头', () => {
@@ -199,13 +236,19 @@ describe('browser_do 预览卡(步骤式:命令/结果分段)', () => {
     expect(t).toContain('▣ browser_do · tab · session work — ✓ exit 0')
   })
 
-  it('失败前缀与白名单拒绝:✗ exit N / ✗ 子命令被拒', () => {
+  it('失败前缀与白名单拒绝:✗ exit N / ✗ 子命令被拒,末尾附人工接管提示', () => {
     const fail = browserDoCardRender({ command: 'eval' }, { text: '命令失败(退出码 2):\nSyntaxError: boom' })[0]!.text
     expect(fail).toContain('— ✗ exit 2')
     expect(fail).toContain('SyntaxError: boom')
+    expect(fail).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
     const denied = browserDoCardRender({ command: 'rm' }, { text: '不允许的子命令:rm(白名单见工具说明)' })[0]!.text
     expect(denied).toContain('— ✗ 子命令被拒')
     expect(denied).toContain('白名单见工具说明')
+    expect(denied).toContain('👉 状态异常')
+    // 失败但输出自带登录指引 → 不重复加(site 同款互斥)
+    const login = browserDoCardRender({ command: 'find' }, { text: '命令失败(退出码 3):\nAUTH_REQUIRED: 请先登录后重试' })[0]!.text
+    expect(login).toContain('— ✗ exit 3')
+    expect(login).not.toContain('👉')
   })
 
   it('防御:非法输入不抛', () => {

@@ -447,6 +447,7 @@ var STR = {
     bridgeSub: "\u628A dsh \u5B98\u65B9 Browser Use \u63A5\u5230\u4F60\u767B\u5F55\u6001\u7684 Chrome:\u63A2\u6D4B opencli daemon Chrome \u7684 CDP \u7AEF\u70B9,\u586B\u5165 Chrome DevTools MCP \u7684 endpoint(mode: attach)\u5373\u53EF\u3002",
     bridgeEp: "CDP \u7AEF\u70B9",
     bridgeNone: "\u672A\u63A2\u6D4B\u5230 CDP \u2014\u2014 \u5148\u542F\u52A8\u4E00\u6B21\u6D4F\u89C8\u5668\u4F1A\u8BDD(\u9762\u677F\u300C\u542F\u52A8 daemon\u300D\u540E\u8DD1\u4E00\u6761 browser \u547D\u4EE4)",
+    bridgeCopyEp: "\u590D\u5236\u7AEF\u70B9",
     bridgeCopyCfg: "\u590D\u5236\u6865\u63A5\u914D\u7F6E",
     bridgeWarn: "\u26A0 \u5B98\u65B9\u81EA\u52A8\u5316\u4E0D\u7ECF\u8FC7 opencli \u5BA1\u6279\u95E8;CDP \u5F00\u653E = \u672C\u673A\u8FDB\u7A0B\u53EF\u63A7\u8BE5\u6D4F\u89C8\u5668",
     needLogin: "daemon \u672A\u8FD0\u884C\u6216\u6D4F\u89C8\u5668\u6865\u672A\u8FDE\u63A5\u2014\u2014\u70B9\u300C\u542F\u52A8 daemon\u300D\u540E\u91CD\u8BD5",
@@ -604,6 +605,7 @@ var STR = {
     bridgeSub: "Attach official Browser Use to your logged-in Chrome: probe the daemon Chrome CDP endpoint and fill it into the Chrome DevTools MCP endpoint (mode: attach).",
     bridgeEp: "CDP endpoint",
     bridgeNone: "No CDP found \u2014 start a browser session first (run Start daemon, then a browser command)",
+    bridgeCopyEp: "Copy endpoint",
     bridgeCopyCfg: "Copy bridge config",
     bridgeWarn: "\u26A0 Official automation bypasses the opencli approval gate; an open CDP lets local processes control this browser",
     needLogin: "daemon down or browser bridge not connected \u2014 click Start daemon and retry",
@@ -806,7 +808,6 @@ var CSS = `
 .o4-btn:disabled { opacity:.5; cursor:default; transform:none; }
 .o4-in { flex:1; min-width:0; background:rgba(0,0,0,.24); border:1px solid rgba(255,255,255,.1); color:#F9FAFB; border-radius:9px; padding:7px 11px; font-size:12.5px; transition:border-color .15s ease, box-shadow .15s ease; }
 .o4-in:focus { outline:none; border-color:rgba(77,107,254,.6); box-shadow:0 0 0 3px rgba(77,107,254,.16); }
-.o4-in::placeholder { color:rgba(249,250,251,.28); }
 .o4-in.mono { font-family:ui-monospace,Consolas,monospace; }
 .o4-in::placeholder { color:rgba(249,250,251,.3); }
 .o4-tryout { margin-top:9px; background:rgba(0,0,0,.24); border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:10px 12px; font:11.5px/1.7 ui-monospace,Consolas,monospace; color:rgba(249,250,251,.72); white-space:pre-wrap; word-break:break-word; max-height:200px; overflow:auto; box-shadow:inset 0 2px 8px rgba(0,0,0,.4); }
@@ -949,6 +950,7 @@ function Panel() {
   const [schedules, setSchedules] = (0, import_react.useState)([]);
   const [autoMode, setAutoMode] = (0, import_react.useState)("standard");
   const [audit, setAudit] = (0, import_react.useState)(null);
+  const [ingest, setIngest] = (0, import_react.useState)(null);
   const [login, setLogin] = (0, import_react.useState)(null);
   const [checking, setChecking] = (0, import_react.useState)(false);
   const [toast, setToast] = (0, import_react.useState)(null);
@@ -1039,6 +1041,11 @@ function Panel() {
   (0, import_react.useEffect)(() => {
     swrHydrate();
     void reload();
+  }, []);
+  (0, import_react.useEffect)(() => {
+    void rpc("ingest-events").then((r) => {
+      if (r.ok && r.value !== void 0 && Array.isArray(r.value.events)) setIngest(r.value.events);
+    });
   }, []);
   (0, import_react.useEffect)(() => {
     if (tab === "auto") void loadSchedules();
@@ -1308,8 +1315,8 @@ function Panel() {
     className: `o4-dot ${state}`
   }));
   const renderOverview = () => {
-    const tryErr = runOut !== null && !runOut.ok;
     const daemonOff = !daemonUp;
+    const watchHit = (ingest ?? []).find((e) => e.kind === "watch-hit") ?? null;
     return (0, import_react.createElement)(
       "div",
       null,
@@ -1541,6 +1548,33 @@ ${runOut.text}`);
           void startDaemon();
         }
       }, ic("refresh", true), starting ? "\u2026" : t2("fix"))) : null),
+      // watch 命中可见性:健康区下最近一条 🔔 徽章行(事件文本自带 🔔 前缀,点击跳自动化 tab)
+      watchHit !== null ? (0, import_react.createElement)("div", {
+        className: "o4-bdg w",
+        style: {
+          display: "flex",
+          width: "fit-content",
+          maxWidth: "100%",
+          fontSize: "11px",
+          padding: "5px 11px",
+          borderRadius: "9px",
+          cursor: "pointer",
+          gap: "6px"
+        },
+        title: watchHit.text,
+        onClick: () => setTab("auto")
+      }, (0, import_react.createElement)("span", {
+        style: {
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap"
+        }
+      }, `${traceClock(watchHit.at)} \xB7 ${watchHit.text.length > 96 ? `${watchHit.text.slice(0, 96)}\u2026` : watchHit.text}`), (0, import_react.createElement)("span", {
+        style: {
+          display: "flex",
+          flex: "none"
+        }
+      }, ic("chev-r", true))) : null,
       // 安全中心摘要
       (0, import_react.createElement)("div", {
         className: "o4-sec"
@@ -1865,7 +1899,7 @@ ${c.description}`,
         value: schedSite,
         onChange: (e) => setSchedSite(e.target.value)
       }), (0, import_react.createElement)("input", {
-        className: "o4-in cron",
+        className: "o4-in mono",
         style: {
           maxWidth: "110px"
         },
@@ -2078,7 +2112,7 @@ ${c.description}`,
           if (e.target.value.length >= 2) void searchAssets(e.target.value);
         }
       }), (0, import_react.createElement)("button", {
-        className: "btn ghost sm",
+        className: "o4-btn ghost sm",
         onClick: () => {
           void loadScripts();
         }
@@ -2288,7 +2322,7 @@ ${c.description}`,
         fontSize: "11px",
         color: "#5F6873"
       }
-    }, `${t2("verNow")} v0.4.0 \xB7 ${t2("channel")} \xB7 ${t2("updMarket")}`)), (0, import_react.createElement)("span", {
+    }, `${t2("verNow")} v0.4.1 \xB7 ${t2("channel")} \xB7 ${t2("updMarket")}`)), (0, import_react.createElement)("span", {
       className: "o4-bdg"
     }, typeof updState === "string" && updState !== "idle" && updState !== "checking" ? updState : t2("upToDate")), (0, import_react.createElement)("button", {
       className: "o4-btn ghost sm",
@@ -2443,9 +2477,9 @@ ${c.description}`,
       className: `o4-dot ${status === null ? "n" : daemonUp ? "g" : "r"}`
     }), "daemon"), (0, import_react.createElement)("span", {
       className: "o4-chip",
-      title: "BrowserBridge connected"
+      title: `BrowserBridge ${status?.daemon?.extension ?? t2("unknown")}`
     }, (0, import_react.createElement)("span", {
-      className: "o4-dot g"
+      className: `o4-dot ${status?.daemon?.extension === "connected" ? "g" : "n"}`
     }), "Bridge"), (0, import_react.createElement)("span", {
       className: "o4-chip",
       title: "Chrome"

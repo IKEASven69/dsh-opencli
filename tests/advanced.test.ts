@@ -126,6 +126,58 @@ describe('watch 关键词监控(主线 B 第一片)', () => {
   })
 })
 
+describe('ingest-events RPC(排序/形状/上限契约:总览 watch 命中行依赖 newest-first)', () => {
+  type Svc2 = {
+    ingestEventList: Array<{ at: string; kind: string; text: string }>
+    runOpencli: (argv: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+    runSiteCommand: (siteCmd: string, id: string) => Promise<void>
+  }
+  const S = (): Svc2 => svc as unknown as Svc2
+
+  it('形状 {ok, events};unshift 维持最新在前——面板 find 首个 watch-hit 拿到的就是最新一条', async () => {
+    const site = `wt3-${Date.now()}`
+    const r = await svc.scheduleAdd({ site, cron: '0 9 * * *', watch: '旧词,新词' })
+    expect(r.ok).toBe(true)
+    const orig = S().runOpencli.bind(svc)
+    let seq = 0
+    S().runOpencli = async () => { seq++; return { exitCode: 0, stdout: seq === 1 ? '旧词出现' : '新词出现', stderr: '' } }
+    try {
+      await S().runSiteCommand(site, r.id!)
+      await S().runSiteCommand(site, r.id!)
+    } finally {
+      S().runOpencli = orig as Svc2['runOpencli']
+      await svc.scheduleRemove({ id: r.id! })
+    }
+    const ev = await svc.ingestEvents()
+    expect(ev.ok).toBe(true)
+    expect(Array.isArray(ev.events)).toBe(true)
+    const hits = ev.events.filter((e) => e.kind === 'watch-hit' && e.text.includes(site))
+    expect(hits).toHaveLength(2)
+    // newest-first:第二次命中(新词)在最前——client.ts 总览 (ingest ?? []).find(...) 依赖该序;
+    // 若 host 排序翻转为 push,这里最先报警(面板将永远显示最旧命中)
+    expect(hits[0]!.text).toContain('新词')
+    expect(hits[1]!.text).toContain('旧词')
+  })
+
+  it('上限:events 截到 30 条且最新在前', async () => {
+    const before = S().ingestEventList.length
+    // 按 host 同款语义直塞 35 条(旧→新,unshift 后最新在最前),验证 slice(0, 30) 口径
+    for (let i = 0; i < 35; i++) {
+      S().ingestEventList.unshift({ at: new Date(Date.now() + i).toISOString(), kind: 'watch-hit', text: `evt-${i}` })
+    }
+    try {
+      const ev = await svc.ingestEvents()
+      expect(ev.ok).toBe(true)
+      expect(ev.events.length).toBe(30)
+      expect(ev.events[0]!.text).toBe('evt-34')
+      expect(ev.events[29]!.text).toBe('evt-5')
+    } finally {
+      S().ingestEventList.splice(0, 35)
+      expect(S().ingestEventList.length).toBe(before)
+    }
+  })
+})
+
 describe('schedule 开关/删除(schedule-toggle/remove)', () => {
   it('未知 id 拒绝', async () => {
     expect((await svc.scheduleToggle({ id: 'no-such', enabled: false })).ok).toBe(false)

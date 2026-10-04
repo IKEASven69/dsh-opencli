@@ -11,7 +11,7 @@ import { createElement, useEffect, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
-  AuditListResult, DaemonStartResult, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
+  AuditListResult, DaemonStartResult, IngestEvent, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
   TraceLine, TraceListResult,
 } from './types.ts'
 import { siteIconOf } from './site-icons.ts'
@@ -84,6 +84,7 @@ const STR = {
     bridgeSub: '把 dsh 官方 Browser Use 接到你登录态的 Chrome:探测 opencli daemon Chrome 的 CDP 端点,填入 Chrome DevTools MCP 的 endpoint(mode: attach)即可。',
     bridgeEp: 'CDP 端点',
     bridgeNone: '未探测到 CDP —— 先启动一次浏览器会话(面板「启动 daemon」后跑一条 browser 命令)',
+    bridgeCopyEp: '复制端点',
     bridgeCopyCfg: '复制桥接配置',
     bridgeWarn: '⚠ 官方自动化不经过 opencli 审批门;CDP 开放 = 本机进程可控该浏览器',
     needLogin: 'daemon 未运行或浏览器桥未连接——点「启动 daemon」后重试',
@@ -149,6 +150,7 @@ const STR = {
     bridgeSub: 'Attach official Browser Use to your logged-in Chrome: probe the daemon Chrome CDP endpoint and fill it into the Chrome DevTools MCP endpoint (mode: attach).',
     bridgeEp: 'CDP endpoint',
     bridgeNone: 'No CDP found — start a browser session first (run Start daemon, then a browser command)',
+    bridgeCopyEp: 'Copy endpoint',
     bridgeCopyCfg: 'Copy bridge config',
     bridgeWarn: '⚠ Official automation bypasses the opencli approval gate; an open CDP lets local processes control this browser',
     needLogin: 'daemon down or browser bridge not connected — click Start daemon and retry',
@@ -325,7 +327,6 @@ const CSS = `
 .o4-btn:disabled { opacity:.5; cursor:default; transform:none; }
 .o4-in { flex:1; min-width:0; background:rgba(0,0,0,.24); border:1px solid rgba(255,255,255,.1); color:#F9FAFB; border-radius:9px; padding:7px 11px; font-size:12.5px; transition:border-color .15s ease, box-shadow .15s ease; }
 .o4-in:focus { outline:none; border-color:rgba(77,107,254,.6); box-shadow:0 0 0 3px rgba(77,107,254,.16); }
-.o4-in::placeholder { color:rgba(249,250,251,.28); }
 .o4-in.mono { font-family:ui-monospace,Consolas,monospace; }
 .o4-in::placeholder { color:rgba(249,250,251,.3); }
 .o4-tryout { margin-top:9px; background:rgba(0,0,0,.24); border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:10px 12px; font:11.5px/1.7 ui-monospace,Consolas,monospace; color:rgba(249,250,251,.72); white-space:pre-wrap; word-break:break-word; max-height:200px; overflow:auto; box-shadow:inset 0 2px 8px rgba(0,0,0,.4); }
@@ -469,6 +470,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [schedules, setSchedules] = useState<SchedItem[]>([])
   const [autoMode, setAutoMode] = useState('standard')
   const [audit, setAudit] = useState<AuditListResult | null>(null)
+  const [ingest, setIngest] = useState<IngestEvent[] | null>(null)
   const [login, setLogin] = useState<LoginCheckResult | null>(null)
   const [checking, setChecking] = useState(false)
   const [toast, setToast] = useState<ToastMsg | null>(null)
@@ -553,6 +555,13 @@ function Panel(): ReturnType<typeof createElement> {
   }
 
   useEffect(() => { swrHydrate(); void reload() }, [])
+  // watch 命中可见性:挂载时拉一次 ingest-events(总览健康区下 🔔 徽章行的数据源);
+  // 拉取失败静默保持 null → 不渲染该行,绝不占错误位
+  useEffect(() => {
+    void rpc<{ ok: boolean; events: IngestEvent[] }>('ingest-events').then((r) => {
+      if (r.ok && r.value !== undefined && Array.isArray(r.value.events)) setIngest(r.value.events)
+    })
+  }, [])
   // 进入自动化 tab 即拉任务列表:此前仅在增删改后拉取,面板重开/刷新后已有任务不显示(真机复现)
   useEffect(() => { if (tab === 'auto') void loadSchedules() }, [tab])
   useEffect(() => { if (tab === 'sec' && cdp === null) { void rpc<{ found: boolean; endpoint: string | null; hint?: string }>('browser-cdp').then((r) => { if (r.ok && r.value !== undefined) setCdp(r.value) }) } }, [tab, cdp])
@@ -725,8 +734,9 @@ function Panel(): ReturnType<typeof createElement> {
 
   /* ── 总览 ── */
   const renderOverview = (): ReturnType<typeof createElement> => {
-    const tryErr = runOut !== null && !runOut.ok
     const daemonOff = !daemonUp
+    // 最近一条 watch 命中(ingest-events,倒序取首个 kind=watch-hit;无命中不渲染)
+    const watchHit = (ingest ?? []).find((e) => e.kind === 'watch-hit') ?? null
     return createElement('div', null,
       // 试试看(通栏)
       createElement('div', { className: 'o4-card' },
@@ -809,6 +819,14 @@ function Panel(): ReturnType<typeof createElement> {
           ? createElement('div', { style: { marginTop: '10px' } }, createElement('button', { className: 'o4-btn', disabled: starting, onClick: () => { void startDaemon() } }, ic('refresh', true), starting ? '…' : t2('fix')))
           : null,
       ),
+      // watch 命中可见性:健康区下最近一条 🔔 徽章行(事件文本自带 🔔 前缀,点击跳自动化 tab)
+      watchHit !== null
+        ? createElement('div', { className: 'o4-bdg w', style: { display: 'flex', width: 'fit-content', maxWidth: '100%', fontSize: '11px', padding: '5px 11px', borderRadius: '9px', cursor: 'pointer', gap: '6px' }, title: watchHit.text, onClick: () => setTab('auto') },
+            createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+              `${traceClock(watchHit.at)} · ${watchHit.text.length > 96 ? `${watchHit.text.slice(0, 96)}…` : watchHit.text}`),
+            createElement('span', { style: { display: 'flex', flex: 'none' } }, ic('chev-r', true)),
+          )
+        : null,
       // 安全中心摘要
       createElement('div', { className: 'o4-sec' },
         createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' } },
@@ -937,7 +955,7 @@ function Panel(): ReturnType<typeof createElement> {
         !daemonUp ? createElement('div', { className: 'o4-diag bad', style: { marginBottom: '9px' }, onClick: () => { void startDaemon() } }, ic('alert', true), t2('depDaemon'), createElement('span', { className: 'o4arr' }, t2('fix'), ic('chev-r', true))) : null,
         createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' } },
           createElement('input', { className: 'o4-in', placeholder: 'site zhihu hot', value: schedSite, onChange: (e: { target: { value: string } }) => setSchedSite(e.target.value) }),
-          createElement('input', { className: 'o4-in cron', style: { maxWidth: '110px' }, placeholder: 'cron', value: schedCron, onChange: (e: { target: { value: string } }) => setSchedCron(e.target.value) }),
+          createElement('input', { className: 'o4-in mono', style: { maxWidth: '110px' }, placeholder: 'cron', value: schedCron, onChange: (e: { target: { value: string } }) => setSchedCron(e.target.value) }),
           createElement('input', { className: 'o4-in', style: { maxWidth: '172px' }, placeholder: '🔔 watch 关键词', title: '逗号分隔,命中即通知', value: schedWatch, onChange: (e: { target: { value: string } }) => setSchedWatch(e.target.value) }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
         ),
@@ -1005,7 +1023,7 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('div', { className: 'o4-sub' }, t2('assetSub')),
           createElement('div', { style: { display: 'flex', gap: '7px', marginBottom: '9px' } },
             createElement('input', { className: 'o4-in', placeholder: t2('assetSearch'), onChange: (e: { target: { value: string } }) => { if (e.target.value.length >= 2) void searchAssets(e.target.value) } }),
-            createElement('button', { className: 'btn ghost sm', onClick: () => { void loadScripts() } }, t2('browse')),
+            createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void loadScripts() } }, t2('browse')),
           ),
           createElement('div', { className: 'o4-cells', style: { gridTemplateColumns: 'repeat(3,1fr)' } },
             createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('builtinT')), createElement('div', { className: 'v' }, String(scripts?.length ?? '—'))),
@@ -1086,7 +1104,7 @@ function Panel(): ReturnType<typeof createElement> {
         createElement('span', { className: 'o4-miniico' }, ic('refresh', true)),
         createElement('div', { style: { flex: '1' } },
           createElement('div', { style: { fontSize: '12.5px', fontWeight: '600' } }, t2('verT')),
-          createElement('div', { style: { fontSize: '11px', color: '#5F6873' } }, `${t2('verNow')} v0.4.0 · ${t2('channel')} · ${t2('updMarket')}`),
+          createElement('div', { style: { fontSize: '11px', color: '#5F6873' } }, `${t2('verNow')} v0.4.1 · ${t2('channel')} · ${t2('updMarket')}`),
         ),
         createElement('span', { className: 'o4-bdg' }, typeof updState === 'string' && updState !== 'idle' && updState !== 'checking' ? updState : t2('upToDate')),
         createElement('button', { className: 'o4-btn ghost sm', disabled: updState === 'checking', onClick: () => { void checkUpdate() } }, updState === 'checking' ? t2('updating') : t2('checkUpd')),
@@ -1150,7 +1168,7 @@ function Panel(): ReturnType<typeof createElement> {
       // 状态条(指示灯)
       createElement('div', { className: 'o4-status' },
         createElement('span', { className: 'o4-chip', title: `daemon ${status === null ? t2('loading') : (daemonUp ? t2('daemonRunning') : t2('daemonDown'))}` }, createElement('span', { className: `o4-dot ${status === null ? 'n' : (daemonUp ? 'g' : 'r')}` }), 'daemon'),
-        createElement('span', { className: 'o4-chip', title: 'BrowserBridge connected' }, createElement('span', { className: 'o4-dot g' }), 'Bridge'),
+        createElement('span', { className: 'o4-chip', title: `BrowserBridge ${status?.daemon?.extension ?? t2('unknown')}` }, createElement('span', { className: `o4-dot ${status?.daemon?.extension === 'connected' ? 'g' : 'n'}` }), 'Bridge'),
         createElement('span', { className: 'o4-chip', title: 'Chrome' }, ic('monitor', true)),
         createElement('span', { className: 'o4-sep' }),
         ...(loginResults.length > 0

@@ -32,6 +32,12 @@ const EXIT_FAIL = /^命令失败\(退出码 (-?\d+)\):\n?/
 /** SystemOne 判定标注(verifyBadge 三形态),如 "(实测有效 P=0.93)"。 */
 const VERIFY_NOTE = /\((⚠ 疑似静默失败:[^)]*|⚠ 内容可疑:[^)]*|实测有效 P=[\d.]+)\)/
 
+/** 失败卡末尾的人工接管提示:✗ 时追加,引导模型别在坏状态上盲目重试。 */
+const TAKEOVER_HINT = '👉 状态异常:建议人工接管或改用 browser_* 原语'
+
+/** 原文已自带登录指引(site 的返回空/导航被拒文案):再附接管提示即重复,不加。 */
+const HAS_LOGIN_HINT = /登录|login/i
+
 // ── 基础件(全防御:render 是管线回调,任何输入都不允许抛) ──
 
 function asRecord(x: unknown): Record<string, unknown> | null {
@@ -88,6 +94,8 @@ export function siteStatusOf(text: string): SiteCardStatus {
  * site 预览卡:徽章头(站点·命令+状态色)→ 等宽命令块 → 原文围栏。
  * 判定标注从 execute 文本解析:⚠ 疑似静默失败/内容可疑;✓ 时 P 值入标签。
  * 失败前缀行(命令失败(退出码 N):)信息已入徽章头,原文去重保留其余部分。
+ * ✗(exit N/被拦截/导航被拒等)且原文无登录指引时,末尾附人工接管提示——
+ * 空结果/导航被拒文案自带"登录"指引,不重复加。
  */
 export function siteCardRender(args: unknown, value: unknown): TextCardBlock[] {
   const text = textOf(value)
@@ -101,8 +109,9 @@ export function siteCardRender(args: unknown, value: unknown): TextCardBlock[] {
   const cmd = fence(`$ ${shellJoin(['site', adapter, command, ...rest])}`, 'console')
   const ex = EXIT_FAIL.exec(text)
   const payload = ex !== null ? text.slice(ex[0].length) : text
-  if (payload.trim().length === 0) return card(head, cmd)
-  return card(head, cmd, fence(payload))
+  const hint = st.status === 'fail' && !HAS_LOGIN_HINT.test(payload) ? [TAKEOVER_HINT] : []
+  if (payload.trim().length === 0) return card(head, cmd, ...hint)
+  return card(head, cmd, fence(payload), ...hint)
 }
 
 // ── site_batch:汇总头 + 每站一行(站名+状态+P 值) ──
@@ -159,6 +168,9 @@ function batchRow(s: BatchSection): { glyph: string; status: CardStatus; label: 
  * site_batch 预览卡:汇总头(成功数/总数+疑似静默失败计数)→ 前置注记 →
  * 每站一行表(站名+状态+P 值)→ 原文分节围栏(逐字保留)。
  * 无分节(参数校验拒绝等)退化为"✗ 被拒绝 + 原因原文"卡。
+ * 失败兜底与 site/browser_do 同族:整卡被拒,或存在 ✗ 失败站(⚠ 疑似静默失败不算)时,
+ * 卡末尾附人工接管提示——多站批量失败恰是盲目重试高发场景;互斥按站判定:仅当全部
+ * 失败站原文都已自带登录指引(如"请先登录")才省略,任一站无指引(如纯超时)即附一次。
  */
 export function siteBatchCardRender(args: unknown, value: unknown): TextCardBlock[] {
   const text = textOf(value)
@@ -168,14 +180,15 @@ export function siteBatchCardRender(args: unknown, value: unknown): TextCardBloc
   const sitesArg = a !== null && Array.isArray(a.sites) ? a.sites.map(String) : []
   const { notes, sections } = parseBatchText(text, sitesArg.length > 0 ? new Set(sitesArg) : undefined)
   if (sections.length === 0) {
-    return card(`▣ site_batch · ${command} — ${GLYPH.fail} 被拒绝`, text)
+    return card(`▣ site_batch · ${command} — ${GLYPH.fail} 被拒绝`, text, ...(HAS_LOGIN_HINT.test(text) ? [] : [TAKEOVER_HINT]))
   }
   const rows = sections.map((s) => ({ s, r: batchRow(s) }))
   const n = rows.length
-  // 成功数按 exit-0 口径(sections 的 ok 标记,含"疑似静默失败"站),与 execute 汇总头一致
+  // 成功数按 exit-0 口径(sections 的 ok 标记,含"疑似静默失败"站),与 execute 汇总头一致;
+  // 但状态符号升格:存在疑似静默失败时整批标 ⚠(数据可信度问题优先于 exit 口径,与测试契约一致)
   const okN = rows.filter((x) => x.s.ok).length
   const silentN = rows.filter((x) => x.r.label === '疑似静默失败').length
-  const status: CardStatus = okN === n ? 'ok' : okN === 0 ? 'fail' : 'warn'
+  const status: CardStatus = silentN > 0 ? 'warn' : okN === n ? 'ok' : okN === 0 ? 'fail' : 'warn'
   const head = `▣ site_batch · ${command} × ${n} 站 — ${GLYPH[status]} ${okN}/${n} 站成功${silentN > 0 ? ` · ${silentN} 疑似静默失败` : ''}`
   const table = [
     '| 站点 | 状态 | P |',
@@ -183,14 +196,19 @@ export function siteBatchCardRender(args: unknown, value: unknown): TextCardBloc
     ...rows.map((x) => `| ${x.s.site} | ${x.r.glyph} ${x.r.label} | ${x.r.p} |`),
   ].join('\n')
   const raw = sections.map((s) => `== ${s.site} ${s.ok ? '✓' : '✗'}${s.badge} ==\n${s.body}`).join('\n\n')
-  return card(head, ...(notes.length > 0 ? [notes.join('\n')] : []), table, fence(raw))
+  // 互斥粒度按站:任一失败站原文无登录指引(如纯超时)就需要整卡附一次提示——
+  // 按"全部失败站都自带指引才省略",避免登录墙站+超时站混合时超时站得不到指引
+  const failSections = sections.filter((s) => !s.ok)
+  const hint = failSections.length > 0 && !failSections.every((s) => HAS_LOGIN_HINT.test(s.body)) ? [TAKEOVER_HINT] : []
+  return card(head, ...(notes.length > 0 ? [notes.join('\n')] : []), table, fence(raw), ...hint)
 }
 
 // ── browser_do:步骤式(命令/结果分段) ──
 
 /**
  * browser_do 预览卡:徽章头(子命令+状态色)→ 命令段 → 结果段,原文逐字保留。
- * 失败前缀/白名单拒绝按 site 同款规则分类。
+ * 失败前缀/白名单拒绝按 site 同款规则分类;✗ 时末尾附人工接管提示(原文自带
+ * 登录指引的除外,与 site 同款互斥)。
  */
 export function browserDoCardRender(args: unknown, value: unknown): TextCardBlock[] {
   const text = textOf(value)
@@ -206,6 +224,7 @@ export function browserDoCardRender(args: unknown, value: unknown): TextCardBloc
   const head = `▣ browser_do · ${command}${session !== null ? ` · session ${session}` : ''} — ${GLYPH[st.status]} ${st.label}`
   const cmdSeg = `**命令**\n${fence(`$ ${shellJoin(['browser_do', command, ...rest])}`, 'console')}`
   const payload = ex !== null ? text.slice(ex[0].length) : text
-  if (payload.trim().length === 0) return card(head, cmdSeg)
-  return card(head, cmdSeg, `**结果**\n${fence(payload)}`)
+  const hint = st.status === 'fail' && !HAS_LOGIN_HINT.test(payload) ? [TAKEOVER_HINT] : []
+  if (payload.trim().length === 0) return card(head, cmdSeg, ...hint)
+  return card(head, cmdSeg, `**结果**\n${fence(payload)}`, ...hint)
 }

@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+### 收尾(第三批):失败兜底提示 / watch 命中可见性 / 面板走查
+- **site / site_batch / browser_do 预览卡失败兜底**:✗(exit N/被拦截/子命令被拒)且原文无登录指引时,卡片末尾追加"👉 状态异常:建议人工接管或改用 browser_* 原语"——引导模型别在坏状态上盲目重试;空结果/导航被拒文案已自带登录指引,不重复加(互斥规则 tests/cards.test.ts 直测)。site_batch 同族覆盖(评审修复):整卡被拒或存在 ✗ 失败站时同样附提示,互斥按站判定——仅全部失败站原文都自带登录指引才省略,任一站无指引(如纯超时)即附一次
+- **watch 命中可见性**:总览 tab 健康区下新增最近一条 watch 命中 🔔 徽章行(数据源 ingest-events,时间本地化,点击跳自动化 tab;无命中不渲染,拉取失败静默);newest-first 排序/返回形状/30 条上限以测试钉住(tests/advanced.test.ts,评审修复:排序契约此前无测试,翻转将致面板永远显示最旧命中且无报警)
+- SKILL.md 工具速查表补 `trace_replay` 行(复盘"上次为什么失败"先调它)
+- 面板走查小修:CDP 端点"复制端点"按钮 i18n key 缺失(bridgeCopyEp 渲染空文案)补齐;资产库"浏览全部"按钮 className 丢失(btn→o4-btn);cron 输入框改等宽(o4-in mono);状态条 Bridge 灯由恒绿改按 daemon extension 实际连接态;版本卡 v0.4.0→v0.4.1(与 package.json 对齐);去重复 `.o4-in::placeholder` 规则
+
 ### 对话内任务预览卡(对标 BrowserSkill 核心卖点,纯插件内实现)
 - **三个工具 output.render 升级为样式卡**(src/cards.ts 纯函数,tests/cards.test.ts 直测形状):
   - `site` 命令行样式——▣ 站点徽章 + 命令 + exit 状态色(✓ 绿 #34C759 / ✗ 红 #FF453A / ⚠ 琥珀 #FF9F0A,与面板 o4-dot 三色系统同源);判定标注从 execute 文本解析(疑似静默失败/内容可疑 → ⚠,实测有效 → P 值入标签),失败前缀行去重
@@ -15,6 +21,13 @@
   - `browser_do` 步骤式——命令/结果分段,非默认会话入徽章头
 - **能力边界实测**(dsh-tools 0.2.0-rc.2):render 产物 ContentBlock[] 里 text 是唯一可由插件构造的块——image/file 需 attachment 服务拥有的 ref(纯函数拿不到,且官方注释明说 production adapters declare text-only output),故为"带样式的 markdown 文本卡":等宽命令块(```console 围栏,与 0.2 TerminalResultView 降级约定同款)+ 折叠原文降级为"摘要在上、原文围栏在下"(宿主 MarkdownText 禁 raw HTML,GFM 无原生折叠),围栏遇原文反引号串自动加长;原文逐字保留信息不丢
 - execute 文本契约零改动(render 只做只读重排);防御全包(非法输入退空卡绝不抛)
+
+### 录屏回放:browser 命令运行轨迹(BrowserSkill #79 同款需求)
+- **六入口统一单点落盘**:browser_* 全族 + replay / script-run-builtin / crawl / userscript-run / recipe-run 五个 RPC 透传都经 runBrowserTraced——任何入口执行的 browser 命令都进「运行轨迹」,复盘链路不断(评审:面板回放按钮曾绕过单点)
+- 每条命令 JSONL 追加到 `~/.dsh/opencli-traces/trace-<yyyymmdd>.jsonl`({at, cmd, exitCode, ms, outHead≤200 字,失败时 stderr 优先});单文件超 5MB 轮转 .1;写失败静默绝不影响命令本身
+- 新增 agent 工具 `trace_replay`:最近 30 步 markdown 时间线(时间/命令/exit/耗时,失败步附输出摘录);表格单元格净化(换行折 `\n`、竖线转义,userscript 多行 eval 不再拆坏表格);时间列本地化(UTC ISO 直切与本地时钟错位 8h)
+- 新增 `trace-list`(倒序+limit,跨当日/昨日档聚合)/`trace-get`(yyyymmdd 全量,date 严格 8 位数字防路径穿越)RPC;脏行形状校验——parse 成功但非 TraceLine 的行跳过,面板无 ErrorBoundary 不崩白
+- 面板自动化 tab 新增「运行轨迹」卡(时间/命令/exit 色点/耗时,点行展开输出摘录);测试隔离 DSH_OPENCLI_TRACE_DIR 指临时目录,绝不写真实用户数据(tests/trace.test.ts)
 
 ### 本周冲刺(10-03):健康度/MCP Resources/W3 路由/采集快照
 - **站点健康度**:`knowledge/health.json`(上游 issue 实测:小红书/instagram 已知受损、zhihu/bilibili 注意)——命令页站点行徽章+知识卡健康度段,受损站给 browser_* 兜底提示
