@@ -46,3 +46,37 @@
 | P3 | SWR 重做/browser_do 内循环 noul 化/多账号 | 工程债,顺手做 |
 
 **三个月节奏**:10 月上旬 P0 两项+发版 → 10 月中下旬 P1 三项(SKILL 外移/健康度/MCP Resources)→ 11 月 W3+主线 B 数据产品 → 12 月 v1.0 候选(等 dsh 0.2 stable 后做官方 Browser Use attach 桥实测收尾)。
+
+---
+
+## 六、竞品全景补录(2026-10-04,官方注册表实测)
+
+> 数据源:awesome-dsh-plugin 注册表 4,412 条目全量分类(稀疏克隆实测)——browser 类 99 个,剔除 ~40 个搜索工具类(tavily/exa/searxng 等不同赛道),真同赛道浏览器控制类 25+。
+> 星数/更新时间:GitHub API 10-04 实测。
+
+### 6.1 赛道四档全景
+
+| 档位 | 竞品 | ★ | 最近更新 | 定位与威胁评估 |
+|---|---|---|---|---|
+| T0 霸主 | Tencent/BrowserSkill | 8,106 | 09-30 | CLI+扩展+官方 dsh 插件;issue 流持续暴露借用模型/更新可靠性/Windows 三大老伤,9-30 后停更(国庆) |
+| **T1 新变量** | **platonai/browser4** | **1,150** | **10-03(假期连续发版)** | AI 原生浏览器引擎(自建,非 Chrome 壳);platonai 系(MCP 生态老牌);v4.14-rc 活跃;若做 dsh 深度集成,天花板高于 BrowserSkill |
+| T1 | omdsh-dev/dsh-browser | 761 | 10-01 | Chrome 侧边栏直控,市场 89 分 |
+| T2 | Tabbit-Browser/dsh-tabbit | 101 | 09-10 | 委托 Tabbit 浏览器自带 Playwright |
+| T2 | wqty123/dsh-browser | 99 | **10-04(高频发版中)** | "共享真实浏览器";0.4.2 连发,小步快跑占"最近更新"位——发版节奏值得学习 |
+| T2 | anweat/dsh-browser | 27 | 10-03 | 把 OpenCLI 打包为插件本地依赖(蹭上游,重打包路线反面教材) |
+| 长尾 | 其余 ~18 个 CDP 桥/侧栏/Electron 壳 | <25 | — | 无威胁 |
+
+我们位置:1★(T2 之下),但功能面(结构化命令×180 站/真实性判定/知识层+健康度/决策层/时间线)无一家同时具备——差距在曝光与分发,不在能力。
+
+### 6.2 每周竞品监控名单(下次调研按此盯)
+
+1. **Tencent/BrowserSkill** — releases + 新 issue 分类(重点:是否接结构化命令/站点知识/动作证据任一)
+2. **platonai/browser4** — ★增速 + 是否出 dsh 插件/登录态方向(最高优先级新变量)
+3. **omdsh-dev/dsh-browser** — 市场排序变化
+4. **wqty123/dsh-browser** — 发版节奏参照系
+5. 上游 jackwener/opencli — 复工后 release(站点修复量=我们健康度数据更新源)
+6. awesome-dsh-plugin 注册表 — 我条目版本(当前 tarball 钉 v0.3.4,**待用户批准后提 PR 更新 v0.4.1**)
+
+### 6.3 待用户批准的外部动作(不批准不动)
+
+- 注册表 PR:更新 IKEASven69__dsh-opencli.yml(tarball→v0.4.1,双语描述刷新 180 站/新能力)——修复市场用户装老版本的分发断点
