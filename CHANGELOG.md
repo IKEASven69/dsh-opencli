@@ -4,6 +4,18 @@
 
 ## Unreleased
 
+### 对话内任务预览卡(对标 BrowserSkill 核心卖点,纯插件内实现)
+- **三个工具 output.render 升级为样式卡**(src/cards.ts 纯函数,tests/cards.test.ts 直测形状):
+  - `site` 命令行样式——▣ 站点徽章 + 命令 + exit 状态色(✓ 绿 #34C759 / ✗ 红 #FF453A / ⚠ 琥珀 #FF9F0A,与面板 o4-dot 三色系统同源);判定标注从 execute 文本解析(疑似静默失败/内容可疑 → ⚠,实测有效 → P 值入标签),失败前缀行去重
+  - site execute 接入 verifyResult/verifyBadge(评审修复:此前 ⚠ 分支生产不可达)——exit 0 内容判定后以 ⚠/实测有效 前缀标注进 {text},只标注不拦截(模型仍见原文,与 site_batch 先例一致;SystemOne 不可用不标注,行为同升级前);authProfile 限域拒绝两文案归 ✗ 被拦截(同非法 adapter/已禁用家族)
+  - site_batch 解析按请求站点集过滤分节头(评审修复:适配器输出里的 `== 站 ✓… ==` lookalike 不再产生幻影汇总行,卡头与 execute 汇总头不打架;lookalike 原文仍保留)
+  - site 判定不背 laya 冷加载(评审修复):verifyResult 新增 warmOnly——预热窗口内(laya 权重约 60s 冷加载/1.6GB)site 跳过 noul 兜底,规则层照跑,标注缺席=原行为;SystemOne 加载改单飞(prewarm/ask 共享一次 Laya.load,不再双开 ONNX 会话)+ warm 就绪 getter。timeoutMs 不声明:工具未向 runOpencli 转发 exec.signal,按 dsh-tools 约定声明即违反协作契约;热路径冷启动已由 warm 门禁消除
+  - 分节头鉴别收紧为"每请求站点至多一分节"(评审修复:重复点名已请求站点的 lookalike 同样视为正文,不再产生重复汇总行)
+  - `site_batch` 汇总头(成功数按 exit-0 口径与 execute 汇总一致)+ 每站一行表(站名+状态+P 值)+ 前置注记(目录预检/preflight)+ 原文分节围栏
+  - `browser_do` 步骤式——命令/结果分段,非默认会话入徽章头
+- **能力边界实测**(dsh-tools 0.2.0-rc.2):render 产物 ContentBlock[] 里 text 是唯一可由插件构造的块——image/file 需 attachment 服务拥有的 ref(纯函数拿不到,且官方注释明说 production adapters declare text-only output),故为"带样式的 markdown 文本卡":等宽命令块(```console 围栏,与 0.2 TerminalResultView 降级约定同款)+ 折叠原文降级为"摘要在上、原文围栏在下"(宿主 MarkdownText 禁 raw HTML,GFM 无原生折叠),围栏遇原文反引号串自动加长;原文逐字保留信息不丢
+- execute 文本契约零改动(render 只做只读重排);防御全包(非法输入退空卡绝不抛)
+
 ### 本周冲刺(10-03):健康度/MCP Resources/W3 路由/采集快照
 - **站点健康度**:`knowledge/health.json`(上游 issue 实测:小红书/instagram 已知受损、zhihu/bilibili 注意)——命令页站点行徽章+知识卡健康度段,受损站给 browser_* 兜底提示
 - **MCP Resources 知识暴露**:dsh 0.2 `ctx.mcpResources` seam 实测存在——`opencli://sites/{site}/knowledge` 资源(list/templates/read);0.1.x 宿主走 knowledge-get RPC 回退;数据层纯函数,换 seam 只动接线

@@ -26,6 +26,10 @@ import type {
 import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
 import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, SITE_HEALTH, type RawEntry } from './knowledge.ts'
+import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
+
+// 对话内预览卡(site/site_batch/browser_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
+export { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -379,7 +383,7 @@ export class OpencliService extends TypertRemoteService {
         args: { type: 'array', items: { type: 'string' }, description: '子命令参数(按 opencli browser 文档顺序)' },
         session: { type: 'string', description: s },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: browserDoCardRender },
       execute: async (a: ToolArgs) => {
         const cmd = String(a.command)
         if (!BROWSER_DO_ALLOW.has(cmd)) return { text: `不允许的子命令:${cmd}(白名单见工具说明)` }
@@ -439,7 +443,7 @@ export class OpencliService extends TypertRemoteService {
         sites: { type: 'array', items: { type: 'string' }, description: '站点名列表(2-6 个)' },
         args: { type: 'array', items: { type: 'string' }, description: '可选:命令参数' },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: siteBatchCardRender },
       execute: async (a: { command?: unknown; sites?: unknown; args?: unknown }): Promise<{ text: string }> => {
         const command = String(a.command ?? '').trim()
         const sites = Array.isArray(a.sites) ? a.sites.map(String).slice(0, 6) : []
@@ -704,7 +708,7 @@ export class OpencliService extends TypertRemoteService {
         args: { type: 'array', items: { type: 'string' }, description: '子命令参数' },
         authProfile: { type: 'string', description: '限域登录态 profile（需在配置中预设 allowedDomains，默认不回写 Cookie）' },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: siteCardRender },
       execute: async (a: ToolArgs): Promise<{ text: string }> => {
         const adapter = String(a.adapter)
         const command = String(a.command)
@@ -721,6 +725,15 @@ export class OpencliService extends TypertRemoteService {
         const text = this.renderOut(out)
         if (text.trim() === '[]') return { text: `适配器 ${adapter} 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 ${adapter}，或运行 \`opencli ${adapter} login\` 后用面板“巡检登录态”确认。` }
         if (out.exitCode !== 0 && /Navigation rejected/i.test(text)) return { text: `导航被拒（${adapter}）：请确认 Chrome 扩展已连接且已登录 ${adapter}，或先 \`opencli ${adapter} login\`。原错：${text.slice(0,300)}` }
+        // 真实性判定标注(与 site_batch/try-run 同源 verifyResult/verifyBadge):exit 0 ≠ 有效数据,
+        // 登录墙/风控页/空壳以 ⚠ 前缀标注进 {text},预览卡(siteCardRender)据此落 ⚠ 琥珀。
+        // 只标注不拦截——模型仍见原文(与 site_batch 先例一致;拦截级处置留给无人值守的 schedule 路径)。
+        // warmOnly:laya 预热窗口内跳过 noul 兜底(规则层照跑)——最高频工具不背 ~60s 冷加载/权重下载;
+        // SystemOne 不可用/未预热时 verifyResult 返回 null → 不标注,行为与升级前一致
+        if (out.exitCode === 0) {
+          const badge = this.verifyBadge(await this.verifyResult(adapter, command, out.stdout, { warmOnly: true }))
+          if (badge !== '') return { text: `${badge} ${text}` }
+        }
         return { text }
       },
     }))
@@ -884,7 +897,7 @@ export class OpencliService extends TypertRemoteService {
    * ②laya noul 兜底判未知形态,只做标注。返回:null=不可用(调用方走原行为);verdict=false 即拦截级失败;
    * noul 0.35-0.7 可疑(verdict=true 但 p<0.7)。真机判别数据见 docs/USER-NEEDS-RESEARCH-20260925.md。
    */
-  private async verifyResult(site: string, command: string, text: string): Promise<{ verdict: boolean; p: number; why?: string } | null> {
+  private async verifyResult(site: string, command: string, text: string, opts?: { warmOnly?: boolean }): Promise<{ verdict: boolean; p: number; why?: string } | null> {
     const trimmed = text.trim()
     if (trimmed.length === 0 || trimmed === '[]') return { verdict: false, p: 0, why: '空输出' }
     // 规则层:opencli 已知失败词汇 + 风控/登录墙关键词(实测覆盖 #2497/#2515/#2528/#2470 类)
@@ -901,6 +914,9 @@ export class OpencliService extends TypertRemoteService {
       const j = JSON.parse(head) as unknown
       if (j !== null && typeof j === 'object' && 'error' in (j as Record<string, unknown>)) return { verdict: false, p: 0.05, why: '错误 JSON' }
     } catch { /* 非 JSON:继续 */ }
+    // warmOnly(热路径标注用):laya 未预热完时跳过 noul 兜底——绝不把 ~60s 权重冷加载/下载
+    // 挂进 site 调用;规则层已跑完(零成本),标注缺席=降级回原行为。桩 so 无 warm 字段视为就绪(向后兼容)
+    if (opts?.warmOnly === true && (this.so as { warm?: boolean }).warm === false) return null
     // noul 兜底:只对规则放行的文本做模型判定
     if (!this.so.configured) return null
     const r = await this.so.ask(head, {

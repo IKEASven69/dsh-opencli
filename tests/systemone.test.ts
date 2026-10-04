@@ -68,4 +68,46 @@ describe('SystemOne prewarm(laya 预热语义)', () => {
     expect(r.ok).toBe(false)
     expect(r.error).toBeTruthy()
   })
+
+  it('warm 就绪判定:typesafe 恒就绪;laya 加载失败后仍未就绪', async () => {
+    expect(new SystemOne({ provider: 'typesafe', key: 'k' }).warm).toBe(true)
+    const so = new SystemOne({ provider: 'laya' })
+    expect(so.warm).toBe(false)
+    await so.prewarm()   // 上面的 mock:依赖缺失 → 加载失败
+    expect(so.warm).toBe(false)
+  })
+})
+
+describe('laya 单飞加载(评审修复:prewarm/ask 共享一次 load,不双开 1.6GB 会话)', () => {
+  it('并发 prewarm + ask 只触发一次 Laya.load;完成后 warm=true 且 ask 正常出答案', async () => {
+    let loads = 0
+    let release: (() => void) | null = null
+    vi.doMock('@receptron/laya', () => ({
+      Laya: {
+        load: async () => {
+          loads++
+          await new Promise<void>((r) => { release = r })
+          return { systemOne: async () => ({ answers: { verify: { noul: 0.9 } } }) }
+        },
+      },
+    }))
+    try {
+      const so = new SystemOne({ provider: 'laya' })
+      expect(so.warm).toBe(false)
+      const p1 = so.prewarm()
+      const p2 = so.ask('状态', { verify: { type: 'noul', instructions: 'x' } })
+      // 让两条路径都发起并卡在 load 上,验证第二条复用第一条的进行中加载
+      await new Promise((r) => setTimeout(r, 25))
+      expect(loads).toBe(1)
+      release!()
+      await Promise.all([p1, p2])
+      expect(loads).toBe(1)
+      expect(so.warm).toBe(true)
+      const r = (await p2) as { ok: boolean; answers: { verify?: { value: number } } }
+      expect(r.ok).toBe(true)
+      expect(r.answers.verify?.value).toBeCloseTo(0.9)
+    } finally {
+      vi.doUnmock('@receptron/laya')
+    }
+  })
 })
