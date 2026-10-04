@@ -48,3 +48,7 @@ provider 说明:typesafe(用户 key,云端)/ **laya**(@receptron/laya,Node.js+ON
 - **10 月**:W3+W4 + 主线 B(监控/时间线)→ v0.5 发布
 - **11 月**:知识包生态 + MCP Resources(dsh 0.1.6/0.1.7 stable 后)→ v0.6
 - **12 月**:dsh stable 大版本回归 + 桥接正式化 → v1.0 候选
+
+### 工程债裁定(2026-10-04)
+- ~~browser_do 内循环 noul 化~~:**不适用**——browser_do 循环在上游 opencli 二进制内部,插件侧不可达;等价能力(执行真实性判定)已在 site_batch/try-run/定时三执行面落地并有测试背书。
+- ~~SWR 面板缓存重做~~:**已完成**(2026-10-04)——localStorage 暂存 status/adapters(最慢两块),重开秒显+后台刷新覆盖;v1 空白面板教训已用全包 try/catch+结构校验+版本键+12h 过期防护。

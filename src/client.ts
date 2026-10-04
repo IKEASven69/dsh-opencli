@@ -508,6 +508,27 @@ function Panel(): ReturnType<typeof createElement> {
     window.setTimeout(() => { setToast((cur) => (cur !== null && cur.msg === msg ? null : cur)) }, 1800)
   }
 
+  // SWR v2:面板数据 localStorage 暂存——重开面板秒显上次数据,后台 RPC 刷新覆盖。
+  // v1 回滚教训:损坏缓存曾致空白面板,这里 try/catch 全包 + 结构校验 + 版本键,任何异常静默丢弃走正常加载。
+  const SWR_KEY = 'o4swr.v2'
+  const swrHydrate = (): void => {
+    try {
+      const raw = localStorage.getItem(SWR_KEY)
+      if (raw === null) return
+      const j = JSON.parse(raw) as { status?: OpencliStatus; adapters?: AdapterInfo[]; at?: number }
+      if (typeof j.at === 'number' && Date.now() - j.at < 12 * 3600_000) {
+        if (j.status !== null && typeof j.status === 'object') setStatus(j.status)
+        if (Array.isArray(j.adapters) && j.adapters.length > 0) setAdapters(j.adapters)
+      }
+    } catch { /* 损坏缓存:丢弃 */ }
+  }
+  const swrPersist = (st: OpencliStatus | null, ad: AdapterInfo[] | null): void => {
+    try {
+      if (st === null || ad === null || ad.length === 0) return
+      localStorage.setItem(SWR_KEY, JSON.stringify({ status: st, adapters: ad, at: Date.now() }))
+    } catch { /* 配额/隐私模式:忽略 */ }
+  }
+
   const reload = async (): Promise<void> => {
     const [st, se, ad, mode, sch, au] = await Promise.all([
       rpc<OpencliStatus>('status'),
@@ -524,9 +545,11 @@ function Panel(): ReturnType<typeof createElement> {
     if (sch.ok && sch.value !== undefined) setSchedules(sch.value.schedules)
     if (au.ok && au.value !== undefined) setAudit(au.value)
     setPhase('ready')
+    // SWR:新鲜数据落缓存(status/adapters 是最慢的两块——目录 8MB)
+    swrPersist(st.ok && st.value !== undefined ? st.value : null, ad.ok && ad.value !== undefined && ad.value.ok ? ad.value.adapters : null)
   }
 
-  useEffect(() => { void reload() }, [])
+  useEffect(() => { swrHydrate(); void reload() }, [])
   // 进入自动化 tab 即拉任务列表:此前仅在增删改后拉取,面板重开/刷新后已有任务不显示(真机复现)
   useEffect(() => { if (tab === 'auto') void loadSchedules() }, [tab])
   useEffect(() => { if (tab === 'sec' && cdp === null) { void rpc<{ found: boolean; endpoint: string | null; hint?: string }>('browser-cdp').then((r) => { if (r.ok && r.value !== undefined) setCdp(r.value) }) } }, [tab, cdp])
