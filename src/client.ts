@@ -1174,7 +1174,7 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
   useEffect(() => {
     let alive = true
     void (async () => {
-      const r = await rpc<{ history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }>('schedule-history', { request: { id } } as unknown as Record<string, unknown>)
+      const r = await rpc<{ history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }>('schedule-history', { p: { id } } as unknown as Record<string, unknown>)
       if (!alive) return
       if (r.ok) { setHist(r.value?.history ?? []); setSnaps(r.value?.snapshots ?? []) } else setErr(r.error?.message ?? 'err')
     })()
