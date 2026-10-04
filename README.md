@@ -1,6 +1,6 @@
 # dsh-opencli · 让 DeepSeek Harness 会办事,不只是会搜索
 
-[![DSH Market](https://raw.githubusercontent.com/2BingLing/dsh-market/master/assets/readme/badge-listed-zh.svg)](https://dsh.market/)
+[![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-listed-17695?logo=github&labelColor=555)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/tree/main/data/plugins/IKEASven69__dsh-opencli.yml)
 [![dsh-plugin](https://img.shields.io/badge/GitHub%20topic-dsh--plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
 
 > Give your DeepSeek Harness agent real hands: drive your **logged-in browser** and call **176 site adapters / 200+ commands** as deterministic one-shot commands — with a write-approval gate.

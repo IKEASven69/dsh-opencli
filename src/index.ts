@@ -14,14 +14,14 @@ import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
 import { homedir } from 'node:os'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type {
   AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
   AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, DaemonStartResult, IngestEvent,
-  LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
+  LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult, TraceLine, TraceListResult,
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
@@ -135,6 +135,10 @@ export class OpencliService extends TypertRemoteService {
   private readonly statePath = process.env.DSH_OPENCLI_STATE !== undefined && process.env.DSH_OPENCLI_STATE.length > 0
     ? process.env.DSH_OPENCLI_STATE
     : join(homedir(), '.dsh', 'dsh-opencli-state.json')
+  // 运行轨迹目录可用 DSH_OPENCLI_TRACE_DIR 覆盖(单测隔离用,与 statePath 同款约定)
+  private readonly traceDir = process.env.DSH_OPENCLI_TRACE_DIR !== undefined && process.env.DSH_OPENCLI_TRACE_DIR.length > 0
+    ? process.env.DSH_OPENCLI_TRACE_DIR
+    : join(homedir(), '.dsh', 'opencli-traces')
   private loginCache: { at: number; results: LoginCheckResult } | null = null
   // usagePolicy：与 anweat 对齐的限流（并发/突发/冷却），默认与 anweat 一致
   private usagePolicy = { minDelayMs: 750, maxConcurrency: 2, burst: 3, cooldownMs: 30000, retryLimit: 2, maxPagesPerRun: 20, maxDepth: 2 }
@@ -270,7 +274,9 @@ export class OpencliService extends TypertRemoteService {
   private registerBrowserTools(): void {
     const t = this.ctx.tools
     const run = async (session: string | undefined, argv: string[]): Promise<{ text: string }> => {
-      const out = await this.runOpencli(['browser', session ?? 'dsh', ...argv])
+      // 录屏回放(BrowserSkill #79 同款需求):browser_* 全族与 replay/crawl 等 RPC 透传
+      // 统一走 runBrowserTraced 单点,每步 trace 落盘
+      const out = await this.runBrowserTraced(session, argv)
       return { text: this.renderOut(out) }
     }
     const s = '浏览器会话名(默认 dsh;bind 过的会话复用登录态)'
@@ -635,6 +641,13 @@ export class OpencliService extends TypertRemoteService {
         const r = await this.crawl({ url: String(a.url ?? ''), maxPages: Number(a.value ?? 20) })
         return out(r.ok ? 'crawl 已启动（MVP 单页）' : (r.error ?? '失败'))
       },
+    }))
+    t.register(defineTool({
+      name: 'trace_replay',
+      description: '录屏回放:最近 30 步 browser 命令的 markdown 时间线(时间/命令/exit/耗时,失败步附输出摘录)。复盘"上次为什么失败"先调它,别盲目重试',
+      parameters: {},
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async () => out(await this.renderTraceTimeline(30)),
     }))
   }
 
@@ -1053,6 +1066,41 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, source: null, lines: diag, hint: 'opencli 未暴露日志文件;以上为最近诊断快照,可在 dsh 对话说"opencli 诊断"获取实时日志' }
   }
 
+  /** 最近 browser 命令轨迹(倒序=最新在前,默认 50):跨当日与昨日等历史文件聚合,面板「运行轨迹」/trace_replay 共用。 */
+  @Remote('trace-list')
+  async traceList(request?: { limit?: number }): Promise<TraceListResult> {
+    // 网关对空 args 会传 undefined(真机复现,knowledge-get 同款):request 可选链 + 上限钳制
+    const limit = Math.max(1, Math.min(500, Math.floor(Number(request?.limit ?? 50)) || 50))
+    let traces: TraceLine[] = []
+    try {
+      // 文件按日期倒序、同日主档在 .1(轮转旧档)之前——逐档前插保持全局时间序,攒够 limit 即止
+      const files = readdirSync(this.traceDir)
+        .map((f) => /^trace-(\d{8})\.jsonl(\.1)?$/.exec(f))
+        .filter((m): m is RegExpExecArray => m !== null)
+        .sort((a, b) => b[1].localeCompare(a[1]) || (a[2] !== undefined ? 1 : 0) - (b[2] !== undefined ? 1 : 0))
+      for (const m of files) {
+        traces = this.readTraceFile(join(this.traceDir, m[0])).concat(traces)
+        if (traces.length >= limit) break
+      }
+    } catch { /* 目录不存在(还没跑过 browser 命令):空表 */ }
+    return { ok: true, traces: traces.slice(-limit).reverse() }
+  }
+
+  /** 某日全量轨迹(date=yyyymmdd;当日轮转档 .1 在主档之前,保持时间序)。 */
+  @Remote('trace-get')
+  async traceGet(request: { date: string }): Promise<TraceListResult> {
+    const date = String(request?.date ?? '').trim()
+    // date 直接拼文件名:严格 8 位数字,杜绝路径穿越
+    if (!/^\d{8}$/.test(date)) return { ok: false, traces: [], error: `date 需为 yyyymmdd(收到:${date.slice(0, 20)})` }
+    const traces = [
+      ...this.readTraceFile(this.traceFileOf(date, true)),
+      ...this.readTraceFile(this.traceFileOf(date, false)),
+    ]
+    if (traces.length === 0) return { ok: false, traces: [], error: `该日(${date})无轨迹` }
+    return { ok: true, traces }
+  }
+
+
   /** opencli launcher 启动 Chrome 时的 CDP 候选端口(launcher.js 同源)。 */
   private static readonly CDP_PORTS = [9222, 9234, 9236, 9238]
   private cdpCache: { at: number; found: boolean; port: number | null; browser: string | null } | null = null
@@ -1225,7 +1273,7 @@ export class OpencliService extends TypertRemoteService {
       }
     }
     if (head.startsWith('browser_')) {
-      const out = await this.runOpencli(['browser', 'dsh', head.replace('browser_', ''), ...rest])
+      const out = await this.runBrowserTraced('dsh', [head.replace('browser_', ''), ...rest])
       return { ok: out.exitCode === 0, error: out.exitCode !== 0 ? this.renderOut(out) : undefined }
     }
     return { ok: false, error: `未知步骤:${step}` }
@@ -1245,8 +1293,8 @@ export class OpencliService extends TypertRemoteService {
   async scriptRunBuiltin(request: { name: string; url?: string }): Promise<{ ok: boolean; result?: string; error?: string }> {
     const name = String(request.name ?? '')
     if (!['article','links','jsonld','forms'].includes(name)) return { ok: false, error: `未知内置脚本:${name}` }
-    // 透传为 browser extract 变体
-    const out = await this.runOpencli(['browser', 'dsh', 'extract', ...(request.url !== undefined ? [request.url] : [])])
+    // 透传为 browser extract 变体(经 runBrowserTraced 落轨迹)
+    const out = await this.runBrowserTraced('dsh', ['extract', ...(request.url !== undefined ? [request.url] : [])])
     return { ok: out.exitCode === 0, result: this.renderOut(out), error: out.exitCode !== 0 ? this.renderOut(out) : undefined }
   }
   @Remote('crawl')
@@ -1254,8 +1302,8 @@ export class OpencliService extends TypertRemoteService {
     const url = String(request.url ?? '').trim()
     if (url.length === 0) return { ok: false, error: 'url 为空' }
     const maxPages = Math.min(Number(request.maxPages ?? 20), this.usagePolicy.maxPagesPerRun ?? 20)
-    // MVP：单页提取，真实广度遍历后续接 browser_crawl
-    const out = await this.runOpencli(['browser', 'dsh', 'open', url])
+    // MVP：单页提取，真实广度遍历后续接 browser_crawl(经 runBrowserTraced 落轨迹)
+    const out = await this.runBrowserTraced('dsh', ['open', url])
     if (out.exitCode !== 0) return { ok: false, error: this.renderOut(out) }
     return { ok: true }
   }
@@ -1273,7 +1321,7 @@ export class OpencliService extends TypertRemoteService {
     const v = await this.scriptValidate({ code: String(request.code ?? '') })
     if (!v.ok) return { ok: false, error: v.error }
     if (this.automationMode !== 'unrestricted') return { ok: false, error: '需 unrestricted 模式或审批（当前 ' + this.automationMode + '）' }
-    const out = await this.runOpencli(['browser', 'dsh', 'eval', String(request.code ?? '').slice(0, 200)])
+    const out = await this.runBrowserTraced('dsh', ['eval', String(request.code ?? '').slice(0, 200)])
     return { ok: out.exitCode === 0, result: this.renderOut(out) }
   }
   @Remote('recipe-run')
@@ -1287,7 +1335,7 @@ export class OpencliService extends TypertRemoteService {
       const sel = (s as Record<string,unknown>).selector !== undefined ? String((s as Record<string,unknown>).selector) : undefined
       const val = (s as Record<string,unknown>).value !== undefined ? String((s as Record<string,unknown>).value) : undefined
       const argv = [t, ...(sel !== undefined ? [sel] : []), ...(val !== undefined ? [val] : [])]
-      const out = await this.runOpencli(['browser', 'dsh', ...argv])
+      const out = await this.runBrowserTraced('dsh', argv)
       if (out.exitCode !== 0) return { ok: false, error: this.renderOut(out) }
     }
     return { ok: true }
@@ -1573,6 +1621,105 @@ export class OpencliService extends TypertRemoteService {
   private renderOut(out: { exitCode: number; stdout: string; stderr: string }): string {
     if (out.exitCode === 0) return clip(out.stdout, OUTPUT_LIMIT)
     return `命令失败(退出码 ${out.exitCode}):\n${clip(out.stdout, 2000)}\n${clip(out.stderr, 2000)}`
+  }
+
+  // ── 录屏回放:browser 命令运行轨迹(BrowserSkill #79 同款需求) ──
+
+  /** 轨迹文件日期键(本地日期 yyyymmdd,recordTrace 写入与 trace-list/get 读取共用同一把尺)。 */
+  private static traceDateKey(d = new Date()): string {
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  /**
+   * 轨迹时间列:at 是 UTC ISO,直接 slice(11,19) 显示会与用户本地时钟错位(东八区差 8h,
+   * 凌晨命令对不上体感)——转本地 HH:MM:SS,与 traceDateKey 的本地分档同一时区体感。
+   * 非法时间原样回退(形状校验后仍可能是垃圾字符串)。
+   */
+  private static traceClock(at: string): string {
+    const d = new Date(at)
+    if (Number.isNaN(d.getTime())) return at.slice(11, 19)
+    const p = (n: number): string => String(n).padStart(2, '0')
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  }
+
+  private traceFileOf(dateKey: string, rotated = false): string {
+    return join(this.traceDir, `trace-${dateKey}.jsonl${rotated ? '.1' : ''}`)
+  }
+
+  /**
+   * browser 透传统一入口:runOpencli + recordTrace。browser_* 工具族(registerBrowserTools 的 run())
+   * 与 replay / script-run-builtin / crawl / userscript-run / recipe-run 五个 RPC 透传都经此——
+   * 任何入口执行的 browser 命令都进「运行轨迹」,复盘链路不断(评审:面板回放按钮曾绕过单点)。
+   */
+  private async runBrowserTraced(session: string | undefined, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const started = Date.now()
+    const out = await this.runOpencli(['browser', session ?? 'dsh', ...argv])
+    this.recordTrace(`browser ${session ?? 'dsh'} ${argv.join(' ')}`, out, Date.now() - started)
+    return out
+  }
+
+  /**
+   * 每条 browser 命令追加一行 JSONL 到 <traceDir>/trace-<yyyymmdd>.jsonl:
+   * {at, cmd, exitCode, ms, outHead(输出前 200 字,失败时 stderr 优先)}。
+   * 同步写(量级 ~300B/条,相对秒级浏览器操作可忽略,且对调用方可确定性断言);
+   * 单文件超 5MB 轮转为 .1(旧 .1 丢弃,保留前一份);任何失败静默,绝不影响命令本身。
+   */
+  private recordTrace(cmd: string, out: { exitCode: number; stdout: string; stderr: string }, ms: number): void {
+    try {
+      try { mkdirSync(this.traceDir, { recursive: true }) } catch { return }
+      const file = this.traceFileOf(OpencliService.traceDateKey())
+      try {
+        if (statSync(file).size > 5 * 1024 * 1024) {
+          try { unlinkSync(`${file}.1`) } catch { /* 无旧档 */ }
+          renameSync(file, `${file}.1`)
+        }
+      } catch { /* 文件不存在(当日首条)或轮转失败:照常追加 */ }
+      const outHead = (out.exitCode === 0 ? out.stdout : `${out.stderr}\n${out.stdout}`.trim()).slice(0, 200)
+      appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), cmd, exitCode: out.exitCode, ms, outHead })}\n`, 'utf8')
+    } catch { /* 静默:轨迹缺失不阻断命令 */ }
+  }
+
+  /** 解析一个轨迹文件为行数组(缺文件/JSON 解析失败/**形状不对**的脏行一律跳过,不抛错)。 */
+  private readTraceFile(file: string): TraceLine[] {
+    const lines: TraceLine[] = []
+    let text = ''
+    try { text = readFileSync(file, 'utf8') } catch { return lines }
+    for (const line of text.split('\n')) {
+      if (line.trim().length === 0) continue
+      try {
+        const v = JSON.parse(line) as unknown
+        // 形状校验:'null'/'数字'/'{"exitCode":0}' 这类 parse 成功但非 TraceLine 的行,
+        // 会让消费端 at.slice 直接 TypeError 且 client 无 ErrorBoundary——整卡崩白(评审)。
+        if (v === null || typeof v !== 'object'
+          || typeof (v as TraceLine).at !== 'string' || typeof (v as TraceLine).cmd !== 'string'
+          || typeof (v as TraceLine).exitCode !== 'number' || typeof (v as TraceLine).ms !== 'number'
+          || typeof (v as TraceLine).outHead !== 'string') continue
+        lines.push(v)
+      } catch { /* 脏行跳过 */ }
+    }
+    return lines
+  }
+
+  /** trace_replay 的 markdown 时间线(新→旧):时间/命令/exit/耗时,失败步附输出摘录。 */
+  private async renderTraceTimeline(limit: number): Promise<string> {
+    const r = await this.traceList({ limit })
+    if (!r.ok || r.traces.length === 0) return '暂无运行轨迹(还没有 browser 命令执行记录)。跑一条 browser_* 后再来看。'
+    // 单元格净化:换行折为可见 \n 标记(userscript eval 等多行 cmd 会把表格行拆断),
+    // 空白折叠为单格,竖线转义;命令不再用反引号包裹——载荷内嵌 ` 也不会截断 code span。
+    const esc = (s: string): string => s.replace(/\r?\n/g, '\\n').replace(/\s+/g, ' ').replace(/\|/g, '\\|')
+    const out = [
+      `最近 ${r.traces.length} 步 browser 命令(新→旧,exit≠0 为失败):`,
+      '',
+      '| 时间 | 命令 | exit | 耗时 |',
+      '|---|---|---|---|',
+      ...r.traces.map((t) => `| ${OpencliService.traceClock(t.at)} | ${esc(t.cmd.slice(0, 80))} | ${t.exitCode} | ${t.ms}ms |`),
+    ]
+    const fails = r.traces.filter((t) => t.exitCode !== 0).slice(0, 3)
+    if (fails.length > 0) {
+      out.push('', '失败步输出摘录(复盘起点):')
+      for (const f of fails) out.push(`- [${OpencliService.traceClock(f.at)}] ${esc(f.cmd.slice(0, 60))} → ${esc(f.outHead.slice(0, 120))}`)
+    }
+    return out.join('\n').slice(0, 4000)
   }
 
   private async daemonStatus() {

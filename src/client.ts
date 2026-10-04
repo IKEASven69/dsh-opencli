@@ -12,6 +12,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
   AuditListResult, DaemonStartResult, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
+  TraceLine, TraceListResult,
 } from './types.ts'
 import { siteIconOf } from './site-icons.ts'
 import { healthOf } from './knowledge.ts'
@@ -60,6 +61,7 @@ const STR = {
     runNow: '立即跑', running2: '执行中…', del: '删', create: '创建',
     recT: '录制回放', recSub: '录制 site / browser 步骤,一键回放', recStart: '开始录制', recStop: '停止录制',
     recName: '录制名,如:每日知识采集', recStep: '一条步骤,如:site zhihu hot', recAdd: '+ 加步骤', replay: '回放',
+    traceT: '运行轨迹', traceSub: '每条 browser 命令逐步落盘(~/.dsh/opencli-traces),复盘"上次为什么失败"', traceEmpty: '暂无轨迹——跑一条 browser 命令后这里会长出来',
     assetT: '资产库', assetSub: '脚本 / 配方 / 规则包', assetSearch: '搜资产(如:arxiv)', assetSearchBtn: '搜索',
     builtinT: '内置脚本', recipes: '配方', rulepacks: '规则包', browse: '浏览全部',
     v4host: 'v4 host 新增;v0.3.8 已有增删/开关/立即跑',
@@ -124,6 +126,7 @@ const STR = {
     runNow: 'Run now', running2: 'running…', del: 'Del', create: 'Create',
     recT: 'Record & replay', recSub: 'Record site / browser steps, replay in one click', recStart: 'Record', recStop: 'Stop',
     recName: 'name, e.g. daily knowledge', recStep: 'one step, e.g. site zhihu hot', recAdd: '+ add step', replay: 'Replay',
+    traceT: 'Run trace', traceSub: 'every browser command logged to ~/.dsh/opencli-traces — replay why the last run failed', traceEmpty: 'No traces yet — they appear after the first browser command',
     assetT: 'Assets', assetSub: 'scripts / recipes / rulepacks', assetSearch: 'search assets (e.g. arxiv)', assetSearchBtn: 'Search',
     builtinT: 'Builtin scripts', recipes: 'recipes', rulepacks: 'rulepacks', browse: 'Browse all',
     v4host: 'v4 host additions; add/toggle/run-now RPCs shipped in v0.3.8',
@@ -972,6 +975,8 @@ function Panel(): ReturnType<typeof createElement> {
         ),
         createElement('div', { className: 'o4-note' }, t2('v4host')),
       ),
+      // 运行轨迹:browser 命令全量 JSONL 落盘的时间线(录屏回放,模块级组件经 props 拿 lang)
+      createElement(TracePanel, { lang }),
       createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '12px' } },
         createElement('div', { className: 'o4-card' },
           createElement('div', { className: 'o4-h3' }, createElement('span', { className: 'o4-miniico' }, ic('rec', true)), t2('recT')),
@@ -1221,6 +1226,67 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
       hist.slice(0, 5).map((h, i) => createElement('div', { key: i, style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)', display: 'flex', gap: '6px' } },
         createElement('span', null, h.at.slice(5, 16).replace('T', ' ')),
         createElement('span', { style: { color: h.ok ? '#34C759' : '#FF8D85', flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, h.summary || (h.ok ? 'ok' : 'fail')),
+      )),
+    ),
+  )
+}
+
+/** 运行轨迹卡:browser 命令逐步 JSONL 落盘的时间线(时间/命令/exit 色点/耗时),点行展开输出摘录。数据源 trace-list。 */
+/** at 是 UTC ISO:直接 slice 会与本地时钟错位(东八区差 8h),显示前转本地 HH:MM:SS(非法时间原样回退)。 */
+const traceClock = (iso: string): string => {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(11, 19)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+function TracePanel(props: { lang: Lang }): ReturnType<typeof createElement> {
+  const { lang } = props
+  // 模块级组件拿不到 Panel 内部的 t2/lang——经 props 自建同款查表(TimelinePanel 先例)
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
+  const [rows, setRows] = useState<TraceLine[] | null>(null)
+  const [err, setErr] = useState('')
+  const [openIdx, setOpenIdx] = useState<number | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    const r = await rpc<TraceListResult>('trace-list', { request: { limit: 50 } })
+    setBusy(false)
+    if (r.ok && r.value !== undefined && r.value.ok) { setRows(r.value.traces); setErr('') }
+    else setErr(r.ok ? (r.value?.error ?? tt('errReq')) : (r.error?.message ?? tt('errReq')))
+  }
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const r = await rpc<TraceListResult>('trace-list', { request: { limit: 50 } })
+      if (!alive) return
+      if (r.ok && r.value !== undefined && r.value.ok) setRows(r.value.traces)
+      else setErr(r.ok ? (r.value?.error ?? tt('errReq')) : (r.error?.message ?? tt('errReq')))
+    })()
+    return () => { alive = false }
+  }, [])
+  return createElement('div', { className: 'o4-card' },
+    createElement('div', { className: 'o4-h3' },
+      createElement('span', { className: 'o4-miniico' }, ic('activity', true)), tt('traceT'),
+      createElement('span', { className: 'rt' }, createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { void load() } }, ic('refresh', true), busy ? tt('checking') : tt('recheck'))),
+    ),
+    createElement('div', { className: 'o4-sub' }, tt('traceSub')),
+    err.length > 0 ? createElement('div', { className: 'o4-load' }, err) : null,
+    rows !== null && rows.length === 0 && err.length === 0 ? createElement('div', { className: 'o4-load' }, tt('traceEmpty')) : null,
+    rows === null && err.length === 0 ? createElement('div', { className: 'o4-load' }, tt('loading')) : null,
+    createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+      ...(rows ?? []).slice(0, 50).map((r, i) => createElement('div', { key: `${r.at}-${i}`, style: { display: 'contents' } },
+        createElement('div', { className: 'o4-qrow', style: { alignItems: 'center' }, title: `${r.cmd}\n${r.at}`, onClick: () => { setOpenIdx(openIdx === i ? null : i) } },
+          createElement('span', { className: `o4-dot ${r.exitCode === 0 ? 'g' : 'r'}`, style: { flex: 'none' } }),
+          createElement('span', { style: { flex: 'none', fontSize: '10.5px', color: '#5F6873', fontFamily: 'ui-monospace,Consolas,monospace' } }, traceClock(r.at)),
+          createElement('span', { style: { flex: '1', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.75)' } }, r.cmd),
+          createElement('span', { className: 'o4-bdg', style: { flex: 'none' } }, `exit ${r.exitCode}`),
+          createElement('span', { style: { flex: 'none', fontSize: '10.5px', color: '#5F6873' } }, `${r.ms}ms`),
+          createElement('span', { style: { color: '#5F6873', display: 'flex', flex: 'none' } }, ic(openIdx === i ? 'chev-d' : 'chev-r', true)),
+        ),
+        openIdx === i ? createElement('div', { className: 'o4-tryout', style: { marginTop: '-2px', marginBottom: '4px' } },
+          r.outHead.length > 0 ? r.outHead : '—') : null,
       )),
     ),
   )

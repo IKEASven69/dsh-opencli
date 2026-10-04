@@ -144,6 +144,27 @@ export interface LoginCheckItem {
   detail: string | null
 }
 
+/** 一条 browser 命令运行轨迹(recordTrace 落盘的 JSONL 行,跨 RPC 无损)。 */
+export interface TraceLine {
+  /** ISO 时间戳 */
+  at: string
+  /** 完整命令行(如 browser dsh open https://…) */
+  cmd: string
+  /** 退出码(0=成功) */
+  exitCode: number
+  /** 耗时毫秒 */
+  ms: number
+  /** 输出前 200 字(失败时 stderr 优先),复盘用 */
+  outHead: string
+}
+
+/** trace-list / trace-get RPC 结果(traces 按请求约定的顺序返回)。 */
+export interface TraceListResult {
+  ok: boolean
+  traces: TraceLine[]
+  error?: string
+}
+
 /** login-check RPC 结果。 */
 export interface LoginCheckResult {
   ok: boolean
