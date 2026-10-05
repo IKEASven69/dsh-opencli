@@ -1777,7 +1777,10 @@ export class OpencliService extends TypertRemoteService {
         if (!Number.isFinite(step) || step <= 0) return false
         return (vals[i] - mins[i]) % step === 0
       }
-      return spec.split(',').every((tok) => { const n = Number(tok); return Number.isFinite(n) && n >= mins[i] && n <= maxs[i] })
+      // 修复(模拟使用 Finding 2.1):原实现只校验数字合法,从不与当前时间比较——
+      // 任何"数字都在范围内"的 cron(含默认 0 9 * * *)每分钟触发,高频轰炸站点。
+      // 逗号列表语义=some(任一字段命中即匹配)
+      return spec.split(',').some((tok) => { const n = Number(tok); return Number.isFinite(n) && n >= mins[i] && n <= maxs[i] && n === vals[i] })
     })
   }
 

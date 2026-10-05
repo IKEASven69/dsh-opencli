@@ -546,3 +546,24 @@ describe('site_route(W3 分层命令路由)', () => {
     expect(r.text).toMatch(/不可用|目录/)
   })
 })
+
+describe('cronMatches(模拟使用 Finding 2.1 回归)', () => {
+  const cm = (cron: string, now: Date): boolean =>
+    (svc as unknown as { cronMatches: (c: string, n: Date) => boolean }).cronMatches.call(svc, cron, now)
+  const at = (h: number, m: number): Date => new Date(2026, 9, 5, h, m, 0) // 10-05 周一
+
+  it('0 9 * * * 只在 9:00 触发,9:01/10:00 不触发(此前每分钟都触发)', () => {
+    expect(cm('0 9 * * *', at(9, 0))).toBe(true)
+    expect(cm('0 9 * * *', at(9, 1))).toBe(false)
+    expect(cm('0 9 * * *', at(10, 0))).toBe(false)
+    expect(cm('0 9 * * *', at(0, 0))).toBe(false)
+  })
+  it('多字段与逗号列表:30 8 * * 1 只在周一 8:30;*/15 只在 0/15/30/45 分', () => {
+    expect(cm('30 8 * * 1', at(8, 30))).toBe(true)
+    expect(cm('30 8 * * 2', at(8, 30))).toBe(false)
+    expect(cm('*/15 * * * *', at(9, 45))).toBe(true)
+    expect(cm('*/15 * * * *', at(9, 44))).toBe(false)
+    expect(cm('0 9,12 * * *', at(12, 0))).toBe(true)
+    expect(cm('0 9,12 * * *', at(10, 0))).toBe(false)
+  })
+})
