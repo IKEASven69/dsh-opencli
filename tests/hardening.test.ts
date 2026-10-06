@@ -152,3 +152,40 @@ describe('低4b:快照时间戳还原(日期分隔符不再错乱)', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 })
+
+describe('真机走查发现 B/C 修复:site 前缀剥离+watch 大小写+cron 越界', () => {
+  it("任务 'site zhihu hot' 执行时 CLI 收到 ['zhihu','hot'],不再收到 'site'", async () => {
+    const r = await svc.scheduleAdd({ site: 'site zhihu hot', cron: '0 9 * * *' })
+    expect(r.ok).toBe(true)
+    const S = svc as unknown as { runOpencli: (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>; runSiteCommand: (s: string, id: string) => Promise<void> }
+    const orig = S.runOpencli.bind(svc)
+    let captured: string[] = []
+    S.runOpencli = async (a: string[]) => { captured = a; return { exitCode: 0, stdout: '1 热点A', stderr: '' } }
+    await S.runSiteCommand('site zhihu hot', r.id!)
+    S.runOpencli = orig
+    expect(captured[0]).toBe('zhihu')
+    expect(captured).not.toContain('site')
+    await svc.scheduleRemove({ id: r.id! })
+  })
+  it('watch 关键词大小写不敏感:agent 命中 Agentic 文本', async () => {
+    const r = await svc.scheduleAdd({ site: 'arxiv recent cs.AI', cron: '0 9 * * *', watch: 'agent' })
+    const S = svc as unknown as { runOpencli: (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>; runSiteCommand: (s: string, id: string) => Promise<void>; ingestEventList: Array<{ kind: string }> }
+    const orig = S.runOpencli.bind(svc)
+    S.runOpencli = async () => ({ exitCode: 0, stdout: 'Paper: Agentic Systems with LLM', stderr: '' })
+    const before = S.ingestEventList.length
+    await S.runSiteCommand('arxiv recent cs.AI', r.id!)
+    S.runOpencli = orig
+    expect(S.ingestEventList.length).toBe(before + 1)
+    expect(S.ingestEventList[0]?.kind).toBe('watch-hit')
+    await svc.scheduleRemove({ id: r.id! })
+  })
+  it("cron 越界拒绝:'99 99 * * *'/'0 25 * * *'/'0 9 0 * *' 全拒,'59 23 31 12 6' 过", async () => {
+    for (const bad of ['99 99 * * *', '0 25 * * *', '0 9 0 * *', '0 9 * * 7']) {
+      const r = await svc.scheduleAdd({ site: 'zhihu hot', cron: bad })
+      expect(r.ok).toBe(false)
+    }
+    const r = await svc.scheduleAdd({ site: 'zhihu hot', cron: '59 23 31 12 6' })
+    expect(r.ok).toBe(true)
+    if (r.id !== undefined) await svc.scheduleRemove({ id: r.id })
+  })
+})

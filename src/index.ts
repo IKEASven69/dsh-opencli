@@ -1041,9 +1041,18 @@ export class OpencliService extends TypertRemoteService {
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
     const site = request.site.trim()
     const cron = request.cron.trim()
-    // 修复(核验A-4):垃圾 cron 静默入库永不执行;五段+词法校验
+    // 修复(核验A-4):垃圾 cron 静默入库永不执行;五段+词法+字段范围校验
     const toks = cron.trim().split(/\s+/)
     if (toks.length !== 5 || !toks.every((t) => /^(\*|\d+|\*\/\d+|\d+(,\d+)*)$/.test(t))) return { ok: false, error: 'cron 非法:需 5 段(分 时 日 月 周),支持 * 数字 */步长 逗号列表' }
+    const CRON_RANGES: Array<[number, number]> = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 6]]
+    for (let i = 0; i < 5; i++) {
+      const t = toks[i]
+      if (t === '*' || t.startsWith('*/')) continue
+      for (const p of t.split(',')) {
+        const n = Number(p)
+        if (n < CRON_RANGES[i][0] || n > CRON_RANGES[i][1]) return { ok: false, error: `cron 字段越界:第${i + 1}段 ${t} 不在 ${CRON_RANGES[i][0]}-${CRON_RANGES[i][1]}` }
+      }
+    }
     // watch:关键词监控(逗号/空格分隔,≤120 字符)。命中任一关键词 → ingest 事件 watch-hit。
     // v1 故意用确定性匹配(noul 模糊"值得关注的变化"留 v2):真机实测 laya 判别力不足,宁缺勿误报。
     const watch = typeof request.watch === 'string' && request.watch.trim().length > 0 ? request.watch.trim().slice(0, 120) : undefined
@@ -1882,13 +1891,17 @@ export class OpencliService extends TypertRemoteService {
     const attempts = Math.max(1, Math.min(5, sch?.retry ?? 3))
     const notify = sch?.notify !== false
     const hist = this.runHistory[id] ?? []
-    const [sSite = '', sCmd = ''] = siteCmd.split(/\s+/)
+    // 面板占位符是 'site zhihu hot' 形态,而 CLI 直接吃 'zhihu hot'——此前原样透传导致
+    // 按占位符创建的任务 100% 失败(unknown command 'site')(真机走查发现 B)。剥掉 site 前缀。
+    const norm = siteCmd.replace(/^\s*site\s+/i, '').trim()
+    const cmdLine = norm.length > 0 ? norm : siteCmd
+    const [sSite = '', sCmd = ''] = cmdLine.split(/\s+/)
     let lastOk = false
     let lastSummary = ''
     let lastOut = ''
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
-        const r = await this.runOpencli(siteCmd.split(/\s+/), 60_000)
+        const r = await this.runOpencli(cmdLine.split(/\s+/), 60_000)
         lastOk = r.exitCode === 0
         lastSummary = lastOk ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
         lastOut = lastOk ? r.stdout : ''
@@ -1935,7 +1948,9 @@ export class OpencliService extends TypertRemoteService {
     // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)
     if (lastOk && sch?.watch !== undefined && sch.watch.length > 0) {
       const kws = sch.watch.split(/[,，\s]+/).filter((k) => k.length > 0)
-      const matched = kws.filter((k) => lastOut.includes(k))
+      // 大小写不敏感(真机走查发现 A:'agent,diffusion' 撞 'Agentic/Diffusion' 全 miss)
+      const low = lastOut.toLowerCase()
+      const matched = kws.filter((k) => low.includes(k.toLowerCase()))
       if (matched.length > 0) {
         this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'watch-hit', text: `🔔 Watch 命中:${siteCmd} 出现 [${matched.join(', ')}]` })
         this.ingestEventList = this.ingestEventList.slice(0, 30)

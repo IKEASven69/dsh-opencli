@@ -93,7 +93,7 @@ const STR = {
   },
   en: {
     title: 'OpenCLI Browser Proxy',
-    desc: 'Drive your logged-in real browser · 176 sites / 200+ commands one-shot · powered by the OpenCLI daemon',
+    desc: `Drive your logged-in real browser · ${status?.adapterSites ?? 180} sites / 200+ commands one-shot · powered by the OpenCLI daemon`,
     tabOverview: 'Overview', tabCommands: 'Commands', tabAuto: 'Automation', tabSec: 'Security',
     daemonRunning: 'running', daemonDown: 'not running', daemonStale: 'stale', bridgeOn: 'connected', bridgeOff: 'not connected',
     recheck: 'Re-check', checking: 'checking…', diagAll: 'All good', detail: 'detail',
