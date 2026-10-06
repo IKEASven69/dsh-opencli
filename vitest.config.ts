@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     env: {
       DSH_OPENCLI_STATE: join(tmpdir(), `dsh-opencli-test-state-${process.pid}.json`),
+      DSH_OPENCLI_REPORTS_DIR: join(tmpdir(), `dsh-opencli-test-reports-${process.pid}`),
       DSH_OPENCLI_TRACE_DIR: join(tmpdir(), `dsh-opencli-test-traces-${process.pid}`),
     },
   },

@@ -26,6 +26,7 @@ import type {
 import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
 import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, SITE_HEALTH, type RawEntry } from './knowledge.ts'
+import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 
 // 对话内预览卡(site/site_batch/browser_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
@@ -497,7 +498,23 @@ export class OpencliService extends TypertRemoteService {
         const head = `批量采集 ${okN}/${sites.length} 站成功${silentN > 0 ? `,其中 ${silentN} 站疑似静默失败(exit 0 但内容无效)` : ''}:\n\n`
         const pre = `${unknownSites.length > 0 ? `目录预检:以下站点不在适配器目录,请确认拼写:${unknownSites.join(', ')}\n\n` : ''}${preflightNote}`
         const body = results.map((r) => `== ${r.site} ${r.ok ? '✓' : '✗'}${r.badge} ==\n${r.text}`).join('\n\n')
-        return { text: pre + head + body }
+        // 报告导出(主线 B 渲染层):多站结果合并为带出处 markdown,落盘并在工具输出附路径
+        let reportTail = ''
+        try {
+          const sources: ReportSource[] = results.map((r) => ({
+            site: r.site, command: `site ${r.site} ${command}${args.length > 0 ? ` ${args.join(' ')}` : ''}`,
+            at: new Date().toISOString(), text: r.text,
+            status: (!r.ok ? 'fail' : r.badge.includes('疑似静默失败') ? 'silent' : r.badge.includes('内容可疑') ? 'suspect' : 'ok') as ReportSource['status'],
+            ...(r.badge.length > 0 ? { note: r.badge.replace(/^\(|\)$/g, '') } : {}),
+          }))
+          const md = buildReport(`批量采集报告 · ${command}`, sources, new Date().toISOString())
+          const dir = process.env.DSH_OPENCLI_REPORTS_DIR ?? join(homedir(), '.dsh', 'opencli-reports')
+          await mkdir(dir, { recursive: true })
+          const file = join(dir, `batch-${Date.now()}.md`)
+          await writeFile(file, md, 'utf8')
+          reportTail = `\n\n📄 报告已生成:${file}`
+        } catch { /* 报告失败不阻断采集输出 */ }
+        return { text: pre + head + body + reportTail }
       },
     }))
 
@@ -1182,6 +1199,38 @@ export class OpencliService extends TypertRemoteService {
       })
     } catch { /* 无快照目录 */ }
     return { ok: true, history: this.runHistory[id] ?? [], ...(snapshots !== undefined ? { snapshots } : {}) }
+  }
+
+  /** 报告导出:定时任务的近期快照 → 带出处 markdown(每节=一次运行,出处=命令+时间+快照路径)。 */
+  @Remote('report-build')
+  async reportBuild(request?: { id: string }): Promise<{ ok: boolean; path?: string; error?: string }> {
+    const id = String(request?.id ?? '')
+    if (id.length === 0) return { ok: false, error: 'id 为空' }
+    const sch = this.schedules.find((s) => s.id === id)
+    const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+    let files: string[] = []
+    try { files = readdirSync(dir).slice(-5) } catch { return { ok: false, error: '该任务暂无快照——先运行一次采集' } }
+    if (files.length === 0) return { ok: false, error: '该任务暂无快照' }
+    const sources: ReportSource[] = []
+    for (const f of files) {
+      try {
+        const j = JSON.parse(readFileSync(join(dir, f), 'utf8')) as { at?: string; site?: string; stdout?: string }
+        const stem = f.slice(0, f.length - 5)
+        const at = j.at ?? stem
+        sources.push({
+          site: String(j.site ?? sch?.site ?? id), command: String(j.site ?? sch?.site ?? ''),
+          at, text: String(j.stdout ?? ''), status: 'ok', note: '快照原文',
+          source: join(dir, f),
+        })
+      } catch { /* 单份损坏跳过 */ }
+    }
+    if (sources.length === 0) return { ok: false, error: '快照全部损坏' }
+    const md = buildReport(`定时采集报告 · ${sch?.site ?? id}`, sources, new Date().toISOString())
+    const rdir = process.env.DSH_OPENCLI_REPORTS_DIR ?? join(homedir(), '.dsh', 'opencli-reports')
+    await mkdir(rdir, { recursive: true })
+    const path = join(rdir, `sched-${id}-${Date.now()}.md`)
+    await writeFile(path, md, 'utf8')
+    return { ok: true, path }
   }
 
   @Remote('schedule-toggle')

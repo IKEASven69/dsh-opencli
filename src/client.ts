@@ -52,7 +52,7 @@ const STR = {
     cmdT: '命令', cmdSearch: '搜索站点或命令,如:热榜 / search / bilibili',
     cmdFmt: '点命令行 → 复制调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)',
     knowExp: '导出知识卡', knowExpDo: '导出中…',
-    timeline: '时间线', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=内容规模)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计',
+    timeline: '时间线', reportBtn: '生成报告', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=内容规模)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计',
     healthDegraded: '已知受损', healthNotice: '注意', healthIssueT: (d: string) => `上游 issue 实测(${d});点击行展开命令,受损命令优先用 browser_* 兜底`,
     disable: '禁用', enable: '启用', commandsN: (n: number) => `${n} 命令`,
     autoT: '定时任务', autoNew: '新建', autoSub: '持久化到 dsh.schedule,重启不丢 · 失败按策略重试并通知',
@@ -118,7 +118,7 @@ const STR = {
     cmdT: 'Commands', cmdSearch: 'Search sites or commands, e.g. trending / search / bilibili',
     cmdFmt: 'Click a command row → copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)',
     knowExp: 'Export knowledge cards', knowExpDo: 'Exporting…',
-    timeline: 'Timeline', tlT: 'Collection snapshot trend', tlSub: 'Each bar = one successful collection (size = content scale)', tlEmpty: 'No snapshots yet — they grow after scheduled runs', tlN: (n: number) => `${n} snapshots`, tlTotal: 'total',
+    timeline: 'Timeline', reportBtn: 'Build report', tlT: 'Collection snapshot trend', tlSub: 'Each bar = one successful collection (size = content scale)', tlEmpty: 'No snapshots yet — they grow after scheduled runs', tlN: (n: number) => `${n} snapshots`, tlTotal: 'total',
     healthDegraded: 'degraded', healthNotice: 'notice', healthIssueT: (d: string) => `confirmed upstream issues (${d}); expand the row, prefer browser_* fallback for broken commands`,
     disable: 'Disable', enable: 'Enable', commandsN: (n: number) => `${n} cmds`,
     autoT: 'Schedules', autoNew: 'New', autoSub: 'Persisted to dsh.schedule, survives restart · retries then notifies on failure',
@@ -1230,7 +1230,9 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
   const bars = snaps ?? []
   const maxB = Math.max(1, ...bars.map((b) => b.bytes))
   return createElement('div', { className: 'o4-card', style: { padding: '10px 12px', margin: '4px 0 8px', borderRadius: '10px' } },
-    createElement('div', { className: 'o4-h3', style: { fontSize: '12px' } }, ic('activity', true), tt('tlT')),
+    createElement('div', { className: 'o4-h3', style: { fontSize: '12px' } }, ic('activity', true), tt('tlT'),
+      createElement('span', { style: { marginLeft: 'auto' } },
+        createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void (async () => { const r = await rpc<{ path?: string }>('report-build', { request: { id } } as unknown as Record<string, unknown>); window.setTimeout(() => {}, 0); void navigator.clipboard?.writeText(String(r.value?.path ?? '')).catch(() => {}) })() } }, tt('reportBtn')))),
     createElement('div', { className: 'o4-sub', style: { margin: '3px 0 8px' } }, tt('tlSub')),
     createElement('div', { style: { display: 'flex', alignItems: 'flex-end', gap: '3px', height: '46px', marginBottom: '6px' } },
       bars.length === 0 ? createElement('div', { className: 'o4-load' }, tt('tlEmpty')) : null,

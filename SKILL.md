@@ -33,7 +33,7 @@
 |---|---|---|
 | `site <站> <命令>` | 结构化命令(170+ 站) | 第一选择:省 token、结果可验证 |
 | `site_knowledge <站>` | 知识卡:命令目录+已知坑+失败签名恢复表 | 对某站动手**前**先读 |
-| `site_batch` | 多站同命令并行采集 | 2-6 站同命令;自带同域串行化(preflight)与"疑似静默失败"标注 |
+| `site_batch` | 多站同命令并行采集 | 2-6 站同命令;自带同域串行化(preflight)与"疑似静默失败"标注;**执行后自动生成带出处报告**(`~/.dsh/opencli-reports/`),引用数据时优先读报告 |
 | `browser_open/state/click/fill/...` | 通用网页原语 | 适配器没覆盖的页面/临时需求 |
 | `trace_replay` | 最近 30 步 browser 命令时间线(时间/命令/exit/耗时,失败步附摘录) | 复盘"上次为什么失败"先调它,别盲目重试 |
 | `script_run_builtin` / `recipe_run` | 只读脚本(article/links/jsonld/forms)/ 25 步配方 | 读正文/结构化抽取/可审计回放 |
