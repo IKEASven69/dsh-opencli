@@ -532,8 +532,8 @@ export class OpencliService extends TypertRemoteService {
       execute: async (a: ToolArgs) => {
         const list = await this.adapterList()
         if (list === null) return { text: `opencli list 不可用 | ${this.lastShellError ?? '未知'}` }
-        const q = a.command !== undefined ? String(a.command).toLowerCase() : ''
-        const site = a.adapter !== undefined ? String(a.adapter).toLowerCase() : ''
+        const q = a.query !== undefined ? String(a.query).toLowerCase() : ''
+        const site = a.site !== undefined ? String(a.site).toLowerCase() : ''
         const filtered = list.filter((x) => (q.length === 0 || x.name.toLowerCase().includes(q)) && (site.length === 0 || x.name.toLowerCase().includes(site))).slice(0, 100)
         return { text: JSON.stringify(filtered.slice(0, 10), null, 2).slice(0, 4000) + `\n…共 ${filtered.length} 条` }
       },
@@ -927,7 +927,8 @@ export class OpencliService extends TypertRemoteService {
     // 注意:两个 provider 都归一化为 {type,value,confidence}——读 value,不要读原始字段名 noul
     const p = typeof v?.value === 'number' ? v.value : null
     if (p === null) return null
-    return { verdict: p >= 0.35, p, ...(p < 0.7 ? { why: '模型判定可疑' } : {}) }
+    // 修复(核验A-1):noul 放弃阈值判失败(错误文本同样 0.9+),仅弱标注不拦截;拦截权归规则层
+    return { verdict: true, p, ...(p < 0.7 ? { why: '模型弱标注:内容可疑(仅提示)' } : {}) }
   }
 
   /** 把判定结果翻译成人读的标注(无判定返回空串)。 */
@@ -1021,6 +1022,9 @@ export class OpencliService extends TypertRemoteService {
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
     const site = request.site.trim()
     const cron = request.cron.trim()
+    // 修复(核验A-4):垃圾 cron 静默入库永不执行;五段+词法校验
+    const toks = cron.trim().split(/\s+/)
+    if (toks.length !== 5 || !toks.every((t) => /^(\*|\d+|\*\/\d+|\d+(,\d+)*)$/.test(t))) return { ok: false, error: 'cron 非法:需 5 段(分 时 日 月 周),支持 * 数字 */步长 逗号列表' }
     // watch:关键词监控(逗号/空格分隔,≤120 字符)。命中任一关键词 → ingest 事件 watch-hit。
     // v1 故意用确定性匹配(noul 模糊"值得关注的变化"留 v2):真机实测 laya 判别力不足,宁缺勿误报。
     const watch = typeof request.watch === 'string' && request.watch.trim().length > 0 ? request.watch.trim().slice(0, 120) : undefined
@@ -1265,7 +1269,15 @@ export class OpencliService extends TypertRemoteService {
     if (this.state.disabled.includes(adapter)) return { ok: false, error: `适配器 ${adapter} 已被禁用` }
     const out = await this.runOpencli([adapter, command, ...args])
     const text = this.renderOut(out)
-    if (out.exitCode !== 0) return { ok: false, error: text }
+    if (out.exitCode !== 0) {
+      // 修复(核验A-3):exit≠0 原样透传原始 YAML,绕过统一恢复指引。归类+附插件层指引
+      const raw = out.stdout + out.stderr
+      const kind = /BROWSER_CONNECT|extension not connected/i.test(raw) ? '扩展未连接——请打开 Chrome 并启用 OpenCLI 扩展(装法见 https://github.com/jackwener/opencli/releases),再在面板「总览」巡检登录态'
+        : /AUTH_REQUIRED|请先登录|NOT_LOGGED_IN/i.test(raw) ? '登录态缺失——先在真实 Chrome 登录该站或运行 opencli <site> login'
+        : /验证码|captcha|Verifying your browser/i.test(raw) ? '风控墙——停止自动化,冷却后人工过盾,写操作务必低频'
+        : null
+      return { ok: false, error: kind !== null ? '【' + kind + '】原始输出:' + text.slice(0, 300) : text }
+    }
     // 真实性判定:exit 0 也可能拿到空结果/风控页/登录提示(上游静默失败类的面板侧防线)
     const v = await this.verifyResult(adapter, command, out.stdout)
     if (v !== null && !v.verdict) {

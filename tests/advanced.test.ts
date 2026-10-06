@@ -236,12 +236,11 @@ describe('真实性判定(noul 体检:site_batch/try-run 共用)', () => {
   const verifyResult = (s: string, c: string, t: string): Promise<{ verdict: boolean; p: number; why?: string } | null> =>
     (svc as unknown as { verifyResult: (...a: [string, string, string]) => Promise<{ verdict: boolean; p: number; why?: string } | null> }).verifyResult.call(svc, s, c, t)
 
-  it('try-run:exit 0 但内容强失效(P=0.05)→ ok:false 并说明原因', async () => {
+  it('try-run:noul 低分(0.05)不再拦截(A-1 修复后仅弱标注)', async () => {
     installSoStub({ bySite: { arxiv: 0.05 } })
     const r = await svc.tryRun({ line: 'site arxiv recent cs.AI' })
-    expect(r.ok).toBe(false)
-    expect(r.error).toContain('判定无效')
-    expect(r.error).toContain('P=0.05')
+    expect(r.ok).toBe(true)
+    expect(r.text).toContain('内容可疑')
   })
 
   it('try-run:内容有效(P=0.95)→ ok:true 且带实测有效标注', async () => {
@@ -298,12 +297,14 @@ describe('真实性判定(noul 体检:site_batch/try-run 共用)', () => {
 
   it('site_batch:混合结果 → 逐站标注 + 汇总疑似静默失败计数', async () => {
     installSoStub({ bySite: { zhihu: 0.93, weibo: 0.08 } })
+    ;(svc as unknown as { adapterCache: { at: number; json: unknown } | null }).adapterCache = { at: Date.now(), json: [{ site: 'zhihu', name: 'hot', access: 'read', domain: 'zhihu.com' }, { site: 'weibo', name: 'hot', access: 'read', domain: 'weibo.com' }] }
     const tool = ctx.tools.registered.get('site_batch')
     expect(tool).toBeDefined()
     const r = await tool!.execute({ command: 'hot', sites: ['zhihu', 'weibo'] })
-    expect(r.text).toContain('1 站疑似静默失败')
+    expect(r.text).toContain('2/2 站成功') // noul 弱标注后不进静默失败计数
     expect(r.text).toContain('== zhihu ✓(实测有效 P=0.93)')
-    expect(r.text).toContain('== weibo ✓(⚠ 疑似静默失败')
+    expect(r.text).toContain('== weibo ✓(⚠ 内容可疑')
+    expect(r.text).toContain('内容可疑')
   })
 
   it('site_batch preflight:同域站点串行化并在输出注明;不同域照常并行', async () => {
