@@ -941,6 +941,7 @@ export class OpencliService extends TypertRemoteService {
 
   @Remote('approval-set')
   async approvalSet(request: ApprovalSetRequest): Promise<ApprovalSetResult> {
+    if (request === undefined) request = {} as never
     this.state.approval = request.enabled ? 'on' : 'off'
     await this.saveState()
     return { ok: true, enabled: request.enabled }
@@ -1018,6 +1019,7 @@ export class OpencliService extends TypertRemoteService {
 
   @Remote('schedule-add')
   async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+    if (request === undefined) request = {} as never
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
     const site = request.site.trim()
@@ -1164,14 +1166,17 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-history')
-  async scheduleHistory(p: { id: string }): Promise<{ ok: boolean; history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }> {
+  async scheduleHistory(p: { id: string } | undefined): Promise<{ ok: boolean; history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }> {
     // 时间线数据源:运行史(内存,近 5) + 快照索引(落盘,近 50,含体积用于趋势)
-    const id = String(p.id ?? '')
+    const id = String((p ?? { id: ''}).id ?? '')
     let snapshots: Array<{ at: string; bytes: number; file: string }> | undefined
     try {
       const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
       snapshots = readdirSync(dir).slice(-50).map((f) => {
-        let at = f.replace(/\.json$/, '').replace(/-/g, ':'), bytes = 0
+        // 文件名=ISO 全 [:.] 换 '-':2026-10-05T15-36-53-123.json → 还原时日期分隔符不能再全量替换(修复 2026:10:05 错乱)
+        const stem = f.slice(0, f.length - 5)
+        const at = stem.length >= 19 ? `${stem.slice(0, 10)}T${stem.slice(11, 13)}:${stem.slice(14, 16)}:${stem.slice(17, 19)}` : stem
+        let bytes = 0
         try { bytes = JSON.parse(readFileSync(join(dir, f), 'utf8')).bytes ?? 0 } catch { /* ignore */ }
         return { at, bytes, file: f }
       })
@@ -1181,6 +1186,7 @@ export class OpencliService extends TypertRemoteService {
 
   @Remote('schedule-toggle')
   async scheduleToggle(request: { id: string; enabled: boolean }): Promise<{ ok: boolean; error?: string }> {
+    if (request === undefined) request = {} as never
     const hit = this.schedules.find((s) => s.id === String(request.id ?? ''))
     if (hit === undefined) return { ok: false, error: '未找到' }
     hit.enabled = request.enabled !== false
@@ -1200,6 +1206,7 @@ export class OpencliService extends TypertRemoteService {
     if (entries.length === 0) return { ok: false, error: '目录缓存为空' }
     // 网关对空 args 会传 undefined(真机复现):request 必须可选链
     const reqSites = request?.sites
+    if (request !== undefined && Array.isArray(request.sites) && request.sites.length === 0) return { ok: false, error: 'sites 为空数组——空选择不支持,省略 sites 才全量导出' }
     const requested = Array.isArray(reqSites) && reqSites.length > 0
       ? reqSites.map((s) => String(s).trim().toLowerCase()).filter((s) => s.length > 0)
       : [...new Set(entries.map((e) => (e.site ?? e.command?.split('/')[0] ?? '').toLowerCase()).filter((s) => s.length > 0))]
@@ -1250,6 +1257,7 @@ export class OpencliService extends TypertRemoteService {
 
   @Remote('schedule-remove')
   async scheduleRemove(request: { id: string }): Promise<{ ok: boolean; error?: string }> {
+    if (request === undefined) request = {} as never
     const i = this.schedules.findIndex((s) => s.id === String(request.id ?? ''))
     if (i < 0) return { ok: false, error: '未找到' }
     this.schedules.splice(i, 1)
@@ -1260,6 +1268,7 @@ export class OpencliService extends TypertRemoteService {
 
   @Remote('try-run')
   async tryRun(request: { line: string }): Promise<{ ok: boolean; text?: string; error?: string }> {
+    if (request === undefined) request = {} as never
     const line = String(request.line ?? '').trim()
     if (!line) return { ok: false, error: '命令为空' }
     const [head, ...rest] = line.split(/\s+/)
@@ -1546,6 +1555,8 @@ export class OpencliService extends TypertRemoteService {
 
   /** shell 调用形态(跨版本自探测锁定):resolved=shell.resolve(spec) 后执行;direct=直传 spec;array=command 传 argv 数组。 */
   private shellMode: 'resolved' | 'direct' | 'array' | null = null
+  /** 调度去重 marker(每启动周期有效,不落盘;此前寄生 runHistory 造成 5055 键无限累积)。 */
+  private schedMarkers = new Set<string>()
 
   /**
    * 0.2.0+ 原生执行:ctx.subprocess.spawn(argv)(官方 bash 工具同款 seam;
@@ -1764,6 +1775,10 @@ export class OpencliService extends TypertRemoteService {
       if (Array.isArray(parsed.disabled)) this.state.disabled = parsed.disabled.filter((s) => typeof s === 'string')
       if (Array.isArray(parsed.schedules)) this.schedules = parsed.schedules
       if (parsed.runHistory !== undefined && typeof parsed.runHistory === 'object') this.runHistory = parsed.runHistory as typeof this.runHistory
+      // 自愈:清除旧版寄生在 runHistory 的调度 marker(键含 ':',曾累积 5055 个)
+      for (const k of Object.keys(this.runHistory)) {
+        if (k.includes(':')) delete this.runHistory[k]
+      }
       if (Array.isArray(parsed.audit)) this.state.audit = parsed.audit.filter((a) => a !== null && typeof a === 'object' && typeof (a as { at?: unknown }).at === 'string')
     } catch { /* 无文件或损坏:用默认值 */ }
   }
@@ -1804,9 +1819,9 @@ export class OpencliService extends TypertRemoteService {
       for (const sch of this.schedules) {
         if (!sch.enabled) continue
         const histKey = `${sch.id}:${minuteKey}`
-        if (this.runHistory[histKey] !== undefined) continue
+        if (this.schedMarkers.has(histKey)) continue
         if (!this.cronMatches(sch.cron, now)) continue
-        this.runHistory[histKey] = [{ at: now.toISOString(), ok: true, summary: 'triggered' }]
+        this.schedMarkers.add(histKey)
         void this.runSiteCommand(sch.site, sch.id)
       }
     }, 15_000)

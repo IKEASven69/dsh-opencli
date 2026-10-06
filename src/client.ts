@@ -27,7 +27,7 @@ type Lang = 'zh' | 'en'
 const STR = {
   zh: {
     title: 'OpenCLI 浏览器代理',
-    desc: '驱动你登录态的真实浏览器 · 176 站 / 200+ 命令一步式执行 · 由 OpenCLI daemon 驱动',
+    desc: `驱动你登录态的真实浏览器 · ${status?.adapterSites ?? 180} 站 / 200+ 命令一步式执行 · 由 OpenCLI daemon 驱动`,
     tabOverview: '总览', tabCommands: '命令', tabAuto: '自动化', tabSec: '安全与设置',
     daemonRunning: '运行中', daemonDown: '未运行', daemonStale: '失联', bridgeOn: '已连接', bridgeOff: '未连接',
     recheck: '重新巡检', checking: '巡检中…', diagAll: '一切正常', detail: '详情',
