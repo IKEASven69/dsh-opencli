@@ -1,52 +1,44 @@
+## 0.4.2 — 2026-10-08
+
+> ⚠️ **升级必读:插件更新后必须重启 dsh daemon 才生效**(长驻进程不热加载插件构建)。
+
+### 新功能
+- **录屏回放**:browser_* 全族命令自动落盘 trace(~/.dsh/opencli-traces,jsonl+5MB 轮转);trace-list/trace-get RPC;**trace_replay 工具**(agent 复盘"上次为什么失败",跨日聚合+本地时区);面板「运行轨迹」卡(红绿状态点/耗时/展开原文)
+- **对话内任务预览卡片**:site/site_batch/browser_do 输出结构化渲染(命令块+四态状态色 ✓✗⚠+汇总表+原文围栏,0.2 视觉)
+- **报告导出(带出处)**:buildReport 纯渲染层——多站/定时快照合并为 markdown,每节**出处三元组(命令+时间+快照路径)+判定结论**,尾部"数据源与缺口声明"逐条列失败/静默失败/缺席,**零模型介入**;site_batch 自动落盘+report-build RPC+面板「生成报告」按钮
+- **站点健康度**:上游 issue 实测数据(小红书/instagram 受损等)驱动命令页徽章+知识卡健康段,受损站自动提示 browser 兜底
+- **MCP Resources 知识暴露**:dsh 0.2 ctx.mcpResources seam——opencli://sites/{site}/knowledge 资源;0.1.x 走 knowledge-get RPC 双路径
+- **W3 分层命令路由 site_route**:SystemOne 两步 choice(先站后命令,≤24 候选)亚秒出命令行+Top3 概率
+- **采集快照+时间线**:定时成功执行存结构化快照(50 份轮转);schedule-history 快照索引;面板时间线趋势柱状图+运行史
+- **watch 关键词监控增强**:命中事件总览可见,大小写不敏感
+- **SWR 面板缓存 v2**:重开秒显上次数据(损坏缓存全防护:try/catch+结构校验+版本键+12h 过期)
+- **知识外移**:pitfalls/健康度独立为 knowledge/*.json 数据文件(知识更新不动代码)
+
+### 样式(0.2 视觉对齐)
+- tab 激活态品牌蓝渐变+内描边+顶部高光;卡片渐变表面+顶光+悬浮投影;输入框品牌焦点环;细滚动条;次要文字对比度提升;四档模式对勾语义修复;watch/健康徽章/轨迹卡/时间线全套新组件样式
+
+### 性能
+- laya 权重激活期后台预热(冷加载 60s 不再砸首次调用);卡片去 transform 降绘制;目录缓存+快路径
+
+### 可靠性修复(全部经独立子代理真机复核)
+- **[HIGH] cron 调度器从不与当前时间比较**——数字合法即每分钟触发,对站点高频轰炸(历史 state 累积 5055 个 marker 实锤);修复+字段越界拒收+逗号列表语义
+- **任务 site 前缀剥离**:按面板占位符创建的任务此前 100% 失败(unknown command site)
+- **laya noul 放弃阈值判失败**(实测错误文本同样 0.9+,拦截权收归确定性规则层;真数据 0.66-0.77 安全通过)
+- **try-run exit≠0 恢复链**:扩展未连/登录缺失/风控墙归类+统一中文指引,不再裸 YAML 46 秒
+- **opencli_catalog 过滤参数全失效修复**(query/site 真正生效)
+- schedule-add cron 五段校验+越界拒绝;调度 marker 独立 Set 不落盘+loadState 自愈 5055 键
+- 7 个 RPC 空 request 守卫;knowledge-export 空 sites 报错;快照时间戳 ISO 还原;EN 站点数动态化
+- resolveBin 版本切换免疫(vfox/nvm 多版本目录扫描,活跃版本切走自动找回 opencli)
+- 逗号运算符吞行/TimelinePanel 作用域/schedule-history 形参名 三连根因修复(时间线不渲染缺口)
+
+### 工程与文档
+- 159 单测(0.4.1 时 74);审查套件 21 项;竞品监控脚本 competitor-watch.cjs;PM-RESEARCH 竞品全景(官方注册表 4412 条实测);SKILL.md 全工具速查;部署断层教训入档
+
 # 更新日志
 
 格式参考 Keep a Changelog;版本与 GitHub Releases 一一对应。
 
-## Unreleased
-
-> ⚠️ **升级必读:插件更新后必须重启 dsh daemon 才生效**(长驻进程不热加载插件构建;曾因部署断层导致"修了没变化")。
-
-### 报告导出(主线 B 渲染层,对标 dsh-fund-research 溯源三件套)
-- `buildReport` 纯函数:多源采集 → 单文件 markdown,每节带出处三元组(site 命令+执行时间+快照路径)+判定结论;尾部「数据源与缺口声明」逐条列失败/静默失败/缺席,绝不编数字;围栏安全(原文 ``` 降级);零模型介入
-- site_batch 执行后自动落盘 `~/.dsh/opencli-reports/batch-*.md` 并在工具输出附路径
-- 新增 `report-build` RPC:定时任务近 5 份快照 → 报告;面板时间线面板加「生成报告」按钮(路径复制到剪贴板)
-- 156 测试绿(+6)
-
-### 收尾(第三批):失败兜底提示 / watch 命中可见性 / 面板走查
-- **site / site_batch / browser_do 预览卡失败兜底**:✗(exit N/被拦截/子命令被拒)且原文无登录指引时,卡片末尾追加"👉 状态异常:建议人工接管或改用 browser_* 原语"——引导模型别在坏状态上盲目重试;空结果/导航被拒文案已自带登录指引,不重复加(互斥规则 tests/cards.test.ts 直测)。site_batch 同族覆盖(评审修复):整卡被拒或存在 ✗ 失败站时同样附提示,互斥按站判定——仅全部失败站原文都自带登录指引才省略,任一站无指引(如纯超时)即附一次
-- **watch 命中可见性**:总览 tab 健康区下新增最近一条 watch 命中 🔔 徽章行(数据源 ingest-events,时间本地化,点击跳自动化 tab;无命中不渲染,拉取失败静默);newest-first 排序/返回形状/30 条上限以测试钉住(tests/advanced.test.ts,评审修复:排序契约此前无测试,翻转将致面板永远显示最旧命中且无报警)
-- SKILL.md 工具速查表补 `trace_replay` 行(复盘"上次为什么失败"先调它)
-- 面板走查小修:CDP 端点"复制端点"按钮 i18n key 缺失(bridgeCopyEp 渲染空文案)补齐;资产库"浏览全部"按钮 className 丢失(btn→o4-btn);cron 输入框改等宽(o4-in mono);状态条 Bridge 灯由恒绿改按 daemon extension 实际连接态;版本卡 v0.4.0→v0.4.1(与 package.json 对齐);去重复 `.o4-in::placeholder` 规则
-
-### 对话内任务预览卡(对标 BrowserSkill 核心卖点,纯插件内实现)
-- **三个工具 output.render 升级为样式卡**(src/cards.ts 纯函数,tests/cards.test.ts 直测形状):
-  - `site` 命令行样式——▣ 站点徽章 + 命令 + exit 状态色(✓ 绿 #34C759 / ✗ 红 #FF453A / ⚠ 琥珀 #FF9F0A,与面板 o4-dot 三色系统同源);判定标注从 execute 文本解析(疑似静默失败/内容可疑 → ⚠,实测有效 → P 值入标签),失败前缀行去重
-  - site execute 接入 verifyResult/verifyBadge(评审修复:此前 ⚠ 分支生产不可达)——exit 0 内容判定后以 ⚠/实测有效 前缀标注进 {text},只标注不拦截(模型仍见原文,与 site_batch 先例一致;SystemOne 不可用不标注,行为同升级前);authProfile 限域拒绝两文案归 ✗ 被拦截(同非法 adapter/已禁用家族)
-  - site_batch 解析按请求站点集过滤分节头(评审修复:适配器输出里的 `== 站 ✓… ==` lookalike 不再产生幻影汇总行,卡头与 execute 汇总头不打架;lookalike 原文仍保留)
-  - site 判定不背 laya 冷加载(评审修复):verifyResult 新增 warmOnly——预热窗口内(laya 权重约 60s 冷加载/1.6GB)site 跳过 noul 兜底,规则层照跑,标注缺席=原行为;SystemOne 加载改单飞(prewarm/ask 共享一次 Laya.load,不再双开 ONNX 会话)+ warm 就绪 getter。timeoutMs 不声明:工具未向 runOpencli 转发 exec.signal,按 dsh-tools 约定声明即违反协作契约;热路径冷启动已由 warm 门禁消除
-  - 分节头鉴别收紧为"每请求站点至多一分节"(评审修复:重复点名已请求站点的 lookalike 同样视为正文,不再产生重复汇总行)
-  - `site_batch` 汇总头(成功数按 exit-0 口径与 execute 汇总一致)+ 每站一行表(站名+状态+P 值)+ 前置注记(目录预检/preflight)+ 原文分节围栏
-  - `browser_do` 步骤式——命令/结果分段,非默认会话入徽章头
-- **能力边界实测**(dsh-tools 0.2.0-rc.2):render 产物 ContentBlock[] 里 text 是唯一可由插件构造的块——image/file 需 attachment 服务拥有的 ref(纯函数拿不到,且官方注释明说 production adapters declare text-only output),故为"带样式的 markdown 文本卡":等宽命令块(```console 围栏,与 0.2 TerminalResultView 降级约定同款)+ 折叠原文降级为"摘要在上、原文围栏在下"(宿主 MarkdownText 禁 raw HTML,GFM 无原生折叠),围栏遇原文反引号串自动加长;原文逐字保留信息不丢
-- execute 文本契约零改动(render 只做只读重排);防御全包(非法输入退空卡绝不抛)
-
-### 录屏回放:browser 命令运行轨迹(BrowserSkill #79 同款需求)
-- **六入口统一单点落盘**:browser_* 全族 + replay / script-run-builtin / crawl / userscript-run / recipe-run 五个 RPC 透传都经 runBrowserTraced——任何入口执行的 browser 命令都进「运行轨迹」,复盘链路不断(评审:面板回放按钮曾绕过单点)
-- 每条命令 JSONL 追加到 `~/.dsh/opencli-traces/trace-<yyyymmdd>.jsonl`({at, cmd, exitCode, ms, outHead≤200 字,失败时 stderr 优先});单文件超 5MB 轮转 .1;写失败静默绝不影响命令本身
-- 新增 agent 工具 `trace_replay`:最近 30 步 markdown 时间线(时间/命令/exit/耗时,失败步附输出摘录);表格单元格净化(换行折 `\n`、竖线转义,userscript 多行 eval 不再拆坏表格);时间列本地化(UTC ISO 直切与本地时钟错位 8h)
-- 新增 `trace-list`(倒序+limit,跨当日/昨日档聚合)/`trace-get`(yyyymmdd 全量,date 严格 8 位数字防路径穿越)RPC;脏行形状校验——parse 成功但非 TraceLine 的行跳过,面板无 ErrorBoundary 不崩白
-- 面板自动化 tab 新增「运行轨迹」卡(时间/命令/exit 色点/耗时,点行展开输出摘录);测试隔离 DSH_OPENCLI_TRACE_DIR 指临时目录,绝不写真实用户数据(tests/trace.test.ts)
-
-### 本周冲刺(10-03):健康度/MCP Resources/W3 路由/采集快照
-- **站点健康度**:`knowledge/health.json`(上游 issue 实测:小红书/instagram 已知受损、zhihu/bilibili 注意)——命令页站点行徽章+知识卡健康度段,受损站给 browser_* 兜底提示
-- **MCP Resources 知识暴露**:dsh 0.2 `ctx.mcpResources` seam 实测存在——`opencli://sites/{site}/knowledge` 资源(list/templates/read);0.1.x 宿主走 knowledge-get RPC 回退;数据层纯函数,换 seam 只动接线
-- **W3 分层命令路由**:`site_route` 工具——so_pick 两步 choice(先站后命令,≤24 候选分层范式)亚秒出命令行+Top3;锁定站点跳过站层;SystemOne 不可用降级回目录
-- **采集结构化快照**:定时成功执行存 `~/.dsh/opencli-snapshots/<id>/<ts>.json`(50 份轮转);`schedule-history` 返回快照索引(时间线/diff/趋势数据源)
-- **知识数据外移**:pitfalls → `knowledge/pitfalls.json`(知识更新不动代码)
-- resolveBin 版本切换免疫(vfox/nvm 多版本目录扫描);95 测试绿;详见 v0.4.1 Release
-
 ## 0.4.1 — 2026-10-03
-
 ### dsh 0.2.0 适配(双版本兼容:0.1.5 与 0.2.0 同时 20/20)
 - **新增 ctx.subprocess 原生执行路径**:0.2.0 把命令执行迁到 subprocess seam(官方 bash 工具同款),旧 ctx.shell.execute 需要沙箱 policy 管线且插件直调不可靠;经 reflect 旁路可选读取(刻意不放 static inject——cordis 对声明服务做加载期解析,0.1.x 宿主没有 subprocess 服务会导致整个插件加载失败)
 - 0.1.x 回落路径升级为多形态自探测:resolve包裹/直传/argv数组,锁定首个真实产生输出的形态(异常文本不再被误当有效输出);spec 携带 danger-full-access 沙箱策略(可信进程内消费者,与 0.1.x 无沙箱行为一致)

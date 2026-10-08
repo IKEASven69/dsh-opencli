@@ -300,7 +300,7 @@ var RELEASES_URL = "https://github.com/IKEASven69/dsh-opencli/releases";
 var STR = {
   zh: {
     title: "OpenCLI \u6D4F\u89C8\u5668\u4EE3\u7406",
-    desc: "\u9A71\u52A8\u4F60\u767B\u5F55\u6001\u7684\u771F\u5B9E\u6D4F\u89C8\u5668 \xB7 176 \u7AD9 / 200+ \u547D\u4EE4\u4E00\u6B65\u5F0F\u6267\u884C \xB7 \u7531 OpenCLI daemon \u9A71\u52A8",
+    desc: `\u9A71\u52A8\u4F60\u767B\u5F55\u6001\u7684\u771F\u5B9E\u6D4F\u89C8\u5668 \xB7 ${status?.adapterSites ?? 180} \u7AD9 / 200+ \u547D\u4EE4\u4E00\u6B65\u5F0F\u6267\u884C \xB7 \u7531 OpenCLI daemon \u9A71\u52A8`,
     tabOverview: "\u603B\u89C8",
     tabCommands: "\u547D\u4EE4",
     tabAuto: "\u81EA\u52A8\u5316",
@@ -372,6 +372,7 @@ var STR = {
     knowExp: "\u5BFC\u51FA\u77E5\u8BC6\u5361",
     knowExpDo: "\u5BFC\u51FA\u4E2D\u2026",
     timeline: "\u65F6\u95F4\u7EBF",
+    reportBtn: "\u751F\u6210\u62A5\u544A",
     tlT: "\u91C7\u96C6\u5FEB\u7167\u8D8B\u52BF",
     tlSub: "\u6BCF\u6839\u67F1 = \u4E00\u6B21\u6210\u529F\u91C7\u96C6(\u4F53\u79EF=\u5185\u5BB9\u89C4\u6A21)",
     tlEmpty: "\u6682\u65E0\u5FEB\u7167\u2014\u2014\u5230\u70B9\u91C7\u96C6\u540E\u8FD9\u91CC\u4F1A\u957F\u51FA\u6765",
@@ -458,7 +459,7 @@ var STR = {
   },
   en: {
     title: "OpenCLI Browser Proxy",
-    desc: "Drive your logged-in real browser \xB7 176 sites / 200+ commands one-shot \xB7 powered by the OpenCLI daemon",
+    desc: `Drive your logged-in real browser \xB7 ${status?.adapterSites ?? 180} sites / 200+ commands one-shot \xB7 powered by the OpenCLI daemon`,
     tabOverview: "Overview",
     tabCommands: "Commands",
     tabAuto: "Automation",
@@ -530,6 +531,7 @@ var STR = {
     knowExp: "Export knowledge cards",
     knowExpDo: "Exporting\u2026",
     timeline: "Timeline",
+    reportBtn: "Build report",
     tlT: "Collection snapshot trend",
     tlSub: "Each bar = one successful collection (size = content scale)",
     tlEmpty: "No snapshots yet \u2014 they grow after scheduled runs",
@@ -944,7 +946,7 @@ function Panel() {
   const t = (k) => STR[lang][k] ?? STR.zh[k];
   const [tab, setTab] = (0, import_react.useState)("ov");
   const [phase, setPhase] = (0, import_react.useState)("loading");
-  const [status, setStatus] = (0, import_react.useState)(null);
+  const [status1, setStatus] = (0, import_react.useState)(null);
   const [settings, setSettings] = (0, import_react.useState)(null);
   const [adapters, setAdapters] = (0, import_react.useState)(null);
   const [schedules, setSchedules] = (0, import_react.useState)([]);
@@ -1302,8 +1304,8 @@ function Panel() {
     setUpdState(t2("updFallback"));
   };
   const loginResults = login?.results ?? [];
-  const daemonUp = status?.daemon?.running === true;
-  const binOk = status?.ok === true && status.bin !== null;
+  const daemonUp = status1?.daemon?.running === true;
+  const binOk = status1?.ok === true && status1.bin !== null;
   const loading = phase === "loading";
   const chip = (icon, label, state, tip) => (0, import_react.createElement)("span", {
     className: "o4-chip",
@@ -1473,7 +1475,7 @@ ${runOut.text}`);
           gap: "11px",
           marginBottom: "13px"
         }
-      }, status === null ? (0, import_react.createElement)("span", {
+      }, status1 === null ? (0, import_react.createElement)("span", {
         className: "o4-dot n"
       }) : daemonUp ? (0, import_react.createElement)("span", {
         className: "o4-pulse"
@@ -1485,9 +1487,9 @@ ${runOut.text}`);
         }
       }), (0, import_react.createElement)("div", {
         className: "o4-big"
-      }, status === null ? t2("loading") : daemonUp ? "daemon " + t2("daemonRunning") : "daemon " + t2("daemonDown"), status?.version ? (0, import_react.createElement)("span", {
+      }, status1 === null ? t2("loading") : daemonUp ? "daemon " + t2("daemonRunning") : "daemon " + t2("daemonDown"), status1?.version ? (0, import_react.createElement)("span", {
         className: "o4-vchip"
-      }, "v" + String(status.version).replace(/^v/, "")) : null), (0, import_react.createElement)("button", {
+      }, "v" + String(status1.version).replace(/^v/, "")) : null), (0, import_react.createElement)("button", {
         className: "o4-btn ghost sm",
         style: {
           marginLeft: "auto"
@@ -1504,20 +1506,20 @@ ${runOut.text}`);
         className: "l"
       }, "sites"), (0, import_react.createElement)("div", {
         className: "v big"
-      }, status === null ? "\u2026" : String(adapters?.length ?? 0), (0, import_react.createElement)("small", null, "\u7AD9"))), (0, import_react.createElement)("div", {
+      }, status1 === null ? "\u2026" : String(adapters?.length ?? 0), (0, import_react.createElement)("small", null, "\u7AD9"))), (0, import_react.createElement)("div", {
         className: "o4-cell"
       }, (0, import_react.createElement)("div", {
         className: "l"
       }, "Chrome \u6269\u5C55"), (0, import_react.createElement)("div", {
-        className: `v big${status?.daemon?.extension === "connected" ? " on" : ""}`,
-        style: status?.daemon?.extension === "connected" ? {
+        className: `v big${status1?.daemon?.extension === "connected" ? " on" : ""}`,
+        style: status1?.daemon?.extension === "connected" ? {
           fontSize: "15px"
         } : {
           fontSize: "13px",
           color: "#5F6873",
           fontWeight: 500
         }
-      }, status === null ? "\u2026" : status.daemon?.extension ?? t2("unknown"))), (0, import_react.createElement)("div", {
+      }, status1 === null ? "\u2026" : status1.daemon?.extension ?? t2("unknown"))), (0, import_react.createElement)("div", {
         className: "o4-cell"
       }, (0, import_react.createElement)("div", {
         className: "l"
@@ -1532,12 +1534,12 @@ ${runOut.text}`);
         style: {
           fontSize: "14px"
         }
-      }, autoMode))), status?.ok === false && status.error !== void 0 ? (0, import_react.createElement)("div", {
+      }, autoMode))), status1?.ok === false && status1.error !== void 0 ? (0, import_react.createElement)("div", {
         className: "o4-tryout",
         style: {
           marginTop: "9px"
         }
-      }, status.error) : null, daemonOff || !binOk ? (0, import_react.createElement)("div", {
+      }, status1.error) : null, daemonOff || !binOk ? (0, import_react.createElement)("div", {
         style: {
           marginTop: "10px"
         }
@@ -2165,7 +2167,7 @@ ${c.description}`,
         "alert"
       ]
     ];
-    const diagText = `bin: ${status?.bin ?? "\u2014"} | version: ${status?.version ?? "\u2014"} | mode: ${autoMode} | approval: ${settings?.approvalOn === true ? "on" : "off"} | daemon: ${daemonUp ? "running" : "down"}`;
+    const diagText = `bin: ${status1?.bin ?? "\u2014"} | version: ${status1?.version ?? "\u2014"} | mode: ${autoMode} | approval: ${settings?.approvalOn === true ? "on" : "off"} | daemon: ${daemonUp ? "running" : "down"}`;
     return (0, import_react.createElement)("div", null, (0, import_react.createElement)("div", {
       className: "o4-sec"
     }, (0, import_react.createElement)("div", {
@@ -2472,14 +2474,14 @@ ${c.description}`,
       className: "o4-status"
     }, (0, import_react.createElement)("span", {
       className: "o4-chip",
-      title: `daemon ${status === null ? t2("loading") : daemonUp ? t2("daemonRunning") : t2("daemonDown")}`
+      title: `daemon ${status1 === null ? t2("loading") : daemonUp ? t2("daemonRunning") : t2("daemonDown")}`
     }, (0, import_react.createElement)("span", {
-      className: `o4-dot ${status === null ? "n" : daemonUp ? "g" : "r"}`
+      className: `o4-dot ${status1 === null ? "n" : daemonUp ? "g" : "r"}`
     }), "daemon"), (0, import_react.createElement)("span", {
       className: "o4-chip",
-      title: `BrowserBridge ${status?.daemon?.extension ?? t2("unknown")}`
+      title: `BrowserBridge ${status1?.daemon?.extension ?? t2("unknown")}`
     }, (0, import_react.createElement)("span", {
-      className: `o4-dot ${status?.daemon?.extension === "connected" ? "g" : "n"}`
+      className: `o4-dot ${status1?.daemon?.extension === "connected" ? "g" : "n"}`
     }), "Bridge"), (0, import_react.createElement)("span", {
       className: "o4-chip",
       title: "Chrome"
@@ -2502,11 +2504,11 @@ ${c.description}`,
     }, ic("refresh", true))),
     // 诊断条
     (0, import_react.createElement)("div", {
-      className: `o4-diag ${status === null ? "ok" : daemonUp && binOk ? "ok" : "bad"}`,
+      className: `o4-diag ${status1 === null ? "ok" : daemonUp && binOk ? "ok" : "bad"}`,
       onClick: () => {
         void openDiag();
       }
-    }, ic(status === null ? "refresh" : daemonUp && binOk ? "check-c" : "alert", true), status === null ? t2("loading") : daemonUp && binOk ? t2("diagAll") : t2("depDaemon"), (0, import_react.createElement)("span", {
+    }, ic(status1 === null ? "refresh" : daemonUp && binOk ? "check-c" : "alert", true), status1 === null ? t2("loading") : daemonUp && binOk ? t2("diagAll") : t2("depDaemon"), (0, import_react.createElement)("span", {
       className: "o4arr"
     }, t2("detail"), ic("chev-d", true))),
     // 内容
@@ -2592,7 +2594,26 @@ function TimelinePanel(props) {
     style: {
       fontSize: "12px"
     }
-  }, ic("activity", true), tt("tlT")), (0, import_react.createElement)("div", {
+  }, ic("activity", true), tt("tlT"), (0, import_react.createElement)("span", {
+    style: {
+      marginLeft: "auto"
+    }
+  }, (0, import_react.createElement)("button", {
+    className: "o4-btn ghost sm",
+    onClick: () => {
+      void (async () => {
+        const r = await rpc("report-build", {
+          request: {
+            id
+          }
+        });
+        window.setTimeout(() => {
+        }, 0);
+        void navigator.clipboard?.writeText(String(r.value?.path ?? "")).catch(() => {
+        });
+      })();
+    }
+  }, tt("reportBtn")))), (0, import_react.createElement)("div", {
     className: "o4-sub",
     style: {
       margin: "3px 0 8px"
