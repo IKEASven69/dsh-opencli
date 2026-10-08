@@ -122,6 +122,15 @@ describe('watch 关键词监控(主线 B 第一片)', () => {
     await S().runSiteCommand(site, id)
     expect(S().ingestEventList.length).toBe(n)
     S().runOpencli = origRun as Svc['runOpencli']
+    // 定时链路落轨迹(GUI 走查 2026-10-08 修复):runSiteCommand 每次尝试都应写 schedule 行,
+    // 否则「运行轨迹」看不到定时执行的真实失败输出,复盘断链
+    const traceDir2 = process.env.DSH_OPENCLI_TRACE_DIR ?? ''
+    if (traceDir2.length > 0) {
+      const files = fs.readdirSync(traceDir2).filter((f) => /^trace-\d{8}\.jsonl$/.test(f))
+      const lines = files.flatMap((f) => fs.readFileSync(path.join(traceDir2, f), 'utf8').split('\n').filter((l) => l.trim().length > 0))
+      const schedLines = lines.map((l) => JSON.parse(l) as { cmd: string }).filter((t) => t.cmd.startsWith(`schedule wt2-`))
+      expect(schedLines.length).toBeGreaterThanOrEqual(2) // 两次 runSiteCommand 各一条
+    }
     await svc.scheduleRemove({ id })
   })
 })

@@ -1901,7 +1901,11 @@ export class OpencliService extends TypertRemoteService {
     let lastOut = ''
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
+        const started = Date.now()
         const r = await this.runOpencli(cmdLine.split(/\s+/), 60_000)
+        // 定时链路此前绕过 recordTrace(只有 browser 透传入口记录),「运行轨迹」看不到定时执行的
+        // 真实失败输出,复盘断链(GUI 走查 2026-10-08)。带 schedule 前缀与手动 browser 命令区分。
+        this.recordTrace(`schedule ${cmdLine}`, r, Date.now() - started)
         lastOk = r.exitCode === 0
         lastSummary = lastOk ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
         lastOut = lastOk ? r.stdout : ''

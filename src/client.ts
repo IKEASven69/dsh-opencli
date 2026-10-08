@@ -373,7 +373,7 @@ const CSS = `
 .o4-sw::after { content:""; position:absolute; width:16px; height:16px; border-radius:50%; background:#fff; top:2px; left:2px; transition:left .2s cubic-bezier(.4,0,.2,1); box-shadow:0 1px 3px rgba(0,0,0,.4); }
 .o4-sw.on { background:#34C759; }
 .o4-sw.on::after { left:18px; }
-.o4-row { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.05); border-radius:11px; padding:8px 11px; transition:all .16s ease; }
+.o4-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.05); border-radius:11px; padding:8px 11px; transition:all .16s ease; }
 .o4-row:hover { border-color:rgba(255,255,255,.13); background:rgba(255,255,255,.05); }
 .o4-row .grow { flex:1; min-width:0; }
 .o4-tt { font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
@@ -413,7 +413,7 @@ const CSS = `
 .o4-kv .k { color:rgba(249,250,251,.38); }
 .o4-kv .v { color:rgba(249,250,251,.85); word-break:break-all; }
 .o4-fixrow { display:flex; gap:8px; margin-top:9px; }
-.o4-load { color:rgba(249,250,251,.38); font-size:12px; padding:10px 0; }
+.o4-load { color:rgba(249,250,251,.58); font-size:12px; padding:10px 0; }
 .o4-skel { height:11px; border-radius:5px; background:linear-gradient(90deg,#1F242D,#262C37,#1F242D); background-size:200% 100%; animation:o4shimmer 1.4s linear infinite; margin:7px 0; }
 @keyframes o4shimmer { from { background-position:200% 0; } to { background-position:-200% 0; } }
 .o4-note { font-size:10.5px; color:rgba(249,250,251,.38); margin-top:8px; line-height:1.6; }
@@ -657,7 +657,12 @@ function Panel(): ReturnType<typeof createElement> {
   const runScheduleNow = async (id: string): Promise<void> => {
     const r = await rpc('schedule-run-now', { p: { id } } as unknown as Record<string, unknown>)
     showToast(r.ok ? 'run now ✓' : (r.error?.message ?? t2('errReq')), r.ok)
-    window.setTimeout(() => { void loadSchedules() }, 2500)
+    // 重试链路(默认 3 次 × 15s 退避,风控墙 2min)远长于单次刷新窗口——此前只在 +2.5s 刷一次,
+    // 行内"上次/计数"整个周期停在旧值,与时间线的失败记录自相矛盾(GUI 走查 2026-10-08)。
+    // 分散刷新覆盖完整重试周期;schedule-list 是幂等轻量 RPC,多刷无副作用。
+    for (const ms of [2_500, 20_000, 40_000, 70_000, 100_000, 130_000, 160_000, 200_000, 240_000]) {
+      window.setTimeout(() => { void loadSchedules() }, ms)
+    }
   }
 
   const persistRecordings = (next: Recording[]): void => {
@@ -980,7 +985,11 @@ function Panel(): ReturnType<typeof createElement> {
               createElement('button', { className: 'o4-sw' + (s.enabled ? ' on' : ''), title: s.enabled ? 'enabled' : 'disabled', onClick: () => { void toggleSchedule(s.id, !s.enabled) } }),
               createElement('div', { className: 'meta' },
                 createElement('span', { className: 'o4-cron' }, s.cron),
-                createElement('span', null, `${t2('last')} ${hist[0]?.at?.slice(5, 16) ?? '—'} · ${okN}/${hist.length || 0} ✓`),
+                createElement('span', null, `${t2('last')} ${hist[0]?.at?.slice(5, 16) ?? '—'}`,
+                  // verdict 真实着色:空史不挂符号;有失败全红 ✗;有成功绿 ✓——此前恒亮 ✓,
+                  // 与时间线红失败行同屏自相矛盾(GUI 走查 2026-10-08)
+                  createElement('span', { style: { color: hist.length === 0 ? 'inherit' : (okN > 0 ? '#34C759' : '#FF6B63') } },
+                    ` · ${okN}/${hist.length || 0}${hist.length === 0 ? '' : (okN > 0 ? ' ✓' : ' ✗')}`)),
                 createElement('span', { className: 'o4-bdg b' }, t2('retryN')(s.retry ?? 3)),
                 createElement('span', { className: 'o4-bdg' }, s.notify === false ? t2('notifyOff') : t2('notifyOn')),
                 createElement('span', { style: { flex: '1' } }),
@@ -1174,7 +1183,7 @@ function Panel(): ReturnType<typeof createElement> {
         ...(loginResults.length > 0
           ? loginResults.map((r) => chip(null, r.site, r.ok ? 'g' : (r.timedOut ? 'y' : 'r'), `${r.site}: ${r.ok ? t2('online') : (r.timedOut ? t2('timeout') : t2('expired'))}${r.detail !== null ? ` · ${r.detail}` : ''}`))
           : [chip(null, 'zhihu', 'n'), chip(null, 'bilibili', 'n'), chip(null, 'github', 'n')]),
-        createElement('span', { className: 'o4-chip', style: { marginLeft: 'auto', cursor: 'pointer' }, onClick: () => { void runLoginCheck() }, title: t2('recheck') }, ic('refresh', true)),
+        createElement('span', { className: 'o4-chip', style: { marginLeft: 'auto', cursor: 'pointer', boxSizing: 'border-box', height: '23px', justifyContent: 'center' }, onClick: () => { void runLoginCheck() }, title: t2('recheck') }, ic('refresh', true)),
       ),
       // 诊断条
       createElement('div', { className: `o4-diag ${status === null ? 'ok' : (daemonUp && binOk ? 'ok' : 'bad')}`, onClick: () => { void openDiag() } },
@@ -1219,17 +1228,22 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
   const [err, setErr] = useState('')
   useEffect(() => {
     let alive = true
-    void (async () => {
+    const load = async (): Promise<void> => {
       const r = await rpc<{ history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }>('schedule-history', { p: { id } } as unknown as Record<string, unknown>)
       if (!alive) return
       if (r.ok) { setHist(r.value?.history ?? []); setSnaps(r.value?.snapshots ?? []) } else setErr(r.error?.message ?? 'err')
-    })()
-    return () => { alive = false }
+    }
+    void load()
+    // 展开期间 15s 轮询:立即跑的重试链路最长 ~2.5min,不轮询则面板停在打开瞬间的旧史
+    const timer = window.setInterval(() => { void load() }, 15_000)
+    return () => { alive = false; window.clearInterval(timer) }
   }, [id])
-  if (err.length > 0) return createElement('div', { className: 'o4-card', style: { padding: '8px 12px', margin: '4px 0 8px', borderRadius: '10px' } }, createElement('div', { className: 'o4-load' }, err))
+  if (err.length > 0) return createElement('div', { className: 'o4-card', style: { padding: '8px 12px', margin: '4px 0 8px', borderRadius: '10px', flex: '1 1 100%' } }, createElement('div', { className: 'o4-load' }, err))
   const bars = snaps ?? []
   const maxB = Math.max(1, ...bars.map((b) => b.bytes))
-  return createElement('div', { className: 'o4-card', style: { padding: '10px 12px', margin: '4px 0 8px', borderRadius: '10px' } },
+  // flex:'1 1 100%' 独占整行——toggle 用 display:contents 把本卡塞进 .o4-row flex 行,
+  // 不占满则被挤到行右侧溢出对话框裁切(GUI 走查 2026-10-08)
+  return createElement('div', { className: 'o4-card', style: { padding: '10px 12px', margin: '4px 0 8px', borderRadius: '10px', flex: '1 1 100%' } },
     createElement('div', { className: 'o4-h3', style: { fontSize: '12px' } }, ic('activity', true), tt('tlT'),
       createElement('span', { style: { marginLeft: 'auto' } },
         createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void (async () => { const r = await rpc<{ path?: string }>('report-build', { request: { id } } as unknown as Record<string, unknown>); window.setTimeout(() => {}, 0); void navigator.clipboard?.writeText(String(r.value?.path ?? '')).catch(() => {}) })() } }, tt('reportBtn')))),

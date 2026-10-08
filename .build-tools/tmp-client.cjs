@@ -856,7 +856,7 @@ var CSS = `
 .o4-sw::after { content:""; position:absolute; width:16px; height:16px; border-radius:50%; background:#fff; top:2px; left:2px; transition:left .2s cubic-bezier(.4,0,.2,1); box-shadow:0 1px 3px rgba(0,0,0,.4); }
 .o4-sw.on { background:#34C759; }
 .o4-sw.on::after { left:18px; }
-.o4-row { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.05); border-radius:11px; padding:8px 11px; transition:all .16s ease; }
+.o4-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.05); border-radius:11px; padding:8px 11px; transition:all .16s ease; }
 .o4-row:hover { border-color:rgba(255,255,255,.13); background:rgba(255,255,255,.05); }
 .o4-row .grow { flex:1; min-width:0; }
 .o4-tt { font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
@@ -896,7 +896,7 @@ var CSS = `
 .o4-kv .k { color:rgba(249,250,251,.38); }
 .o4-kv .v { color:rgba(249,250,251,.85); word-break:break-all; }
 .o4-fixrow { display:flex; gap:8px; margin-top:9px; }
-.o4-load { color:rgba(249,250,251,.38); font-size:12px; padding:10px 0; }
+.o4-load { color:rgba(249,250,251,.58); font-size:12px; padding:10px 0; }
 .o4-skel { height:11px; border-radius:5px; background:linear-gradient(90deg,#1F242D,#262C37,#1F242D); background-size:200% 100%; animation:o4shimmer 1.4s linear infinite; margin:7px 0; }
 @keyframes o4shimmer { from { background-position:200% 0; } to { background-position:-200% 0; } }
 .o4-note { font-size:10.5px; color:rgba(249,250,251,.38); margin-top:8px; line-height:1.6; }
@@ -1222,9 +1222,21 @@ function Panel() {
       }
     });
     showToast(r.ok ? "run now \u2713" : r.error?.message ?? t2("errReq"), r.ok);
-    window.setTimeout(() => {
-      void loadSchedules();
-    }, 2500);
+    for (const ms of [
+      2500,
+      2e4,
+      4e4,
+      7e4,
+      1e5,
+      13e4,
+      16e4,
+      2e5,
+      24e4
+    ]) {
+      window.setTimeout(() => {
+        void loadSchedules();
+      }, ms);
+    }
   };
   const persistRecordings = (next) => {
     setRecordings(next);
@@ -1977,7 +1989,18 @@ ${c.description}`,
           className: "meta"
         }, (0, import_react.createElement)("span", {
           className: "o4-cron"
-        }, s.cron), (0, import_react.createElement)("span", null, `${t2("last")} ${hist[0]?.at?.slice(5, 16) ?? "\u2014"} \xB7 ${okN}/${hist.length || 0} \u2713`), (0, import_react.createElement)("span", {
+        }, s.cron), (0, import_react.createElement)(
+          "span",
+          null,
+          `${t2("last")} ${hist[0]?.at?.slice(5, 16) ?? "\u2014"}`,
+          // verdict 真实着色:空史不挂符号;有失败全红 ✗;有成功绿 ✓——此前恒亮 ✓,
+          // 与时间线红失败行同屏自相矛盾(GUI 走查 2026-10-08)
+          (0, import_react.createElement)("span", {
+            style: {
+              color: hist.length === 0 ? "inherit" : okN > 0 ? "#34C759" : "#FF6B63"
+            }
+          }, ` \xB7 ${okN}/${hist.length || 0}${hist.length === 0 ? "" : okN > 0 ? " \u2713" : " \u2717"}`)
+        ), (0, import_react.createElement)("span", {
           className: "o4-bdg b"
         }, t2("retryN")(s.retry ?? 3)), (0, import_react.createElement)("span", {
           className: "o4-bdg"
@@ -2495,7 +2518,10 @@ ${c.description}`,
       className: "o4-chip",
       style: {
         marginLeft: "auto",
-        cursor: "pointer"
+        cursor: "pointer",
+        boxSizing: "border-box",
+        height: "23px",
+        justifyContent: "center"
       },
       onClick: () => {
         void runLoginCheck();
@@ -2552,7 +2578,7 @@ function TimelinePanel(props) {
   const [err, setErr] = (0, import_react.useState)("");
   (0, import_react.useEffect)(() => {
     let alive = true;
-    void (async () => {
+    const load = async () => {
       const r = await rpc("schedule-history", {
         p: {
           id
@@ -2563,9 +2589,14 @@ function TimelinePanel(props) {
         setHist(r.value?.history ?? []);
         setSnaps(r.value?.snapshots ?? []);
       } else setErr(r.error?.message ?? "err");
-    })();
+    };
+    void load();
+    const timer = window.setInterval(() => {
+      void load();
+    }, 15e3);
     return () => {
       alive = false;
+      window.clearInterval(timer);
     };
   }, [
     id
@@ -2575,7 +2606,8 @@ function TimelinePanel(props) {
     style: {
       padding: "8px 12px",
       margin: "4px 0 8px",
-      borderRadius: "10px"
+      borderRadius: "10px",
+      flex: "1 1 100%"
     }
   }, (0, import_react.createElement)("div", {
     className: "o4-load"
@@ -2587,7 +2619,8 @@ function TimelinePanel(props) {
     style: {
       padding: "10px 12px",
       margin: "4px 0 8px",
-      borderRadius: "10px"
+      borderRadius: "10px",
+      flex: "1 1 100%"
     }
   }, (0, import_react.createElement)("div", {
     className: "o4-h3",

@@ -150,9 +150,13 @@ describe('trace-get RPC(按日全量)', () => {
     const r = await svc.traceGet({ date })
     expect(r.ok).toBe(true)
     expect(r.traces.length).toBeGreaterThanOrEqual(4)
-    // 时间序:首条是最早一次 open,末条是最后的 state
-    expect(r.traces[0]!.cmd).toBe('browser dsh open https://example.com/1')
-    expect(r.traces[r.traces.length - 1]!.cmd).toBe('browser dsh state')
+    // 时间序(旧→新):定时链路(v0.4.2 修复)也会写 schedule 行进同一文件,断言只看本桩写的
+    // browser 子集的相对顺序——首条 open/1 在末条 state 之前。
+    const cmds = r.traces.map((t) => t.cmd)
+    const firstOpen = cmds.indexOf('browser dsh open https://example.com/1')
+    const lastState = cmds.lastIndexOf('browser dsh state')
+    expect(firstOpen).toBeGreaterThanOrEqual(0)
+    expect(lastState).toBeGreaterThan(firstOpen)
     // 非法 date(含路径穿越形态)拒绝
     expect((await svc.traceGet({ date: '../../etc' })).ok).toBe(false)
     expect((await svc.traceGet({ date: '20990101' })).ok).toBe(false)

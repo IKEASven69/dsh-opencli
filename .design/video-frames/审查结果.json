@@ -15,7 +15,7 @@
  "PASS | 安全页·供应链自证",
  "PASS | 安全页·登录态桥卡渲染 | 登录态桥(Browser Use) 把 dsh 官方 Browser Use 接到你登录态的 Chrome:探测 opencli daemon Chrome 的",
  "PASS | 安全页·桥卡含风险警示",
- "PASS | RPC·browser-cdp | {\"type\":\"server-response\",\"rpcId\":\"audit-1791430842358\",\"result\":{\"ok\":true,\"value\":{\"ok\":true,\"found\":false,\"",
+ "PASS | RPC·browser-cdp | {\"type\":\"server-response\",\"rpcId\":\"audit-1791452973114\",\"result\":{\"ok\":true,\"value\":{\"ok\":true,\"found\":false,\"",
  "PASS | RPC·knowledge-export | paths=179",
  "PASS | 定时·创建落盘(含 watch) | watch=降薪,热点事件",
  "PASS | 定时·时间线面板 | btn=true",
