@@ -1,142 +1,140 @@
-# dsh-opencli · 让 DeepSeek Harness 会办事,不只是会搜索
+# dsh-opencli · 让你的 dsh 用**你的浏览器**办事
 
 [![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-listed-17695?logo=github&labelColor=555)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/tree/main/data/plugins/IKEASven69__dsh-opencli.yml)
 [![dsh-plugin](https://img.shields.io/badge/GitHub%20topic-dsh--plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
 
-> Give your DeepSeek Harness agent real hands: drive your **logged-in browser** and call **176 site adapters / 200+ commands** as deterministic one-shot commands — with a write-approval gate.
+> Let your DeepSeek Harness agent work in **your logged-in browser**: 知乎/B站/微博/GitHub 等 **180+ 站点一步式命令**,发帖点赞带审批门。
 
-dsh 内置的 web 工具是"检索"(web_search/web_fetch)。本插件给它补上"**办事**"的那一半:agent 可以操纵**你自己日常使用的、带登录态的真实浏览器**,并直接调用知乎/B站/微博/GitHub 等 **176 个站点、200+ 结构化命令**——不是匿名抓取,是你本人的视角和数据。
+**dsh 自带的 web 工具是"搜索"——所有人拿到一样的匿名结果。这个插件给它补上"办事"的那一半:agent 操纵你自己日常使用的、带登录态的真实浏览器,以你的账号视角拿数据、替你动手(写操作先弹审批,你点了允许才执行)。**
 
-一句话:**web_search 给所有人一样的匿名结果;`site` 给你的 agent 你账号视角的结构化数据**——你的关注流、收藏夹、热榜、未读通知,再到替你发帖点赞(带审批)。
-
-## 装完之后,用户能做什么
-
-| 用户说 | 插件做什么 |
+| 在对话里说 | 插件做的事 |
 |---|---|
-| "B站搜罗翔,总结播放量前 3 的视频" | `site bilibili search 罗翔` → 结构化结果,无需逐页点击 |
-| "知乎今天热榜前 10 给我摘要" | `site zhihu hot` → 一步拿到榜单 |
-| "把这个转发到我的微博" | `site weibo post …`(登录态),**先弹审批窗,你点了允许才发** |
-| "看看我 GitHub 有哪些未读通知" | `site github whoami` 等登录态命令 |
-| "打开公司后台,把这个审批单批了" | `browser_open → browser_state → browser_click` 通用原语,用你的登录态 |
-| "帮我查 12306 明天北京→上海的余票" | `site 12306 …` |
-| "同时拉知乎/微博/B站三站热榜" | `site_batch` 一条命令 fan-out,汇总各站结果 |
-| "每天早上 9 点自动跑知乎热榜" | 面板建定时任务,**持久化 + 真执行**,重启不丢 |
+| "B站搜罗翔,总结播放量前 3" | `site bilibili search 罗翔` 一步拿到结构化结果 |
+| "知乎热榜前 10 摘要" | `site zhihu hot` |
+| "每天早 9 点自动跑热榜,有异常告诉我" | 面板建定时任务,持久化真执行,watch 关键词命中通知 |
+| "把这个转发到我的微博" | `site weibo post …` —— **先弹审批窗** |
+| "同时拉知乎/微博/B站热榜做对比" | `site_batch` 一条命令三站并行 |
+| "打开公司后台把审批单批了" | `browser_open/click` 通用原语,用你的登录态 |
 
-以及:**没适配器的网站,让模型当场造一个**(`browser_do` analyze → init → verify,SKILL.md 内置创作循环)——越用越会浏览。
+**实测效果(真实登录态,非演示数据):**
 
-### 两张牌:固定命令 × 任意网页原语
-
-不是只有适配器才能用。模型对每个站有两张牌,**先打第一张,失败自动换第二张**:
-
-1. **固定命令**(`site <站> <命令>`):预编译的站点知识,省 token、结果可验证、有失败签名恢复表;
-2. **任意网页原语**(`browser_open/state/click/fill` + 内置只读脚本 article/links/jsonld + 25 步 Playwright recipe):适配器没覆盖的页面、临时性需求("我就看一眼这个页面"),用你的登录态自由组合。
-
-动手前先让模型调 **`site_knowledge <站>`** 读知识卡:该站全部命令+已知坑(风控/登录/改版)+失败签名恢复表——不现场试错。知识卡可经面板导出为 markdown(`~/.dsh/opencli-knowledge/`),可分享、可进版本库。
-
-### 回答的是三个被 116k★ 仓库用户正式提案的缺口
-
-- *"browser agents re-learn every site on every session"*——selectors/登录流/站点怪癖每次从头再来([browser-use#5841](https://github.com/browser-use/browser-use/issues/5841),10 评论)→ **176 站预置结构化命令就是成品答案**:站点知识预编译,不重学。
-- *"想在当前打开的 Chrome 实例/profile 上做自动化"*([browser-use#4709](https://github.com/browser-use/browser-use/issues/4709))→ **登录态原生**:所有 `site` 命令跑在用户已登录的 Chrome 里,不另起无头实例。
-- *"求结构化动作证据:动作到底改没改页面"*([browser-use#5137](https://github.com/browser-use/browser-use/issues/5137),13 评论;同源:[BrowserSkill#242](https://github.com/Tencent/BrowserSkill/issues/242) click 谎报成功)→ **执行真实性层**:采集结果经确定性规则+亚秒决策模型两层判定,`exit 0` 但内容无效会被标"疑似静默失败",无人值守定时任务直接按失败重试。
-
-## 全功能面
-
-| 模块 | 能力 |
+| 对话里直接跑命令 | 定时采集 → 快照 → 时间线 → 带出处报告 |
 |---|---|
-| **site 适配器** | 176 站 / 200+ 命令,蒸馏命令目录注入 systemPrompt(第一轮就选对命令);`site_batch` 多站并行 |
-| **browser 原语** | open/click/type/fill/scroll/state/screenshot/extract/wait/crawl 全套(泛爬带 `maxPagesPerRun` 限流) |
-| **定时任务** | cron 表达式,**持久化到 `dsh.schedule` 并真执行**,重启不丢;面板管理 + 运行可见 |
-| **录制回放** | 面板录制 `site`/`browser_*` 步骤序列,一键回放,步骤持久化 |
-| **自动化模式** | read-only / standard / autonomous / unrestricted 四档,接入 `tools/pre-execute` 审批门 |
-| **我的适配器** | 适配器禁用/启用管理,禁用即从 systemPrompt 目录自动收缩 |
-| **登录态巡检** | 面板实时显示各站在线状态 |
-| **失败诊断** | daemon 诊断/一键启动;`resolveBin()` 四级回退(本地依赖优先) |
-| **限流与限域** | `usagePolicy`(延迟/并发/突发/冷却/页数上限)+ 429/5xx 自动退避;`--authProfile` 限域登录,跨域拒绝 |
-| **四 tab 面板** | 总览 / 命令 / 自动化 / 安全与设置,状态机四态(检测中骨架屏/正常/依赖缺失一键修复/错误内嵌诊断) |
-| **登录态桥** | 探测 daemon Chrome 的 CDP 端点,一键生成配置把 dsh 官方 Browser Use 接到你登录态的浏览器 |
-| **拦截审计** | 审批门拦截记录(近 7 天计数 + 明细),写操作全程可追溯 |
-| **定时可靠性** | 失败重试 ×3 + 通知事件 + 运行历史 |
-| **站点品牌图标** | 48 站 simple-icons 官方标 + 品牌色,变体站点自动归并 |
-| **中英双语** | 面板 EN / zh 一键切换 |
+| ![试试看](docs/assets/readme/demo-try-run.png) | ![真实数据时间线](docs/assets/readme/demo-timeline-realdata.png) |
+
+**没适配器的网站?** 180+ 站目录之外,`browser_*` 通用原语覆盖任意网页;agent 还能当场造适配器,越用越会浏览。完整命令目录:
+
+![命令目录](docs/assets/readme/demo-catalog.png)
+
+## 30 秒装完
+
+```sh
+# ① 装 opencli 并启动(已装过 opencli/OpenCLIApp?跳到 ③)
+npm i -g @jackwener/opencli && opencli daemon restart
+
+# ② 装 BrowserBridge 扩展(Chrome/Edge 都行),在浏览器里登录你的常用站点
+#    https://github.com/jackwener/OpenCLI/releases → opencli-extension-*.zip → 浏览器"加载解压缩的扩展"
+
+# ③ 装插件
+dsh plugin add IKEASven69/dsh-opencli
+```
+
+**不想自己动手?把下面这句发给你的 dsh,它替你装完并自检:**
+
+> 请按 https://github.com/IKEASven69/dsh-opencli/blob/opencli-release/AGENT_INSTALL.md 里的步骤帮我安装 dsh-opencli,装完跑一次自检并告诉我结果。
+
+装完打开 dsh 设置 →「浏览器代理」面板:四 tab(总览/命令/自动化/安全与设置)、180 站目录、登录态巡检、daemon 一键修复。
+
+<details>
+<summary><b>安装注意事项(3 条,遇到问题再展开)</b></summary>
+
+- ⚠️ 插件目录内跑 `npm install` 会静默把宿主的 opencli 链接替换为 registry 副本([上游 #2555](https://github.com/jackwener/opencli/issues/2555))——请在本仓库外装依赖。
+- ⚠️ Windows:dsh shell 走 PowerShell,`DSH_OPENCLI_BIN` 需指向 `.cmd` 结尾的 shim(无扩展名会被静默忽略)。版本管理器(vfox/nvm)切 node 版本后插件会自动扫描各版本目录找回 opencli。
+- ⚠️ 升级 dsh 到 0.2 前自查 profile `cordis.patch.yml` 有无引用未安装的 bundle——0.2 对此静默退出。
+
+</details>
+
+---
 
 ## 登录态到底是怎么回事(重要澄清)
 
 **本插件不使用、也不需要 dsh 的内置浏览器。**它经 [OpenCLI](https://github.com/jackwener/OpenCLI) 的 daemon + BrowserBridge 扩展,驱动**你扩展装在哪个、就哪个浏览器的真实窗口**(Chrome/Edge 均可)——登录态来自你日常浏览器里的真实会话,和你在地址栏手打网址完全同源。你在哪登录了知乎,agent 就能用你的知乎;巡检面板会告诉你哪些站在线。
 
-## 已经自己装过 opencli 的用户,这插件还有什么用
+## 两张牌:固定命令 × 任意网页原语
 
-如果你已装 OpenCLI/npm 版 opencli,agent 原则上能在 shell 里裸跑 `opencli`。本插件的增量:
+模型对每个站有两张牌,**先打第一张,失败自动换第二张**:
+
+1. **固定命令**(`site <站> <命令>`):预编译站点知识,省 token、结果可验证、有失败签名恢复表;
+2. **任意网页原语**(`browser_open/state/click/fill` + 只读脚本 + Playwright recipe):适配器没覆盖的页面用登录态自由组合。
+
+动手前先让模型调 `site_knowledge <站>` 读知识卡:全部命令+已知坑+失败恢复表——不现场试错。知识卡可导出 markdown 分享(`~/.dsh/opencli-knowledge/`)。
+
+## 它回答的三个真实缺口
+
+- *"browser agents re-learn every site on every session"*([browser-use#5841](https://github.com/browser-use/browser-use/issues/5841))→ **180+ 站预置结构化命令**:站点知识预编译,不重学。
+- *"想在当前打开的 Chrome 实例上做自动化"*([browser-use#4709](https://github.com/browser-use/browser-use/issues/4709))→ **登录态原生**:所有命令跑在你已登录的浏览器里,不另起无头实例。
+- *"求结构化动作证据:动作到底改没改页面"*([browser-use#5137](https://github.com/browser-use/browser-use/issues/5137);同源 [BrowserSkill#242](https://github.com/Tencent/BrowserSkill/issues/242))→ **执行真实性层**:采集结果经确定性规则+亚秒决策模型两层判定,`exit 0` 但内容无效会被标"疑似静默失败",无人值守定时任务按失败重试。
+
+## 已经自己装过 opencli,这插件还有什么用
 
 | | 只装 opencli(agent 走 shell) | + 本插件 |
 |---|---|---|
-| 开局发现 | 模型得先跑 `opencli list`(数 MB 输出)才知道有什么 | **蒸馏命令目录已注入 systemPrompt**,第一轮就选对命令 |
-| 权限模型 | 需要 shell 权限;写操作(发帖/下单)裸奔无门 | 一等公民工具,参数校验 + **write 审批门**(工具层拦截,shell 拦不住) |
+| 开局发现 | 模型得先跑 `opencli list`(数 MB 输出) | **蒸馏命令目录已注入 systemPrompt**,第一轮就选对命令 |
+| 权限模型 | 需要 shell 权限;写操作裸奔无门 | 一等公民工具 + **write 审批门**(工具层拦截) |
 | 只读/受限会话 | 无 shell 就没戏 | 无需 shell,工具照用 |
-| 定时采集 | 自己写 crontab + 脚本 + 通知 | 面板建定时任务,**持久化 + 真执行 + 运行可见** |
-| 管理 | 开 OpenCLIApp 或敲命令 | dsh 设置页:daemon 诊断/一键启动/命令集合浏览复制/登录态巡检/适配器启停/自动化模式 |
+| 定时采集 | 自己写 crontab + 脚本 + 通知 | 面板建定时任务,持久化 + 真执行 + 运行可见 |
+| 管理 | 敲命令 | dsh 设置页:诊断/一键启动/目录浏览/巡检/启停/模式切换 |
 
-两不冲突:深度用法仍可用官方 opencli 技能,本插件负责工具化、安全与面板。
+两不冲突:深度用法仍可配合官方 opencli 技能,本插件负责工具化、安全与面板。
 
-## 安装
+## 全功能面
 
-> ⚠️ 升级 dsh 到 0.2 前自查 profile 的 `cordis.patch.yml` 有无引用未安装的 bundle——0.2 对此**静默退出**。
-> ⚠️ 插件目录内跑 `npm install` 会静默把宿主的 opencli 链接替换为 registry 副本([上游 #2555](https://github.com/jackwener/opencli/issues/2555))——请在本仓库外装依赖。
-> 💡 版本管理器(vfox/nvm)切换 node 版本后插件会自动扫描各版本目录找回 opencli;也可用 `DSH_OPENCLI_BIN` 指定。
-
-前置(二选一):
-
-```sh
-npm i -g @jackwener/opencli      # 推荐:一条命令
-opencli daemon restart           # 启动守护进程
-# 再装 BrowserBridge 扩展(Chrome Web Store / GitHub Releases),在浏览器里登录你的常用站点
-```
-
-或安装 [OpenCLIApp](https://opencli.info/download)(托盘全家桶,自动保活/更新)。
-
-然后:
-
-```sh
-dsh plugin add IKEASven69/dsh-opencli
-```
-
-自定义二进制路径:设 `DSH_OPENCLI_BIN`(也可依赖插件自带的本地 `@jackwener/opencli`)。
-
-> **Windows 注意**:dsh 的 shell 在 Windows 走 PowerShell,`DSH_OPENCLI_BIN` 请指向 `.cmd` 结尾的 shim(如 `...\nodejs\opencli.cmd`),无扩展名文件会被静默忽略。
+| 模块 | 能力 |
+|---|---|
+| **site 适配器** | 180+ 站 / 200+ 命令,蒸馏目录注入 systemPrompt;`site_batch` 多站并行 |
+| **browser 原语** | open/click/type/fill/scroll/state/screenshot/extract/wait/crawl 全套(泛爬带限流) |
+| **定时任务** | cron,持久化真执行,重启不丢;失败重试 ×3 + 通知 + 运行历史 |
+| **采集快照/时间线** | 成功执行存结构化快照(50 份轮转);时间线趋势+历史;**带出处报告导出**(每节:命令+时间+快照路径,零模型改写) |
+| **watch 监控** | 关键词命中 → 通知事件(大小写不敏感) |
+| **执行轨迹** | 每条 browser/定时执行落盘 JSONL,面板「运行轨迹」复盘"上次为什么失败" |
+| **自动化模式** | read-only / standard / autonomous / unrestricted 四档,接入 `tools/pre-execute` 审批门 |
+| **站点健康度** | 上游 issue 实测数据驱动:受损站标注 + browser 兜底提示 |
+| **MCP Resources** | dsh 0.2 下站点知识经 `opencli://sites/{site}/knowledge` 暴露 |
+| **我的适配器** | 禁用/启用管理,禁用即从 systemPrompt 目录收缩 |
+| **登录态巡检** | 面板实时显示各站在线状态(cookie 级诊断) |
+| **登录态桥** | 探测 daemon 浏览器 CDP 端点,一键把 dsh 官方 Browser Use 接到你登录态的浏览器 |
+| **拦截审计** | 审批门拦截记录(近 7 天计数 + 明细) |
+| **限流与限域** | `usagePolicy` + 429/5xx 自动退避;`--authProfile` 限域登录,跨域拒绝 |
+| **站点品牌图标** | 48+ 站 simple-icons 官方标 + 品牌色 |
+| **中英双语** | 面板 EN / zh 一键切换 |
 
 ## 配置
 
-零配置开箱即用;需要微调时有这几处:
+零配置开箱即用;需要微调时:
 
 | 配置 | 方式 | 默认 |
 |---|---|---|
-| opencli 二进制路径 | 环境变量 `DSH_OPENCLI_BIN`,或依赖插件自带的本地 `@jackwener/opencli` | `opencli`(全局) |
+| opencli 二进制路径 | 环境变量 `DSH_OPENCLI_BIN`,或插件自带本地依赖 | `opencli`(全局) |
 | 写审批开关 | 面板「审批门」一键开关 | 开 |
-| 自动化模式 | 面板四档:read-only / standard / autonomous / unrestricted | standard |
+| 自动化模式 | 面板四档 | standard |
 | 限流策略 | `usagePolicy`(minDelayMs 750 / maxConcurrency 2 / burst 3 / cooldown 30s / maxPagesPerRun 20) | 见左 |
-| 限域登录 | `authProfiles`(`allowedDomains` / `storageStatePath`),配 `site --authProfile` 使用 | 无 |
-
-示例:让 agent 只读不动手——面板切到 read-only,所有写命令直接拒绝,无需逐条审批。
+| 限域登录 | `authProfiles`(`allowedDomains`/`storageStatePath`),配 `site --authProfile` | 无 |
 
 ## 安全设计
 
-- **write 审批门**(默认开):`site` 的写命令经 dsh 原生审批——弹窗点"允许"才执行;权限不明的命令按写处理(fail-closed);面板可一键开关。
-- **自动化模式四档**:read-only / standard / autonomous / unrestricted,接入 `tools/pre-execute` 审批门。
+- **write 审批门**(默认开):写命令经 dsh 原生审批——弹窗点"允许"才执行;权限不明按写处理(fail-closed)。
 - 命令白名单与参数校验;`browser_do` 仅放行只读/创作类子命令。
-- 全部输出经截断与噪声剥离(update 横幅等),防上下文污染。
-- 限流:并发/突发/冷却 + 429/502/503/504 自动退避;限域登录(`--authProfile`)跨域拒绝。
+- 全部输出经截断与噪声剥离,防上下文污染。
+- 限流 + 自动退避;限域登录跨域拒绝。
 
 ## 已验证的测试矩阵
 
 | 层面 | 方式 | 结果 |
 |---|---|---|
-| 判定逻辑 | 单元测试 ×11 | ✅ |
-| 审批分发链路 | cordis 真实 waterfall 集成测试 ×6 | ✅ |
-| 高级功能 | schedule/replay/script/recipe/automation/rulepacks ×22 | ✅ |
-| 真模型 E2E·读 | MiniMax-M3 会话调 `site zhihu hot`,真实热榜返回 | ✅ |
-| 真模型 E2E·写拒绝 | `site zhihu comment` → ask → 无审批通道 fail-closed 拒绝 | ✅ |
-| 真模型 E2E·浏览器原语 | `browser_open→browser_state` 往返结构化报告 | ✅ |
-| 面板 | 真实浏览器全链路(审批门/巡检/命令集合/复制/i18n) | ✅ |
-| 全权审查套件 | 19 项真机逐项验证(渲染/真执行/状态文件对账/RPC 真值),`full-review.cjs` 一键复测 | ✅ |
+| 单元/回归 | vitest ×159(含 cron 回归/空参数护栏/trace/报告结构) | ✅ |
+| 全权审查套件 | 21 项真机逐项(渲染/真执行/状态对账/RPC 真值),`full-review.cjs` 一键复测;dsh 0.2.0-rc.2 与 0.2.1-rc.1 双版本通过 | ✅ |
+| 真模型 E2E | 会话调 `site zhihu hot`/写拒绝/browser 往返 | ✅ |
+| 登录态真数据 | 浏览器扩展桥 → try-run 真实热榜(判定 P=0.91)→ 定时采集 15s 回填 → 快照 → 时间线 → 带出处报告 | ✅ |
 
 ## 更新日志
 
