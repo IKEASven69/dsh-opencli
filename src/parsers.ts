@@ -6,8 +6,59 @@
 
 import type { AdapterInfo, DaemonStatus } from './types.ts'
 
-/** 解析 `opencli daemon status` 文本输出。 */
+/** 从混杂文本里提取首个完整 JSON 对象(截取首个 '{' 到与其配对的 '}'),无则返回 null。
+ *  opencli 2.0 的 JSON 输出后面常跟 "Extension update available" 横幅,直接 JSON.parse 会炸。 */
+export function extractJsonObject(text: string): unknown {
+  const start = text.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (escaped) { escaped = false; continue }
+    if (c === '\\') { escaped = true; continue }
+    if (c === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) {
+        try { return JSON.parse(text.slice(start, i + 1)) } catch { return null }
+      }
+    }
+  }
+  return null
+}
+
+/** 解析 `opencli daemon status` 文本输出。2.0 起是 JSON 信封(后面常跟升级横幅),1.x 是
+ *  "Daemon: running" 风格文本;两形都接,归一到同一形状(extension 用 1.x 的字符串约定,
+ *  多档案未选默认 = "connected, none selected",下游面板/doctor 逻辑零改动)。 */
 export function parseDaemonStatus(text: string): DaemonStatus {
+  const trimmed = text.trim()
+  if (trimmed.startsWith('{')) {
+    const j = extractJsonObject(trimmed) as { ok?: boolean; data?: Record<string, unknown> } | null
+    const d = j?.ok === true && j.data && typeof j.data === 'object' ? (j.data as Record<string, unknown>) : null
+    if (d !== null) {
+      const extConnected = d.extensionConnected === true
+      const profilesRaw = Array.isArray(d.profiles) ? (d.profiles as Array<Record<string, unknown>>) : []
+      const profiles = profilesRaw.length > 0
+        ? profilesRaw.map((p) => `${String(p.contextId ?? '?')}${p.extensionVersion ? ' ' + String(p.extensionVersion) : ''}${p.extensionConnected === false ? ' (未连)' : ''}`).join(', ')
+        : undefined
+      const uptimeSec = typeof d.uptime === 'number' ? d.uptime : null
+      const h = uptimeSec !== null ? Math.floor(uptimeSec / 3600) : null
+      const m = uptimeSec !== null ? Math.floor((uptimeSec % 3600) / 60) : null
+      return {
+        running: d.running === true,
+        version: typeof d.daemonVersion === 'string' ? d.daemonVersion : undefined,
+        pid: typeof d.pid === 'number' ? d.pid : undefined,
+        uptime: h !== null ? `${h}h ${m}m` : undefined,
+        extension: extConnected ? (d.profileRequired === true ? 'connected, none selected' : 'connected') : 'not connected',
+        profiles,
+        port: typeof d.port === 'number' ? d.port : undefined,
+      }
+    }
+  }
   const get = (re: RegExp): string | undefined => text.match(re)?.[1]
   const portRaw = get(/Port:\s*(\d+)/)
   const pidRaw = get(/PID\s*(\d+)/)

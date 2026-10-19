@@ -19,6 +19,7 @@ class StubShell extends Service {
   resolve(req: unknown): unknown { return req }
   async run(spec: { command: unknown }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
     const cmd = String(spec.command)
+    if (cmd.includes('--version')) return { exitCode: 0, stdout: { text: '1.8.8\n' }, stderr: { text: '' } }
     if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: 'Daemon: running\nVersion: v1.8.7\nPort: 19825\n' }, stderr: { text: '' } }
     if (cmd.includes('list --format json')) return { exitCode: 0, stdout: { text: '[]' }, stderr: { text: '' } }
     this.seq++

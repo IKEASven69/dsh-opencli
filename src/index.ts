@@ -23,7 +23,7 @@ import type {
   AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, DaemonStartResult, IngestEvent,
   LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult, TraceLine, TraceListResult,
 } from './types.ts'
-import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
+import { approvalDecision, buildAdapterDirectory, commandAccess, extractJsonObject, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
 import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, SITE_HEALTH, type RawEntry } from './knowledge.ts'
 import { buildReport, type ReportSource } from './reports.ts'
@@ -252,15 +252,14 @@ export class OpencliService extends TypertRemoteService {
         lines.push(`${cliOk ? '✓' : '✗'} CLI:${cliOk ? vraw : `opencli 不可用(${this.bin})`}`)
         if (!cliOk) next.push('安装 CLI:npm i -g @jackwener/opencli,然后 opencli daemon restart(或装 OpenCLIApp https://opencli.info/download)')
         if (cliOk) {
-          const r = await this.runOpencli(['daemon', 'status'], 15000)
-          const raw = `${r.stdout}\n${r.stderr}`
-          const daemonRunning = /Daemon:\s*running/.test(raw)
-          lines.push(`${daemonRunning ? '✓' : '✗'} daemon:${daemonRunning ? (raw.match(/Version:\s*(\S+)/)?.[1] ?? '') + ' · ' + (raw.match(/Uptime:\s*([^\n]+)/)?.[1]?.trim() ?? '') : '未运行/无响应'}`)
+          const ds = await this.daemonStatus()
+          const daemonRunning = ds?.running === true
+          lines.push(`${daemonRunning ? '✓' : '✗'} daemon:${daemonRunning ? (ds?.version ?? '') + (ds?.uptime ? ' · ' + ds.uptime : '') : '未运行/无响应'}`)
           if (!daemonRunning) {
             next.push('opencli daemon restart')
           } else {
-            const extLine = (raw.match(/Extension:\s*([^\n]+)/)?.[1] ?? '').trim()
-            const profilesLine = (raw.match(/Profiles:\s*([^\n]+)/)?.[1] ?? '').trim()
+            const extLine = (ds?.extension ?? '').trim()
+            const profilesLine = (ds?.profiles ?? '').trim()
             const extConnected = /^connected/.test(extLine) || /profiles connected/.test(extLine)
             const noneSelected = /none selected/i.test(extLine)
             if (extConnected && !noneSelected) {
@@ -1711,6 +1710,42 @@ export class OpencliService extends TypertRemoteService {
   }
 
   private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
+    const raw = await this.runOpencliRaw(argv, timeoutMs, stdoutMaxBytes)
+    return this.unwrapCli2(argv, raw)
+  }
+
+  /** opencli 2.0 JSON 信封解包:`{"ok":true,"data":…}` → data 为 stdout;`{"ok":false,"error":{code,message,hint}}`
+   *  → stderr + 真实退出码。只认输出形状不看版本号(托盘复活旧 daemon 等版本错配场景照样工作);
+   *  list/daemon 两族有专用解析(分页/JSON 状态),在此跳过。1.x 文本输出无 `{"ok":` 前缀,原样透传。 */
+  private unwrapCli2(argv: string[], out: { exitCode: number; stdout: string; stderr: string; unavailable?: string }): { exitCode: number; stdout: string; stderr: string; unavailable?: string } {
+    if (out.unavailable !== undefined) return out
+    if (argv[0] === 'list' || argv[0] === 'daemon') return out
+    const s = out.stdout.trimStart()
+    if (!s.startsWith('{"ok"')) return out
+    const j = extractJsonObject(s) as { ok?: boolean; data?: unknown; error?: Record<string, unknown> } | null
+    if (j === null || typeof j.ok !== 'boolean') return out
+    if (j.ok === true) {
+      const d = j.data
+      return { ...out, exitCode: 0, stdout: typeof d === 'string' ? d : (d === undefined ? '' : JSON.stringify(d, null, 2)) }
+    }
+    const e = j.error ?? {}
+    const parts = [typeof e.code === 'string' ? e.code : 'UNKNOWN', typeof e.message === 'string' ? e.message : '', typeof e.hint === 'string' ? e.hint : ''].filter((x) => x.length > 0)
+    return { ...out, exitCode: typeof e.exitCode === 'number' ? e.exitCode : 1, stdout: '', stderr: parts.join('\n') }
+  }
+
+  /** CLI 大版本(1/2),进程内缓存。决定 browser 会话语法与 adapter 命令族路由。 */
+  private cliMajorCache: number | null = null
+  private async cliMajor(): Promise<number> {
+    if (this.cliMajorCache !== null) return this.cliMajorCache
+    try {
+      const r = await this.runOpencliRaw(['--version'], 15000)
+      const m = `${r.stdout}\n${r.stderr}`.match(/(\d+)\.\d+/)
+      this.cliMajorCache = m ? Number(m[1]) : 1
+    } catch { this.cliMajorCache = 1 }
+    return this.cliMajorCache
+  }
+
+  private async runOpencliRaw(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
     await this.acquireGovernor()
     try {
       // 0.2.0+ 原生 seam 优先
@@ -1809,7 +1844,22 @@ export class OpencliService extends TypertRemoteService {
    */
   private async runBrowserTraced(session: string | undefined, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const started = Date.now()
-    const out = await this.runOpencli(['browser', session ?? 'dsh', ...argv])
+    const major = await this.cliMajor()
+    let out: { exitCode: number; stdout: string; stderr: string }
+    if (major >= 2) {
+      // 2.0:会话从位置参数改为 --session 选项;创作命令搬去 adapter 族(analyze 工作流整体移除)
+      const [head] = argv
+      if (head === 'init' || head === 'verify') {
+        const sub = head === 'verify' ? 'check' : 'init'
+        out = await this.runOpencli(['adapter', sub, ...argv.slice(1)])
+      } else if (head === 'analyze') {
+        out = { exitCode: 1, stdout: '', stderr: 'opencli 2.0 已移除 analyze 侦察工作流;改用 browser state --diagnostics / browser network --static,或 adapter init 后 adapter check 验证' }
+      } else {
+        out = await this.runOpencli(['browser', ...argv, '--session', session ?? 'dsh'])
+      }
+    } else {
+      out = await this.runOpencli(['browser', session ?? 'dsh', ...argv])
+    }
     this.recordTrace(`browser ${session ?? 'dsh'} ${argv.join(' ')}`, out, Date.now() - started)
     return out
   }
@@ -2045,7 +2095,41 @@ export class OpencliService extends TypertRemoteService {
     if (this.adapterCache !== null && Date.now() - this.adapterCache.at < ADAPTER_TTL_MS) {
       return normalizeAdapterList(this.adapterCache.json)
     }
-    const r = await this.runOpencli(['list', '--format', 'json'], 30000, 8 * 1024 * 1024)
+    // 2.0:JSON 信封 + 分页(上限 100/页)——翻页取全;1.x:单次平铺数组
+    const major = await this.cliMajor()
+    if (major >= 2) {
+      const collected: unknown[] = []
+      let offset = 0
+      let total: number | null = null
+      for (let page = 0; page < 40; page++) {
+        const r = await this.runOpencliRaw(['list', '--format', 'json', '--limit', '100', '--offset', String(offset)], 30000, 4 * 1024 * 1024)
+        if (r.exitCode !== 0) {
+          this.lastShellError = `list(${r.exitCode})|out:${r.stdout.slice(0, 200)}|err:${r.stderr.slice(0, 200)}`
+          return null
+        }
+        try {
+          const s = r.stdout.trimStart()
+          const start = s.indexOf('{')
+          const j = JSON.parse(start === -1 ? s : s.slice(start)) as { ok?: boolean; data?: { commands?: unknown[]; total?: number; nextOffset?: number }; error?: { message?: string } }
+          if (j.ok !== true || !Array.isArray(j.data?.commands)) throw new Error(`envelope ok=${String(j.ok)} error=${j.error?.message?.slice(0, 120) ?? '无 data.commands'}`)
+          collected.push(...j.data.commands)
+          total = typeof j.data.total === 'number' ? j.data.total : total
+          const next = typeof j.data.nextOffset === 'number' ? j.data.nextOffset : 0
+          if (next <= offset || (total !== null && collected.length >= total)) break
+          offset = next
+        } catch (e) {
+          this.lastShellError = `json(${e instanceof Error ? e.message.slice(0, 120) : 'parse'})|head:${r.stdout.slice(0, 200)}`
+          return null
+        }
+      }
+      if (collected.length === 0) {
+        this.lastShellError = 'list(2.0)|翻页后 0 命令'
+        return null
+      }
+      this.adapterCache = { at: Date.now(), json: collected }
+      return normalizeAdapterList(collected)
+    }
+    const r = await this.runOpencliRaw(['list', '--format', 'json'], 30000, 8 * 1024 * 1024)
     if (r.exitCode !== 0) {
       // 诊断通道:把 shell 失败的原始输出带回面板(临时)
       this.lastShellError = `list(${r.exitCode})|out:${r.stdout.slice(0, 200)}|err:${r.stderr.slice(0, 200)}`

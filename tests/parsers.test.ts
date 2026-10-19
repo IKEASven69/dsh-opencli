@@ -3,7 +3,7 @@
  * 样本取自 2026-08-25 本机 opencli v1.8.6 真实输出。
  */
 import { describe, expect, it } from 'vitest'
-import { approvalDecision, buildAdapterDirectory, commandAccess, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from '../src/parsers.ts'
+import { approvalDecision, buildAdapterDirectory, commandAccess, extractJsonObject, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from '../src/parsers.ts'
 
 const RUNNING = `Daemon: running (PID 19616)
 Version: v1.8.6
@@ -116,5 +116,49 @@ describe('approvalDecision(审批门判定)', () => {
     expect(approvalDecision(on, noDisabled, 'site', undefined, 'comment', 'write')).toBe('allow')
     expect(approvalDecision(on, noDisabled, 'site', 'zhihu', 42, 'write')).toBe('allow')
     expect(approvalDecision(on, noDisabled, 'site', '', 'comment', 'write')).toBe('allow')
+  })
+})
+
+// ── opencli 2.0 JSON 信封(parsers.test 2.0 样本取自 2026-10-17 v2.0.0 实测输出) ──
+
+const DAEMON2 = `{"ok":true,"data":{"ok":true,"pid":4772,"uptime":158930.025038,"daemonVersion":"1.8.6","extensionConnected":true,"extensionVersion":"1.0.24","extensionCompatRange":">=1.7.0","contextId":"62fd4dgs","profileRequired":false,"profileDisconnected":false,"profiles":[{"contextId":"62fd4dgs","extensionConnected":true,"extensionVersion":"1.0.24","extensionCompatRange":">=1.7.0","pending":0,"lastSeenAt":1792374904516}],"pending":0,"commandResultUnknown":0,"memoryMB":14.6,"port":19825,"running":true,"stale":true}}
+
+  Extension update available: v1.0.24 → v1.0.25
+  Download: https://github.com/jackwener/opencli/releases`
+
+describe('parseDaemonStatus(opencli 2.0 JSON 信封)', () => {
+  it('JSON 信封+尾部升级横幅:running/version/port/uptime 归一,extension=connected', () => {
+    const d = parseDaemonStatus(DAEMON2)
+    expect(d.running).toBe(true)
+    expect(d.version).toBe('1.8.6')
+    expect(d.pid).toBe(4772)
+    expect(d.port).toBe(19825)
+    expect(d.extension).toBe('connected')
+    expect(d.uptime).toBe('44h 8m')
+    expect(d.profiles).toContain('62fd4dgs 1.0.24')
+  })
+  it('profileRequired=true → extension=connected, none selected(沿用 1.x 字符串约定,下游零改动)', () => {
+    const j = extractJsonObject(DAEMON2) as { data: Record<string, unknown> }
+    j.data.profileRequired = true
+    const d = parseDaemonStatus(JSON.stringify(j))
+    expect(d.running).toBe(true)
+    expect(d.extension).toBe('connected, none selected')
+  })
+  it('extensionConnected=false → not connected;1.x 文本路径不受影响', () => {
+    const j = extractJsonObject(DAEMON2) as { data: Record<string, unknown> }
+    j.data.extensionConnected = false
+    expect(parseDaemonStatus(JSON.stringify(j)).extension).toBe('not connected')
+    expect(parseDaemonStatus(RUNNING).extension).toBe('connected')
+  })
+})
+
+describe('extractJsonObject(2.0 JSON 后跟横幅的提取)', () => {
+  it('首个配对大括号截取,字符串内的花括号/引号不干扰', () => {
+    const j = extractJsonObject('{"a":{"b":"x{y}\\"z"},"tail":1}\n  banner text {"not":this}') as { a?: { b?: string }; tail?: number }
+    expect(j?.tail).toBe(1)
+    expect(j?.a?.b).toBe('x{y}"z')
+  })
+  it('无 JSON 返回 null', () => {
+    expect(extractJsonObject('plain text only')).toBeNull()
   })
 })
