@@ -197,6 +197,7 @@ export class OpencliService extends TypertRemoteService {
     this.registerAdvancedTools()
     this.registerSiteTool()
     this.registerDecisionTools()
+    this.registerDoctorTool()
     this.registerApprovalGate()
     this.registerKnowledgeResources()
     // 决策层后台预热:laya 权重冷加载约 60s,不能让 agent 的首次 so_verify/so_pick 吃这个延迟。
@@ -226,6 +227,64 @@ export class OpencliService extends TypertRemoteService {
 
   /** SystemOne 决策层:key 从环境变量或 ~/.dsh/typesafe-key;provider 可换(laya 本地 ONNX 同接口)。 */
   private so: SystemOne = new SystemOne()
+
+  /**
+   * Agent 自助安装/自检工具(AGENT_INSTALL.md 的落地闭环):CLI→daemon→BrowserBridge 扩展→浏览器档案
+   * 四层诊断,每层给状态与确切下一步命令。排障先跑这个,不盲试。
+   */
+  private registerDoctorTool(): void {
+    const t = this.ctx.tools
+    t.register(defineTool({
+      name: 'opencli_doctor',
+      description: 'dsh-opencli 一键自检:CLI/daemon/BrowserBridge 扩展/浏览器档案四层诊断,输出每层状态与下一步命令。安装与排障时先跑这个。',
+      parameters: {},
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async () => {
+        const lines: string[] = ['opencli_doctor 四层自检:']
+        const next: string[] = []
+        let cliOk = false
+        let vraw = ''
+        try {
+          const v = await this.runOpencli(['--version'], 15000)
+          vraw = (v.stdout.trim() || v.stderr.trim()).split('\n')[0]?.trim() ?? ''
+          cliOk = v.exitCode === 0 && vraw.length > 0
+        } catch { /* 走 ✗ 分支 */ }
+        lines.push(`${cliOk ? '✓' : '✗'} CLI:${cliOk ? vraw : `opencli 不可用(${this.bin})`}`)
+        if (!cliOk) next.push('安装 CLI:npm i -g @jackwener/opencli,然后 opencli daemon restart(或装 OpenCLIApp https://opencli.info/download)')
+        if (cliOk) {
+          const r = await this.runOpencli(['daemon', 'status'], 15000)
+          const raw = `${r.stdout}\n${r.stderr}`
+          const daemonRunning = /Daemon:\s*running/.test(raw)
+          lines.push(`${daemonRunning ? '✓' : '✗'} daemon:${daemonRunning ? (raw.match(/Version:\s*(\S+)/)?.[1] ?? '') + ' · ' + (raw.match(/Uptime:\s*([^\n]+)/)?.[1]?.trim() ?? '') : '未运行/无响应'}`)
+          if (!daemonRunning) {
+            next.push('opencli daemon restart')
+          } else {
+            const extLine = (raw.match(/Extension:\s*([^\n]+)/)?.[1] ?? '').trim()
+            const profilesLine = (raw.match(/Profiles:\s*([^\n]+)/)?.[1] ?? '').trim()
+            const extConnected = /^connected/.test(extLine) || /profiles connected/.test(extLine)
+            const noneSelected = /none selected/i.test(extLine)
+            if (extConnected && !noneSelected) {
+              lines.push(`✓ BrowserBridge:${extLine || 'connected'}`)
+            } else if (extConnected && noneSelected) {
+              lines.push(`⚠ BrowserBridge:多档案未选默认(${profilesLine})`)
+              next.push('opencli profile list 后 opencli profile use <档案名>;若选完仍报"Multiple profiles",升级 CLI:npm i -g @jackwener/opencli@latest(1.8.6 有选择不生效的 bug)')
+            } else {
+              lines.push('✗ BrowserBridge:扩展未连接')
+              next.push('装扩展(需人在浏览器点一次):https://github.com/jackwener/OpenCLI/releases 下载 opencli-extension-*.zip 解压 → Chrome/Edge 扩展页开"开发者模式"→"加载解压缩的扩展";装完等扩展自动重连')
+            }
+          }
+        }
+        const sites = this.adapterCache !== null ? normalizeAdapterList(this.adapterCache.json).length : null
+        lines.push(`✓ 插件:${sites !== null ? `${sites} 站目录已注入` : '站点目录后台加载中'} · 审批门 ${this.state.approval === 'on' ? '开' : '关'}`)
+        if (next.length === 0) {
+          lines.push('', '全绿。冒烟建议:site v2ex hot(无需登录);登录态站点先在浏览器登录,再用面板「重新巡检」确认。')
+        } else {
+          lines.push('', '下一步(按顺序):', ...next.map((s, i) => `${i + 1}. ${s}`))
+        }
+        return { text: lines.join('\n').slice(0, 3000) }
+      },
+    }))
+  }
 
   /** 决策工具(verify 断言 / 封闭选项集选择):亚秒返回,不消耗大模型 token。 */
   private registerDecisionTools(): void {

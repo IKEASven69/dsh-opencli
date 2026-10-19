@@ -577,3 +577,19 @@ describe('cronMatches(模拟使用 Finding 2.1 回归)', () => {
     expect(cm('0 9,12 * * *', at(10, 0))).toBe(false)
   })
 })
+
+describe('opencli_doctor 工具(AGENT_INSTALL.md 的自检闭环)', () => {
+  it('四层诊断:CLI/daemon 绿,扩展未连接给装扩展指引,失败层编号列出下一步', async () => {
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('opencli_doctor')!
+    expect(tool).toBeDefined()
+    const r = await tool.execute({})
+    expect(r.text).toContain('✓ CLI')
+    expect(r.text).toContain('✓ daemon:v1.8.7')
+    // 桩的 daemon status 无 Extension 行 → 判未连接,给"加载解压缩的扩展"指引
+    expect(r.text).toContain('✗ BrowserBridge:扩展未连接')
+    expect(r.text).toContain('加载解压缩的扩展')
+    expect(r.text).toContain('下一步')
+    // 插件层常绿:审批门状态在输出里
+    expect(r.text).toMatch(/插件:.*审批门 (开|关)/)
+  })
+})
