@@ -43,6 +43,7 @@ const rpcBody = (m, args) => JSON.stringify({ type: 'client-request', rpcId: 'e2
   await sleep(4000);
 
   const clickBtn = (label) => page.evaluate((l) => { const b = [...document.querySelectorAll('button')].find(x => (x.textContent || '').trim() === l); if (b) { b.click(); return true; } return false; }, label);
+  const openSettings = async () => { if (await clickBtn('设置')) return true; await page.keyboard.down('Control'); await page.keyboard.down('Alt'); await page.keyboard.press(','); await page.keyboard.up('Alt'); await page.keyboard.up('Control'); await sleep(900); return page.evaluate(() => !!document.querySelector("[role='dialog']")); }; 
   // 页面上下文里发插件 RPC(与面板完全同通道)
   const rpc = (m, args) => page.evaluate(async ({ m, body }) => {
     const res = await fetch('/api/opencli/' + m, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
@@ -50,7 +51,7 @@ const rpcBody = (m, args) => JSON.stringify({ type: 'client-request', rpcId: 'e2
   }, { m, body: rpcBody(m, args) }).then((t) => { try { return JSON.parse(t).result; } catch { return { ok: false, raw: t.slice(0, 200) }; } });
 
   // 1) try-run 真数据卡片(试试看后端)
-  const t1 = await rpc('try-run', { request: { line: 'site v2ex hot' } });
+  const t1 = await rpc('try-run', { request: { line: 'site juejin hot' } });
   const t1v = t1 && t1.value ? t1.value : t1;
   console.log('TRY-RUN ok=' + (t1v && t1v.ok) + ' outLen=' + (t1v && t1v.output ? String(t1v.output).length : (t1v && t1v.stdout ? String(t1v.stdout).length : 'n/a')));
   console.log('TRY-RUN head=' + JSON.stringify(t1v).slice(0, 300));
@@ -60,7 +61,7 @@ const rpcBody = (m, args) => JSON.stringify({ type: 'client-request', rpcId: 'e2
   console.log('LOGIN-CHECK ' + JSON.stringify(t2).slice(0, 400));
 
   // 3) 定时任务 → 立即跑(v2ex,真实采集)→ 快照
-  const t3 = await rpc('schedule-add', { request: { site: 'site v2ex hot', cron: '0 4 * * *', retry: 1, notify: false } });
+  const t3 = await rpc('schedule-add', { request: { site: 'site juejin hot', cron: '0 4 * * *', retry: 1, notify: false } });
   const sid = t3 && t3.value ? t3.value.id : null;
   console.log('SCHEDULE-ADD id=' + sid);
   if (sid) {
@@ -75,7 +76,7 @@ const rpcBody = (m, args) => JSON.stringify({ type: 'client-request', rpcId: 'e2
       if (hist.length > 0 && snaps.length > 0) break;
     }
     // 4) 时间线面板真实渲染 + 报告生成
-    await clickBtn('设置'); await sleep(1200);
+    await openSettings(); await sleep(1200);
     await clickBtn('浏览器代理'); await sleep(1800);
     await clickBtn('自动化'); await sleep(1200);
     const rowTxt = await page.evaluate(() => { const row = [...document.querySelectorAll("[role='dialog'] .o4-row")].find(x => (x.innerText || '').includes('立即跑')); return row ? row.innerText.replace(/\n/g, '|').slice(0, 200) : '(no-row)'; });

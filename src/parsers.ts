@@ -90,7 +90,7 @@ export function normalizeAdapterList(input: unknown): AdapterInfo[] {
   const bySite = new Map<string, AdapterInfo & { _kinds: Set<string> }>()
   for (const raw of input as RawCommandEntry[]) {
     if (raw === null || typeof raw !== 'object') continue
-    const site = raw.site ?? raw.command?.split('/')[0]
+    const { site, name } = splitCommandEntry(raw)
     if (site === undefined || site.length === 0) continue
     let a = bySite.get(site)
     if (a === undefined) {
@@ -98,7 +98,7 @@ export function normalizeAdapterList(input: unknown): AdapterInfo[] {
       bySite.set(site, a)
     }
     if (a.domain === undefined && raw.domain !== undefined) a.domain = raw.domain
-    const cmd = raw.name ?? raw.command?.split('/')[1] ?? ''
+    const cmd = name ?? ''
     if (cmd.length > 0 && !a.commands.includes(cmd)) a.commands.push(cmd)
     if (raw.access !== undefined) a._kinds.add(raw.access)
     if (a.sample.length === 0 && raw.description !== undefined) a.sample = raw.description
@@ -143,13 +143,32 @@ export function commandAccess(input: unknown, adapter: string, command: string):
 }
 
 /** 有 whoami 命令的站点列表(登录态巡检用),按命令数降序稳定排序。 */
+/** 从 command 字符串取 site/name,两代形状统一:1.x "site/cmd" 斜杠,2.0 "site cmd" 空格且无 site/name 字段。 */
+function splitCommandEntry(raw: RawCommandEntry): { site?: string; name?: string } {
+  let site = raw.site
+  let name = raw.name
+  if ((site === undefined || name === undefined) && typeof raw.command === 'string') {
+    const slash = raw.command.split('/')
+    if (slash.length >= 2 && slash[0] !== '' && slash[1] !== '') {
+      if (site === undefined) site = slash[0]
+      if (name === undefined) name = slash.slice(1).join('/')
+    } else {
+      const sp = raw.command.indexOf(' ')
+      if (sp > 0) {
+        if (site === undefined) site = raw.command.slice(0, sp)
+        if (name === undefined) name = raw.command.slice(sp + 1)
+      }
+    }
+  }
+  return { site, name }
+}
+
 export function sitesWithWhoami(input: unknown, limit = 40): string[] {
   if (!Array.isArray(input)) return []
   const sites = new Map<string, number>()
   for (const raw of input as RawCommandEntry[]) {
     if (raw === null || typeof raw !== 'object') continue
-    const site = raw.site ?? raw.command?.split('/')[0]
-    const name = raw.name ?? raw.command?.split('/')[1]
+    const { site, name } = splitCommandEntry(raw)
     if (site === undefined || name !== 'whoami') continue
     sites.set(site, (sites.get(site) ?? 0) + 1)
   }

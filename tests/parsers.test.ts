@@ -162,3 +162,31 @@ describe('extractJsonObject(2.0 JSON 后跟横幅的提取)', () => {
     expect(extractJsonObject('plain text only')).toBeNull()
   })
 })
+
+describe('normalizeAdapterList(opencli 2.0 无 site/name 字段形状)', () => {
+  it('command 空格分隔("site cmd")也能归组出站点与命令;1.x 斜杠形状不回归', () => {
+    const list2 = normalizeAdapterList([
+      { command: '12306 login', description: 'Open 12306 login', access: 'write' },
+      { command: '12306 me', description: 'Show account', access: 'read' },
+      { command: 'juejin hot', description: 'Juejin hot list', access: 'read' },
+    ])
+    const byName = new Map(list2.map((a) => [a.name, a]))
+    expect(byName.get('12306')!.commands).toEqual(['login', 'me'])
+    expect(byName.get('12306')!.commandCount).toBe(2)
+    expect(byName.get('juejin')!.commandCount).toBe(1)
+    // 1.x 斜杠形状回归
+    const list1 = normalizeAdapterList(LIST_JSON)
+    expect(list1.find((a) => a.name === 'bilibili')!.commands).toEqual(['search'])
+  })
+})
+
+describe('sitesWithWhoami(2.0 形状)', () => {
+  it('"github whoami" 空格形态识别为 github 站;非 whoami 命令不计', () => {
+    const sites = sitesWithWhoami([
+      { command: 'github whoami', access: 'read' },
+      { command: 'github login', access: 'write' },
+      { command: 'zhihu hot', access: 'read' },
+    ])
+    expect(sites).toEqual(['github'])
+  })
+})
