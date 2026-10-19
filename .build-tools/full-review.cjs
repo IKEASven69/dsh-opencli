@@ -49,7 +49,15 @@ const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'
   const has = (t) => page.evaluate((t) => [...document.querySelectorAll("[role='dialog']")].some(d => (d.innerText || '').includes(t)), t);
   const shot = (n) => page.screenshot({ path: path.join(OUT, n) });
 
-  ok('打开 设置 弹窗', await clickBtn('设置')); await sleep(1200);
+  // dsh 0.2.1 起侧边栏"设置"按钮移入账号菜单——先试旧按钮,失败走快捷键 Ctrl+Alt+,(两版通用)
+  const openSettings = async () => {
+    if (await clickBtn('设置')) return true;
+    await page.keyboard.down('Control'); await page.keyboard.down('Alt'); await page.keyboard.press(',');
+    await page.keyboard.up('Alt'); await page.keyboard.up('Control');
+    await sleep(800);
+    return page.evaluate(() => !!document.querySelector("[role='dialog']"));
+  };
+  ok('打开 设置 弹窗', await openSettings()); await sleep(1200);
   ok('打开 浏览器代理 分区', await clickBtn('浏览器代理'));
   for (let w = 0; w < 30; w++) { if (await has('一切正常') || (await has('检测中')) && w > 20) break; await sleep(1500); }
   await sleep(4000);
