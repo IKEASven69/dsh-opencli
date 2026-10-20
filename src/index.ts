@@ -1953,7 +1953,7 @@ export class OpencliService extends TypertRemoteService {
     if (lines.length === 0) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], error: '目录无只读命令' }
     const results: BenchItem[] = []
     for (let i = 0; i < lines.length; i++) {
-      const [site, command] = lines[i]!.split(/s+/) as [string, string]
+      const [site, command] = lines[i]!.split(/\s+/) as [string, string]
       const started = Date.now()
       try {
         const out = await this.runOpencli([site, command], 45_000)
@@ -1973,7 +1973,7 @@ export class OpencliService extends TypertRemoteService {
     let prevText: string | null = null
     try {
       mkdirSync(dir, { recursive: true })
-      const olds = readdirSync(dir).filter((f) => /^canary-.+.md$/.test(f)).sort()
+      const olds = readdirSync(dir).filter((f) => /^canary-.+\.md$/.test(f)).sort()
       prevText = olds.length > 0 ? await readFile(join(dir, olds[olds.length - 1]!), 'utf8') : null
     } catch { /* 首跑或目录不可读:无基线 */ }
     const prev = parseCanarySnapshot(prevText)
@@ -1982,7 +1982,7 @@ export class OpencliService extends TypertRemoteService {
     const file = join(dir, `canary-${stamp}.md`)
     try {
       await writeFile(file, md, 'utf8')
-      const olds = readdirSync(dir).filter((f) => /^canary-.+.md$/.test(f)).sort()
+      const olds = readdirSync(dir).filter((f) => /^canary-.+\.md$/.test(f)).sort()
       if (olds.length > CANARY_KEEP) for (const f of olds.slice(0, olds.length - CANARY_KEEP)) { try { unlinkSync(join(dir, f)) } catch { /* 忽略 */ } }
     } catch { /* 落盘失败不改变结论 */ }
     const failedCmds = new Set(results.filter((x) => !x.ok).map((x) => x.command))
@@ -2211,8 +2211,18 @@ export class OpencliService extends TypertRemoteService {
   private async runOpencliRaw(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
     await this.acquireGovernor()
     try {
-      // 0.2.0+ 原生 seam 优先
-      const viaSub = await this.runSubprocess(argv, timeoutMs, stdoutMaxBytes)
+      // 0.2.0+ 原生 seam 优先。防线:seam 冷启动有竞态(真机实测:daemon 刚起时首几条
+      // 抛 'reading includes'/'destructure policy',几分钟后自愈;而 0.1.x shell 回落
+      // 在 0.2.1 宿主上会截断 argv——'xiaohongshu' 变 'xiaohong')。所以 seam 抛错先
+      // 重试 seam(400ms×2),三败才回落 shell。
+      let viaSub: Awaited<ReturnType<OpencliService['runSubprocess']>> = null
+      for (let attempt = 0; attempt < 3 && viaSub === null; attempt++) {
+        try {
+          viaSub = await this.runSubprocess(argv, timeoutMs, stdoutMaxBytes)
+        } catch {
+          if (attempt < 2) await new Promise((res) => setTimeout(res, 400))
+        }
+      }
       if (viaSub !== null) {
         this.noteRateLimit(`${viaSub.stdout}\n${viaSub.stderr}`)
         return viaSub

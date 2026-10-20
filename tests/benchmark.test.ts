@@ -271,16 +271,16 @@ describe('benchmark agent 工具装配', () => {
 })
 
 describe('canary 漂移监控(纯函数 + 调度分支)', () => {
-  it('pickCanaryCommands:命令数排序取 top-20,热榜语义优先,只取读命令', () => {
+  it('pickCanaryCommands:命令数排序取 top-20,只挑零参热榜语义命令,没有则跳站', () => {
     const ads = [
       { name: 'a', commands: ['hot', 'comment'], kinds: ['read', 'write'] },      // hot 优先
       { name: 'b', commands: ['search', 'watchlater'], kinds: ['read', 'read'] }, // 无热榜词→首条 read
       { name: 'c', commands: ['post'], kinds: ['write'] },                        // 纯写站跳过
-      { name: 'd', commands: Array.from({ length: 30 }, (_, i) => [`cmd${i}`]), kinds: Array.from({ length: 30 }, () => 'read') },
+      { name: 'd', commands: Array.from({ length: 30 }, (_, i) => `cmd${i}`), kinds: Array.from({ length: 30 }, () => 'read') },
     ]
     const picks = pickCanaryCommands(ads as never)
     expect(picks).toContain('a hot')
-    expect(picks).toContain('b search')
+    expect(picks.some((p) => p.startsWith('b '))).toBe(false) // b 无热榜命令,跳过
     expect(picks.some((p) => p.startsWith('c '))).toBe(false)
     expect(picks.length).toBeLessThanOrEqual(20)
   })
@@ -324,5 +324,35 @@ describe('canary 漂移监控(纯函数 + 调度分支)', () => {
     expect(hist[0].summary).toContain('canary:18/20')
     expect(hist[0].summary).toContain('新失败:x hot')
     await (svc as unknown as { scheduleRemove: (x: { id: string }) => Promise<{ ok: boolean }> }).scheduleRemove({ id: add.id! })
+  })
+})
+
+describe('canary 伪站点排除(真机 0/20 回归)', () => {
+  it('browser/adapter/daemon/auth 等全局命名空间不进 canary 集', () => {
+    const ads = [
+      { name: 'browser', commands: ['screenshot', 'state'], kinds: ['read', 'read'] },
+      { name: 'daemon', commands: ['status'], kinds: ['read'] },
+      { name: 'auth', commands: ['status'], kinds: ['read'] },
+      { name: 'juejin', commands: ['hot'], kinds: ['read'] },
+    ]
+    const picks = pickCanaryCommands(ads as never)
+    expect(picks).toEqual(['juejin hot'])
+  })
+})
+
+describe('canaryRun 真实 argv(回归:heredoc 曾把 split(/\s+/) 吃成 split(/s+),xiaohongshu 被按字母 s 切碎)', () => {
+  it('逐站 argv 是 [站, 命令] 两段,undefined 不进 argv;轮转文件名带点', async () => {
+    process.env.DSH_OPENCLI_CANARY_DIR = path.join(benchDir, 'canary2')
+    shell.calls = []
+    const r = await (svc as unknown as { canaryRun: () => Promise<{ ok: boolean; total: number; passed: number; path?: string }> }).canaryRun()
+    expect(r.total).toBeGreaterThan(0)
+    const siteCalls = shell.calls.filter((c) => !c.includes('--version') && !c.includes('list') && !c.includes('daemon'))
+    expect(siteCalls.length).toBeGreaterThan(0)
+    for (const c of siteCalls) {
+      const toks = c.replace(/^.*?opencli\S*\s+/, '').split(' ')
+      expect(toks.length, 'call=' + c).toBeGreaterThanOrEqual(2)
+      expect(toks.every((x) => x.length > 0 && x !== 'undefined'), 'call=' + c).toBe(true)
+    }
+    expect(r.path ?? '', 'path').toMatch(/canary-.+\.md$/)
   })
 })

@@ -87,18 +87,25 @@ export function renderBenchmarkTable(items: BenchItem[]): string {
 export const CANARY_TOP = 20
 export const CANARY_KEEP = 14
 
+/** 2.0 目录里的全局命名空间(不是站点):browser/adapter/daemon/auth 等的命令
+ * (browser screenshot、daemon status、auth status)会被归一化成伪站点——canary
+ * 拿它们当站点命令跑必挂(真机首跑 0/20 的元凶之一),门口排除。 */
+export const RESERVED_NAMESPACES = new Set(['browser', 'adapter', 'daemon', 'auth', 'profile', 'doctor', 'extension', 'chrome', 'opencli', 'canary', 'benchmark'])
+
 /** 从归一化适配器目录挑 canary 集:命令数 top-20 站,每站取第一条只读命令
  * (优先热榜语义:hot/latest/feed/trending/daily/best/home,命中即用,否则首条 read)。 */
-export function pickCanaryCommands(adapters: Array<{ name: string; commands: string[]; kinds: string[] }>): string[] {
-  const hotWords = ['hot', 'latest', 'feed', 'trending', 'daily', 'best', 'home', 'frontpage']
-  const ranked = [...adapters].sort((a, b) => b.commands.length - a.commands.length || a.name.localeCompare(b.name))
+export function pickCanaryCommands(adapters: Array<{ name: string; commands: string[] }>): string[] {
+  // 只挑零参热榜语义命令:hot/latest/feed/… 这类天然免参;没有就跳过该站。
+  // (真机首版用 kinds[i] 逐位过滤——但 kinds 是 Set 去重集合,与 commands 索引根本
+  // 不对齐,board-create/ask 这类必带参命令混进 canary,20 站里 12 个 missingArgument)
+  const hotWords = ['hot', 'latest', 'feed', 'trending', 'daily', 'best', 'home', 'frontpage', 'following', 'notifications', 'digest', 'recommend']
+  const ranked = [...adapters].filter((a) => !RESERVED_NAMESPACES.has(a.name)).sort((a, b) => b.commands.length - a.commands.length || a.name.localeCompare(b.name))
   const out: string[] = []
   for (const a of ranked) {
     if (out.length >= CANARY_TOP) break
-    const reads = a.commands.filter((_, i) => (a.kinds[i] ?? 'read') !== 'write')
-    const hit = reads.find((c) => hotWords.some((w) => c.includes(w)))
-    const pick = hit ?? reads[0]
-    if (pick !== undefined) out.push(`${a.name} ${pick}`)
+    const hit = a.commands.find((c) => hotWords.some((w) => c === w))
+      ?? a.commands.find((c) => hotWords.some((w) => c.startsWith(w + '-') || c.endsWith('-' + w)))
+    if (hit !== undefined) out.push(`${a.name} ${hit}`)
   }
   return out
 }
