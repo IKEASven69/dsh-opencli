@@ -206,9 +206,21 @@ export function siteBatchCardRender(args: unknown, value: unknown): TextCardBloc
 // ── browser_do:步骤式(命令/结果分段) ──
 
 /**
+ * 步骤截图文件名提取:跨平台路径分隔(win32 反斜杠/POSIX 正斜杠)取末段。
+ * render 是纯投影拿不到宿主 FS,只做字符串切分;空段过滤防路径尾部分隔符产出空名。
+ */
+function shotNameOf(shot: string): string {
+  const seg = shot.split(/[\\/]/).filter((s) => s.length > 0)
+  return seg.length > 0 ? seg[seg.length - 1]! : shot
+}
+
+/**
  * browser_do 预览卡:徽章头(子命令+状态色)→ 命令段 → 结果段,原文逐字保留。
  * 失败前缀/白名单拒绝按 site 同款规则分类;✗ 时末尾附人工接管提示(原文自带
  * 登录指引的除外,与 site 同款互斥)。
+ * 宿主 execute 结果可带可选 shot 字段(步骤自动截图的绝对路径,老结果没有):
+ * 模型侧只要文件名提示去引用截图——base64 嵌进 text 卡会撑爆模型上下文,绝不内联;
+ * 故以纯文本 (shot: <文件名>) 附在步骤命令行尾,完整路径在轨迹行(面板截图墙可放大)。
  */
 export function browserDoCardRender(args: unknown, value: unknown): TextCardBlock[] {
   const text = textOf(value)
@@ -217,12 +229,14 @@ export function browserDoCardRender(args: unknown, value: unknown): TextCardBloc
   const command = a !== null && typeof a.command === 'string' ? a.command : '?'
   const rest = a !== null && Array.isArray(a.args) ? a.args.map(String) : []
   const session = a !== null && typeof a.session === 'string' && a.session.length > 0 && a.session !== 'dsh' ? a.session : null
+  const rec = asRecord(value)
+  const shotHint = rec !== null && typeof rec.shot === 'string' && rec.shot.length > 0 ? ` (shot: ${shotNameOf(rec.shot)})` : ''
   const ex = EXIT_FAIL.exec(text)
   const st: SiteCardStatus = ex !== null
     ? { status: 'fail', label: `exit ${ex[1]}` }
     : /^不允许的子命令/.test(text) ? { status: 'fail', label: '子命令被拒' } : { status: 'ok', label: 'exit 0' }
   const head = `▣ browser_do · ${command}${session !== null ? ` · session ${session}` : ''} — ${GLYPH[st.status]} ${st.label}`
-  const cmdSeg = `**命令**\n${fence(`$ ${shellJoin(['browser_do', command, ...rest])}`, 'console')}`
+  const cmdSeg = `**命令**\n${fence(`$ ${shellJoin(['browser_do', command, ...rest])}${shotHint}`, 'console')}`
   const payload = ex !== null ? text.slice(ex[0].length) : text
   const hint = st.status === 'fail' && !HAS_LOGIN_HINT.test(payload) ? [TAKEOVER_HINT] : []
   if (payload.trim().length === 0) return card(head, cmdSeg, ...hint)

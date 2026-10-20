@@ -1,5 +1,5 @@
-// 加固回归(low 五件套+catalog 过滤):每条修复配测试,防复发。
-import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+// 加固回归(low 五件套+catalog 过滤+工具重名防护):每条修复配测试,防复发。
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis'
 import { OpencliService } from '../lib/index.js'
@@ -19,6 +19,17 @@ class StubTools extends Service {
 class StubSystemPrompt extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'systemPrompt') }
   section(): void {}
+}
+
+/** F 任务桩:模拟 dsh-tools NamedEntries 对指定名抛重名错(或任意非重名错),验证让位与透传。 */
+class ConflictTools extends StubTools {
+  conflictOn = new Set<string>()
+  otherErrorOn = new Set<string>()
+  register(def: { name: string; execute: (a: unknown) => Promise<{ text: string }> }): void {
+    if (this.otherErrorOn.has(def.name)) throw new Error(`boom: register failed for ${def.name}`)
+    if (this.conflictOn.has(def.name)) throw new Error(`tool "${def.name}" is already registered`)
+    super.register(def)
+  }
 }
 
 let ctx: InstanceType<typeof Context>
@@ -190,5 +201,62 @@ describe('真机走查发现 B/C 修复:site 前缀剥离+watch 大小写+cron �
     const r = await svc.scheduleAdd({ site: 'zhihu hot', cron: '59 23 31 12 6' })
     expect(r.ok).toBe(true)
     if (r.id !== undefined) await svc.scheduleRemove({ id: r.id })
+  })
+})
+
+describe('F:工具重名防护(重名让位,不再整插件炸加载)', () => {
+  // 独立 context:重名场景必须从插件加载那一刻就生效,不能复用 beforeAll 里已注册好的共享服务
+  const makeCtx = async (conflict: Set<string>, other: Set<string>): Promise<{ c: InstanceType<typeof Context>; ct: ConflictTools }> => {
+    const c = new Context()
+    await c.plugin(StubShell)
+    await c.plugin(ConflictTools)
+    await c.plugin(StubSystemPrompt)
+    const ct = c.tools as unknown as ConflictTools
+    ct.conflictOn = conflict
+    ct.otherErrorOn = other
+    return { c, ct }
+  }
+  const stopCtx = async (c: InstanceType<typeof Context>): Promise<void> => {
+    const cc = c as unknown as { stop?: () => Promise<void>; dispose?: () => Promise<void> }
+    await (cc.stop ?? cc.dispose ?? (async () => {}))()
+  }
+
+  it('撞名工具让位:服务正常构造、名进 toolConflicts/status.conflicts、其余工具照常注册、warn 一次', async () => {
+    const { c, ct } = await makeCtx(new Set(['browser_open', 'so_pick']), new Set())
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await c.plugin(OpencliService) // dsh 0.2.1 实测:不接住这个错整个插件加载失败——这一行不抛即达标
+    const warned = warnSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n')
+    warnSpy.mockRestore()
+    const svc2 = c.opencli as OpencliService
+    // 限流归零:status/doctor 各要跑 2 次 opencli,默认 750ms 间隔会把测试拖到超时边缘
+    const P = (svc2 as unknown as { usagePolicy: { minDelayMs: number; maxConcurrency: number; burst: number } }).usagePolicy
+    P.minDelayMs = 0
+    P.maxConcurrency = 8
+    P.burst = 100
+    const conflicts = (svc2 as unknown as { toolConflicts: string[] }).toolConflicts
+    expect([...conflicts].sort()).toEqual(['browser_open', 'so_pick'])
+    // 其余工具照常注册(五个注册方法各抽代表;让位的两个不在表里)
+    for (const name of ['browser_state', 'site_batch', 'opencli_catalog', 'script_catalog', 'site', 'so_verify', 'opencli_doctor']) {
+      expect(ct.registered.has(name)).toBe(true)
+    }
+    expect(ct.registered.has('browser_open')).toBe(false)
+    expect(ct.registered.has('so_pick')).toBe(false)
+    // 宿主日志:一次 warn,含让位名单与原因
+    expect(warned).toContain('browser_open')
+    expect(warned).toContain('已让位')
+    // status RPC 暴露 conflicts(面板/agent 可见)
+    const st = await svc2.status()
+    expect([...(st.conflicts ?? [])].sort()).toEqual(['browser_open', 'so_pick'])
+    // doctor 输出 ⚠ 行
+    const doc = await ct.registered.get('opencli_doctor')!.execute({})
+    expect(doc.text).toContain('另一插件注册了同名工具,本插件已让位这些命令')
+    expect(doc.text).toContain('browser_open')
+    await stopCtx(c)
+  })
+
+  it('非重名错误仍抛:注册器的其他异常照常炸出,不被重名防护吞掉', async () => {
+    const { c } = await makeCtx(new Set(), new Set(['browser_click']))
+    await expect(c.plugin(OpencliService)).rejects.toThrow('boom: register failed for browser_click')
+    await stopCtx(c)
   })
 })

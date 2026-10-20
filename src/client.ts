@@ -11,7 +11,7 @@ import { createElement, useEffect, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
-  AuditListResult, DaemonStartResult, IngestEvent, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
+  AuditListResult, DaemonStartResult, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
   TraceLine, TraceListResult,
 } from './types.ts'
 import { siteIconOf } from './site-icons.ts'
@@ -24,10 +24,13 @@ const RELEASES_URL = 'https://github.com/IKEASven69/dsh-opencli/releases'
 
 type Lang = 'zh' | 'en'
 
+/* desc 的站点数落成字面量 180:旧模板串引用了未声明变量 status——浏览器里偶然解析成
+   window.status(字符串,恒回退 180),Node 一 import 即 ReferenceError;首启向导纯函数
+   要随本模块进 vitest(tests/onboarding.test.ts),模块级求值必须纯净。 */
 const STR = {
   zh: {
     title: 'OpenCLI 浏览器代理',
-    desc: `驱动你登录态的真实浏览器 · ${status?.adapterSites ?? 180} 站 / 200+ 命令一步式执行 · 由 OpenCLI daemon 驱动`,
+    desc: '驱动你登录态的真实浏览器 · 180 站 / 200+ 命令一步式执行 · 由 OpenCLI daemon 驱动',
     tabOverview: '总览', tabCommands: '命令', tabAuto: '自动化', tabSec: '安全与设置',
     daemonRunning: '运行中', daemonDown: '未运行', daemonStale: '失联', bridgeOn: '已连接', bridgeOff: '未连接',
     recheck: '重新巡检', checking: '巡检中…', diagAll: '一切正常', detail: '详情',
@@ -74,6 +77,11 @@ const STR = {
     step1: '安装 opencli CLI', step1c: 'npm i -g @jackwener/opencli(官方一等公民路径)',
     step2: '启动 daemon,装 Chrome 扩展', step2c: 'opencli daemon restart',
     step3: '回到这里点「刷新/诊断」',
+    obT: '首启向导', obSub: '四层自检:CLI → daemon → BrowserBridge → 登录态;逐层修复,全绿后本卡自动隐藏',
+    obCliOk: 'opencli CLI 已就绪', obCliBad: '未检测到 opencli CLI', obCliFix: '复制安装命令',
+    obBridgeHint: '从 GitHub Releases 下载 BrowserBridge 扩展,到 Chrome 扩展页开发者模式加载,再回面板重巡检',
+    obRelBtn: '打开 Releases',
+    obLoginOk: '登录态正常', obLoginPart: '登录态部分失效', obLoginBad: '登录巡检全红', obLoginNa: '尚未巡检登录态',
     siteEmpty: '适配器返回空(可能未登录或无数据)。请先在真实 Chrome 登录后重试。',
     guideS1: '安装 opencli CLI:npm i -g @jackwener/opencli',
     guideS2: '启动 daemon(opencli daemon restart),Chrome 装 BrowserBridge 扩展并登录常用站',
@@ -93,7 +101,7 @@ const STR = {
   },
   en: {
     title: 'OpenCLI Browser Proxy',
-    desc: `Drive your logged-in real browser · ${status?.adapterSites ?? 180} sites / 200+ commands one-shot · powered by the OpenCLI daemon`,
+    desc: 'Drive your logged-in real browser · 180 sites / 200+ commands one-shot · powered by the OpenCLI daemon',
     tabOverview: 'Overview', tabCommands: 'Commands', tabAuto: 'Automation', tabSec: 'Security',
     daemonRunning: 'running', daemonDown: 'not running', daemonStale: 'stale', bridgeOn: 'connected', bridgeOff: 'not connected',
     recheck: 'Re-check', checking: 'checking…', diagAll: 'All good', detail: 'detail',
@@ -140,6 +148,11 @@ const STR = {
     step1: 'Install opencli CLI', step1c: 'npm i -g @jackwener/opencli',
     step2: 'Start daemon, install Chrome extension', step2c: 'opencli daemon restart',
     step3: 'Come back and hit Refresh',
+    obT: 'Onboarding wizard', obSub: 'Four-layer self-check: CLI → daemon → BrowserBridge → logins; fix layer by layer, this card hides itself once all green',
+    obCliOk: 'opencli CLI ready', obCliBad: 'opencli CLI not detected', obCliFix: 'Copy install command',
+    obBridgeHint: 'Download the BrowserBridge extension from GitHub Releases, load it on the Chrome extensions page in developer mode, then re-check here',
+    obRelBtn: 'Open Releases',
+    obLoginOk: 'Logins healthy', obLoginPart: 'Some logins failed', obLoginBad: 'All login checks failed', obLoginNa: 'Login check not run yet',
     siteEmpty: 'Adapter returned empty (not logged in?). Log in on real Chrome first.',
     guideS1: 'Install opencli CLI: npm i -g @jackwener/opencli',
     guideS2: 'Start the daemon (opencli daemon restart), install the BrowserBridge Chrome extension and log in to your sites',
@@ -743,6 +756,15 @@ function Panel(): ReturnType<typeof createElement> {
     // 最近一条 watch 命中(ingest-events,倒序取首个 kind=watch-hit;无命中不渲染)
     const watchHit = (ingest ?? []).find((e) => e.kind === 'watch-hit') ?? null
     return createElement('div', null,
+      // 首启向导(置顶):任一层未就绪才渲染,门槛判定在纯函数里(全绿不占位)
+      shouldShowOnboarding({ status, loginResults })
+        ? createElement(OnboardingWizard, {
+            lang, status, adapters, loginResults, starting, running,
+            onFixDaemon: () => { void startDaemon() },
+            onOpenLogin: (site) => { void runDemo(`site ${site} login`) },
+            onCopyCliInstall: () => { void copyText('npm i -g @jackwener/opencli').then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) },
+          })
+        : null,
       // 试试看(通栏)
       createElement('div', { className: 'o4-card' },
         createElement('div', { className: 'o4-h3' },
@@ -1207,6 +1229,66 @@ export function apply(ctx: ClientContext): void {
   ))
 }
 
+/* ── 步骤截图墙(轨迹行/时间线行共用):trace-shot RPC 直取 base64 缩略图 ── */
+
+/** 轨迹行 + 可选步骤截图绝对路径(types.ts 的 TraceLine 不含 shot——宿主读侧原样透传,
+ *  老行无此字段;与 src/index.ts 的 ShotTraceLine 同款可选约定,types.ts 不动)。 */
+type ShotTraceLine = TraceLine & { shot?: string }
+
+/** trace-shot 结果的模块级缓存:path → Promise(成功 {data,mime} / 失败 null)。
+ *  缓存 Promise 而非结果:并发挂载同路径缩略图时共享同一在途请求,绝无二次 RPC。
+ *  时间线 15s 轮询会重挂行组件(key 含序号,新行插入即整体移位),组件级 state 兜不住
+ *  "同一行只加载一次";失败也缓存——面板会话内文件不会凭空长出来,重试只是白撞通道。 */
+const shotCache = new Map<string, Promise<{ data: string; mime: string } | null>>()
+
+function fetchShot(path: string): Promise<{ data: string; mime: string } | null> {
+  const hit = shotCache.get(path)
+  if (hit !== undefined) return hit
+  // mime 兜底 image/png:宿主 trace-shot 落的就是 PNG(screenshot 命令 .png 扩展名),缺省防御
+  const p = rpc<{ ok: boolean; data?: string; mime?: string }>('trace-shot', { request: { path } }).then((r) =>
+    r.ok && r.value?.ok === true && typeof r.value.data === 'string' && r.value.data.length > 0
+      ? { data: r.value.data, mime: typeof r.value.mime === 'string' && r.value.mime.length > 0 ? r.value.mime : 'image/png' }
+      : null)
+  shotCache.set(path, p)
+  return p
+}
+
+/**
+ * 步骤截图缩略图:48px 圆角小图;失败静默占位色块(绝不占错误位——截图只是复盘增强);
+ * 点击切全尺寸(height auto / maxHeight 420px)再点收起,纯前端状态不发请求。
+ * onClick stopPropagation:轨迹行点击是展开输出摘录,放大缩略图不该误触。
+ */
+function ShotThumb(props: { path: string }): ReturnType<typeof createElement> {
+  const { path } = props
+  // undefined=加载中 / null=失败占位 / 对象=可渲染
+  const [shot, setShot] = useState<{ data: string; mime: string } | null | undefined>(undefined)
+  const [zoom, setZoom] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void fetchShot(path).then((s) => { if (alive) setShot(s) })
+    return () => { alive = false }
+  }, [path])
+  if (shot === null) {
+    return createElement('span', { title: '截图不可用', style: { width: '48px', height: '48px', borderRadius: '6px', background: 'rgba(255,255,255,.08)', flex: 'none' } })
+  }
+  if (shot === undefined) {
+    return createElement('span', { style: { width: '48px', height: '48px', borderRadius: '6px', background: 'rgba(255,255,255,.05)', flex: 'none' } })
+  }
+  return createElement('img', {
+    src: `data:${shot.mime};base64,${shot.data}`,
+    alt: '',
+    title: zoom ? '收起' : '放大',
+    onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); setZoom(!zoom) },
+    style: zoom
+      ? { height: 'auto', maxHeight: '420px', maxWidth: '100%', borderRadius: '8px', cursor: 'zoom-out', flex: 'none', objectFit: 'contain' }
+      : { height: '48px', borderRadius: '6px', cursor: 'zoom-in', flex: 'none' },
+  })
+}
+
+/** 时间线历史行:宿主 schedule-history 契约为 {at,ok,summary},shot 为可选扩展字段
+ *  (轨迹侧已带步骤截图路径;此处按可选消费——宿主未发送时不渲染缩略图,零成本退化)。 */
+interface HistRow { at: string; ok: boolean; summary: string; shot?: string }
+
 /** 时间线面板:某定时任务的快照趋势(体积=采集规模的粗代理)+ 最近运行史。数据源 schedule-history。 */
 /** 行内时间线开关:按钮+面板自带局部状态(不依赖父组件 state,杜绝跨实例展开失效)。 */
 function TimelineToggle(props: { id: string; lang: Lang; label: string }): ReturnType<typeof createElement> {
@@ -1224,12 +1306,12 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
   // 模块级组件拿不到 Panel 内部的 t2/lang——经 props 自建同款查表
   const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
   const [snaps, setSnaps] = useState<Array<{ at: string; bytes: number; file: string }> | null>(null)
-  const [hist, setHist] = useState<Array<{ at: string; ok: boolean; summary: string }>>([])
+  const [hist, setHist] = useState<HistRow[]>([])
   const [err, setErr] = useState('')
   useEffect(() => {
     let alive = true
     const load = async (): Promise<void> => {
-      const r = await rpc<{ history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }>('schedule-history', { p: { id } } as unknown as Record<string, unknown>)
+      const r = await rpc<{ history: HistRow[]; snapshots?: Array<{ at: string; bytes: number; file: string }> }>('schedule-history', { p: { id } } as unknown as Record<string, unknown>)
       if (!alive) return
       if (r.ok) { setHist(r.value?.history ?? []); setSnaps(r.value?.snapshots ?? []) } else setErr(r.error?.message ?? 'err')
     }
@@ -1257,9 +1339,11 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
     ),
     createElement('div', { style: { fontSize: '10px', color: '#5F6873' } }, bars.length > 0 ? `${tt('tlN')(bars.length)} · ${(bars.reduce((s, b) => s + b.bytes, 0) / 1024).toFixed(0)} KB ${tt('tlTotal')}` : ''),
     createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '8px' } },
-      hist.slice(0, 5).map((h, i) => createElement('div', { key: i, style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)', display: 'flex', gap: '6px' } },
+      hist.slice(0, 5).map((h, i) => createElement('div', { key: i, style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)', display: 'flex', gap: '6px', alignItems: 'center' } },
         createElement('span', null, h.at.slice(5, 16).replace('T', ' ')),
         createElement('span', { style: { color: h.ok ? '#34C759' : '#FF8D85', flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, h.summary || (h.ok ? 'ok' : 'fail')),
+        // 行内步骤截图缩略图:shot 路径存在时才渲染(可选字段,宿主未发送即无图)
+        typeof h.shot === 'string' && h.shot.length > 0 ? createElement(ShotThumb, { path: h.shot }) : null,
       )),
     ),
   )
@@ -1278,7 +1362,7 @@ function TracePanel(props: { lang: Lang }): ReturnType<typeof createElement> {
   const { lang } = props
   // 模块级组件拿不到 Panel 内部的 t2/lang——经 props 自建同款查表(TimelinePanel 先例)
   const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
-  const [rows, setRows] = useState<TraceLine[] | null>(null)
+  const [rows, setRows] = useState<ShotTraceLine[] | null>(null)
   const [err, setErr] = useState('')
   const [openIdx, setOpenIdx] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
@@ -1310,10 +1394,15 @@ function TracePanel(props: { lang: Lang }): ReturnType<typeof createElement> {
     rows !== null && rows.length === 0 && err.length === 0 ? createElement('div', { className: 'o4-load' }, tt('traceEmpty')) : null,
     rows === null && err.length === 0 ? createElement('div', { className: 'o4-load' }, tt('loading')) : null,
     createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-      ...(rows ?? []).slice(0, 50).map((r, i) => createElement('div', { key: `${r.at}-${i}`, style: { display: 'contents' } },
+      ...(rows ?? []).slice(0, 50).map((r, i) => {
+        // 步骤截图:轨迹行的可选 shot 绝对路径;标记用文字 [图](零 emoji 规则),缩略图点击可放大
+        const shot = typeof r.shot === 'string' && r.shot.length > 0 ? r.shot : null
+        return createElement('div', { key: `${r.at}-${i}`, style: { display: 'contents' } },
         createElement('div', { className: 'o4-qrow', style: { alignItems: 'center' }, title: `${r.cmd}\n${r.at}`, onClick: () => { setOpenIdx(openIdx === i ? null : i) } },
           createElement('span', { className: `o4-dot ${r.exitCode === 0 ? 'g' : 'r'}`, style: { flex: 'none' } }),
           createElement('span', { style: { flex: 'none', fontSize: '10.5px', color: '#5F6873', fontFamily: 'ui-monospace,Consolas,monospace' } }, traceClock(r.at)),
+          shot !== null ? createElement('span', { title: '本步自动截图', style: { flex: 'none', fontSize: '10.5px', color: '#8B9AFF', fontFamily: 'ui-monospace,Consolas,monospace' } }, '[图]') : null,
+          shot !== null ? createElement(ShotThumb, { path: shot }) : null,
           createElement('span', { style: { flex: '1', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.75)' } }, r.cmd),
           createElement('span', { className: 'o4-bdg', style: { flex: 'none' } }, `exit ${r.exitCode}`),
           createElement('span', { style: { flex: 'none', fontSize: '10.5px', color: '#5F6873' } }, `${r.ms}ms`),
@@ -1321,7 +1410,89 @@ function TracePanel(props: { lang: Lang }): ReturnType<typeof createElement> {
         ),
         openIdx === i ? createElement('div', { className: 'o4-tryout', style: { marginTop: '-2px', marginBottom: '4px' } },
           r.outHead.length > 0 ? r.outHead : '—') : null,
-      )),
+      ) })
     ),
   )
+}
+
+/** 首启向导卡:总览顶部四层 checklist(CLI→daemon→BrowserBridge→登录态),每层一行"状态点+文案+修复动作"。
+ *  渲染门槛在调用侧由纯函数 shouldShowOnboarding 判定(全绿不占位);修复动作全部复用现有链路——
+ *  daemon 层=daemon-start 一键修复(与 hero 卡同一回调),Bridge 层=装扩展指引(Releases 链接),
+ *  CLI 层=复制安装命令(与"安装引导"手风琴同一命令),登录层=对带 login 命令的站跑 `site <站> login`(浏览器开登录页)。
+ *  模块级组件拿不到 Panel 内部 state——数据与回调经 props 传入(TimelinePanel 先例)。 */
+function OnboardingWizard(props: {
+  lang: Lang
+  status: OpencliStatus | null
+  adapters: AdapterInfo[] | null
+  loginResults: LoginCheckItem[]
+  starting: boolean
+  running: boolean
+  onFixDaemon: () => void
+  onOpenLogin: (site: string) => void
+  onCopyCliInstall: () => void
+}): ReturnType<typeof createElement> {
+  const { lang, status, adapters, loginResults, starting, running, onFixDaemon, onOpenLogin, onCopyCliInstall } = props
+  // 模块级组件拿不到 Panel 内部的 t2/lang——经 props 自建同款查表(TimelinePanel 先例)
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
+  // 四层判定与状态条/hero 卡同一数据源(status RPC + login-check),不引入第二套口径
+  const cliOk = status?.ok === true && status.bin !== null
+  const daemonUp = status?.daemon?.running === true
+  const bridgeOn = status?.daemon?.extension === 'connected'
+  const loginOk = loginResults.length > 0 && loginResults.every((r) => r.ok === true)
+  const loginAllRed = loginResults.length > 0 && loginResults.every((r) => r.ok !== true)
+  const loginDot: 'g' | 'r' | 'y' | 'n' = loginOk ? 'g' : (loginAllRed ? 'r' : (loginResults.length === 0 ? 'n' : 'y'))
+  const loginText = loginOk ? tt('obLoginOk') : (loginAllRed ? tt('obLoginBad') : (loginResults.length === 0 ? tt('obLoginNa') : tt('obLoginPart')))
+  // 登录层站点:目录里带 login 命令的站(纯函数过滤);封顶 24 防大目录把卡撑爆(输出截断防膨胀同款纪律)
+  const loginSitesAll = loginSitesFromAdapters(adapters)
+  const loginSites = loginSitesAll.slice(0, 24)
+  const loginHidden = loginSitesAll.length - loginSites.length
+  const ver = status?.version != null && status.version !== '' ? ' · v' + String(status.version).replace(/^v/, '') : ''
+  const row = (key: string, dot: 'g' | 'r' | 'y' | 'n', text: string, action: ReturnType<typeof createElement> | null): ReturnType<typeof createElement> =>
+    createElement('div', { key, className: 'o4-row' },
+      createElement('span', { className: `o4-dot ${dot}` }),
+      createElement('div', { className: 'grow' }, createElement('div', { className: 'o4-tt' }, text)),
+      action,
+    )
+  return createElement('div', { className: 'o4-card' },
+    createElement('div', { className: 'o4-h3' }, createElement('span', { className: 'o4-miniico' }, ic('zap', true)), tt('obT')),
+    createElement('div', { className: 'o4-sub' }, tt('obSub')),
+    row('cli', cliOk ? 'g' : 'r', cliOk ? tt('obCliOk') + ver : tt('obCliBad'),
+      cliOk ? null : createElement('button', { className: 'o4-btn ghost sm', onClick: onCopyCliInstall }, tt('obCliFix'))),
+    row('daemon', daemonUp ? 'g' : 'r', 'daemon ' + (daemonUp ? tt('daemonRunning') : tt('daemonDown')),
+      daemonUp ? null : createElement('button', { className: 'o4-btn sm', disabled: starting, onClick: onFixDaemon }, starting ? '…' : tt('fix'))),
+    row('bridge', bridgeOn ? 'g' : 'r', 'BrowserBridge ' + (bridgeOn ? tt('bridgeOn') : tt('bridgeOff')),
+      bridgeOn ? null : createElement('button', { className: 'o4-btn ghost sm', onClick: () => { window.open(RELEASES_URL, '_blank') } }, ic('ext', true), tt('obRelBtn'))),
+    !bridgeOn ? createElement('div', { className: 'o4-note' }, tt('obBridgeHint')) : null,
+    row('login', loginDot, loginText, null),
+    // 登录层修复动作:每个可登录站一枚「打开登录」按钮 → try-run 跑 `site <站> login`,浏览器会开登录页
+    loginSites.length > 0
+      ? createElement('div', { className: 'o4-sites', style: { marginTop: '2px' } },
+          ...loginSites.map((s) => createElement('span', { key: s.site, className: 'o4-site' },
+            ava(s.site, 24),
+            s.site,
+            createElement('button', { className: 'o4-btn ghost sm', disabled: running, onClick: () => onOpenLogin(s.site) }, tt('openLogin')),
+          )),
+          loginHidden > 0 ? createElement('span', { className: 'o4-chip' }, `+${loginHidden}`) : null,
+        )
+      : null,
+  )
+}
+
+/* ── 首启向导纯函数:渲染门槛与登录站过滤(导出供 tests/onboarding.test.ts 直接单测;
+     组件渲染部分留给 GUI 人工验收——client 侧无组件测试基建) ── */
+
+/** 首启向导渲染门槛:daemon 未运行 / BrowserBridge 未连接 / 登录巡检全红,任一命中即渲染;
+ *  全绿(或登录尚未巡检且其余两层绿)不渲染。status 为 null(status RPC 失败)按 daemon 未运行
+ *  处理——面板数据失明本身就是需要向导接管的状态。 */
+export function shouldShowOnboarding(p: { status: OpencliStatus | null; loginResults: ReadonlyArray<{ ok: boolean }> }): boolean {
+  const daemonUp = p.status?.daemon?.running === true
+  const bridgeOn = p.status?.daemon?.extension === 'connected'
+  const allRed = p.loginResults.length > 0 && p.loginResults.every((r) => r.ok !== true)
+  return !daemonUp || !bridgeOn || allRed
+}
+
+/** 登录层候选站:adapters 目录里 commands 精确含 'login' 的站(精确匹配——避免 login_qr 之类
+ *  衍生命令生成跑不通的 `site <站> login`);返回站名 + 可直接交给 try-run 的命令行。 */
+export function loginSitesFromAdapters(adapters: ReadonlyArray<AdapterInfo> | null): Array<{ site: string; line: string }> {
+  return (adapters ?? []).filter((a) => a.commands.includes('login')).map((a) => ({ site: a.name, line: `site ${a.name} login` }))
 }

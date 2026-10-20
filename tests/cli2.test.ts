@@ -1,6 +1,6 @@
 /**
  * opencli 2.0 兼容层单测(2026-10-17 v2.0.0 实测破坏面回归):
- * JSON 信封解包 / browser --session 语法与 adapter 命令族路由 / list 分页 / doctor 2.0 输出。
+ * JSON 信封解包 / browser --session 语法与 adapter 命令族路由 / 步骤自动截图 argv 形态 / list 分页 / doctor 2.0 输出。
  * 桩 shell 固定回 2.0.0;信封形状取自真机探针。
  */
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
@@ -53,6 +53,8 @@ beforeAll(async () => {
   // trace 目录按测试文件隔离:vitest 线程池下所有文件共享同 pid,共享目录会让
   // 本文件的 recordTrace 与其他文件的轨迹交错,断言"文件末三行"时互相污染(曾长期 flake)
   process.env.DSH_OPENCLI_TRACE_DIR = require('node:path').join(require('node:os').tmpdir(), 'dsh-opencli-test-traces-f-cli2-' + process.pid + '-' + Date.now())
+  // 截图目录同款隔离:补拍链路会 mkdir 真实路径(走非覆写分支时),绝不碰 ~/.dsh
+  process.env.DSH_OPENCLI_SHOTS_DIR = require('node:path').join(require('node:os').tmpdir(), 'dsh-opencli-test-shots-f-cli2-' + process.pid + '-' + Date.now())
   ctx = new Context()
   await ctx.plugin(StubShell)
   await ctx.plugin(StubTools)
@@ -102,15 +104,19 @@ describe('unwrapCli2(JSON 信封解包,形状嗅探不看版本号)', () => {
 })
 
 describe('runBrowserTraced 2.0 语法(--session + adapter 命令族路由)', () => {
-  // 覆写 runOpencli 捕获 argv 的用例必须在 finally 还原——否则污染后续 describe(doctor 等)走真壳
+  // 覆写 runOpencli 捕获 argv 的用例必须在 finally 还原——否则污染后续 describe(doctor 等)走真壳。
+  // open 等页面变化子命令成功后会自动补拍一张截图(同被覆写的 runOpencli 捕获),断言按调用序取。
   it('1.x 保持位置参数(回归)', async () => {
     S().cliMajorCache = 1
-    let captured = ''
+    const got: string[] = []
     const S2 = S()
     const orig = S2.runOpencli as (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
-    S2.runOpencli = async (a: string[]) => { captured = a.join(' '); return { exitCode: 0, stdout: 'ok', stderr: '' } }
+    S2.runOpencli = async (a: string[]) => { got.push(a.join(' ')); return { exitCode: 0, stdout: 'ok', stderr: '' } }
     try { await S().runBrowserTraced('dsh', ['open', 'https://example.com']) } finally { S2.runOpencli = orig }
-    expect(captured).toBe('browser dsh open https://example.com')
+    expect(got[0]).toBe('browser dsh open https://example.com')
+    // 1.x 补拍形态:browser <session> screenshot <path>
+    expect(got.length).toBe(2)
+    expect(got[1]).toMatch(/^browser dsh screenshot .+\.png$/)
   })
   it('2.0 创作命令搬家:init→adapter init,verify→adapter check(不带 session)', async () => {
     S().cliMajorCache = 2
@@ -122,20 +128,37 @@ describe('runBrowserTraced 2.0 语法(--session + adapter 命令族路由)', () 
       await S().runBrowserTraced('dsh', ['init', 'zhihu'])
       await S().runBrowserTraced('dsh', ['verify', 'zhihu'])
     } finally { S2.runOpencli = orig }
-    expect(got[0]).toBe('adapter init zhihu')
-    expect(got[1]).toBe('adapter check zhihu')
+    // adapter 族不在补拍触发集且 exit 0:无第三条调用
+    expect(got).toEqual(['adapter init zhihu', 'adapter check zhihu'])
   })
   it('2.0 --session 形态:首参 browser,--session 后跟会话名,dsh 只出现一次', async () => {
     S().cliMajorCache = 2
-    let captured: string[] = []
+    const calls: string[][] = []
     const S2 = S()
     const orig = S2.runOpencli as (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
-    S2.runOpencli = async (a: string[]) => { captured = a; return { exitCode: 0, stdout: 'ok', stderr: '' } }
+    S2.runOpencli = async (a: string[]) => { calls.push(a); return { exitCode: 0, stdout: 'ok', stderr: '' } }
     try { await S().runBrowserTraced('dsh', ['open', 'https://example.com']) } finally { S2.runOpencli = orig }
+    const captured = calls[0]!
     expect(captured[0]).toBe('browser')
     expect(captured).toContain('--session')
     expect(captured[captured.indexOf('--session') + 1]).toBe('dsh')
     expect(captured.filter((x) => x === 'dsh')).toHaveLength(1)
+  })
+  it('2.0 自动补拍截图 argv:browser screenshot <绝对路径.png> --session <会话>', async () => {
+    S().cliMajorCache = 2
+    const calls: string[][] = []
+    const S2 = S()
+    const orig = S2.runOpencli as (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+    S2.runOpencli = async (a: string[]) => { calls.push(a); return { exitCode: 0, stdout: 'ok', stderr: '' } }
+    try { await S().runBrowserTraced('dsh', ['click', '7']) } finally { S2.runOpencli = orig }
+    expect(calls.length).toBe(2)
+    const shot = calls[1]!
+    expect(shot[0]).toBe('browser')
+    expect(shot[1]).toBe('screenshot')
+    expect(path.isAbsolute(shot[2]!)).toBe(true)
+    expect(shot[2]).toMatch(/step-\d{6}-\d+\.png$/)
+    expect(shot[3]).toBe('--session')
+    expect(shot[4]).toBe('dsh')
   })
   it('2.0 移除 analyze:给确切替代指引而非裸错误', async () => {
     S().cliMajorCache = 2
@@ -199,5 +222,98 @@ describe('opencli_doctor 2.0(标准化状态源,JSON 信封下工作)', () => {
     const r = await tool.execute({})
     expect(r.text).toContain('⚠ BrowserBridge')
     expect(r.text).toContain('profile use')
+  })
+})
+
+describe('chrome_* 原生管理工具族(任务 B:免页面会话 browser chrome call)', () => {
+  const tool = (name: string): { execute: (a: unknown) => Promise<{ text: string }> } => S().ctx.tools.registered.get(name)!
+  /** 覆写 runOpencli 捕获 argv,finally 还原(runBrowserTraced 用例同款约定);stub 结果可换以模拟失败。 */
+  const withCapturedRun = async (
+    fn: () => Promise<void>,
+    result: { exitCode: number; stdout: string; stderr: string } = { exitCode: 0, stdout: 'ok', stderr: '' },
+  ): Promise<string[][]> => {
+    const calls: string[][] = []
+    const S2 = S()
+    const orig = S2.runOpencli as (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+    S2.runOpencli = async (a: string[]) => { calls.push(a); return result }
+    try { await fn() } finally { S2.runOpencli = orig }
+    return calls
+  }
+
+  it('2.0 argv 形态:browser chrome call <method> <json数组>,无 --session,缺省 args 补 []', async () => {
+    S().cliMajorCache = 2
+    const calls = await withCapturedRun(async () => {
+      await tool('chrome_tabs').execute({ method: 'tabs.update', args: '[123, {"active": true}]' })
+      await tool('chrome_tabs').execute({ method: 'tabs.query' })
+      await tool('chrome_groups').execute({ method: 'tabGroups.update', args: '[456, {"title": "g"}]' })
+      await tool('chrome_raw').execute({ method: 'windows.create', args: '[{"url": "https://example.com"}]' })
+    })
+    // JSON.stringify 紧凑形态(无空格)是 argv 的真值,断言按它写
+    expect(calls).toEqual([
+      ['browser', 'chrome', 'call', 'tabs.update', '[123,{"active":true}]'],
+      ['browser', 'chrome', 'call', 'tabs.query', '[]'],
+      ['browser', 'chrome', 'call', 'tabGroups.update', '[456,{"title":"g"}]'],
+      ['browser', 'chrome', 'call', 'windows.create', '[{"url":"https://example.com"}]'],
+    ])
+    // chrome 免会话:绝不能混进 --session(runBrowserTraced 的页面会话语义)
+    expect(calls.every((c) => !c.includes('--session'))).toBe(true)
+  })
+
+  it('recordTrace 落 "chrome <method>" 轨迹行(与 browser 步骤区分)', async () => {
+    S().cliMajorCache = 2
+    await withCapturedRun(async () => {
+      await tool('chrome_raw').execute({ method: 'windows.getAll', args: '[]' })
+    })
+    const dir = process.env.DSH_OPENCLI_TRACE_DIR!
+    const rows = fs.readdirSync(dir)
+      .flatMap((f) => fs.readFileSync(path.join(dir, f), 'utf8').split('\n').filter((l) => l.trim().length > 0))
+      .map((l) => JSON.parse(l) as { cmd: string })
+    expect(rows[rows.length - 1]!.cmd).toBe('chrome windows.getAll')
+  })
+
+  it('白名单拦截:tabs/groups 工具只收各自族方法,拒绝且不触 CLI,提示 chrome_raw', async () => {
+    S().cliMajorCache = 2
+    const calls = await withCapturedRun(async () => {
+      const rt = await tool('chrome_tabs').execute({ method: 'tabs.format', args: '[]' })
+      expect(rt.text).toContain('chrome_raw')
+      const rw = await tool('chrome_tabs').execute({ method: 'windows.remove', args: '[123]' })
+      expect(rw.text).toContain('chrome_raw')
+      const rg = await tool('chrome_groups').execute({ method: 'tabs.query', args: '[{}]' })
+      expect(rg.text).toContain('chrome_raw')
+      const rb = await tool('chrome_raw').execute({ method: 'rm -rf /', args: '[]' })
+      expect(rb.text).toContain('method 非法')
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('args 形态校验:非法 JSON / 非数组直接拒绝,不触 CLI', async () => {
+    S().cliMajorCache = 2
+    const calls = await withCapturedRun(async () => {
+      const r1 = await tool('chrome_tabs').execute({ method: 'tabs.query', args: '[1, 2' })
+      expect(r1.text).toContain('args')
+      const r2 = await tool('chrome_tabs').execute({ method: 'tabs.query', args: '{"active": true}' })
+      expect(r2.text).toContain('JSON 数组')
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('1.x CLI:三个工具直接返回"需 opencli 2.0+",不触 CLI', async () => {
+    S().cliMajorCache = 1
+    const calls = await withCapturedRun(async () => {
+      for (const [name, method] of [['chrome_tabs', 'tabs.query'], ['chrome_groups', 'tabGroups.move'], ['chrome_raw', 'windows.getAll']] as const) {
+        const r = await tool(name).execute({ method, args: '[]' })
+        expect(r.text).toContain('需 opencli 2.0+')
+      }
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('扩展 1.0.24 报 Browser session is required → 附 1.0.25 升级指引', async () => {
+    S().cliMajorCache = 2
+    const calls = await withCapturedRun(async () => {
+      const r = await tool('chrome_tabs').execute({ method: 'tabs.query', args: '[{}]' })
+      expect(r.text).toContain('1.0.25')
+    }, { exitCode: 1, stdout: '', stderr: 'Browser session is required.' })
+    expect(calls).toHaveLength(1)
   })
 })
