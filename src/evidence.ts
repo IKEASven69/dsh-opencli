@@ -32,6 +32,9 @@ export interface EvidenceRecord {
   approval: EvidenceApproval | null
   beforeShot: string | null
   afterShot: string | null
+  /** 截图局限声明:site 命令在 daemon 自己的浏览器执行,插件只能截 dsh 会话当前页——
+   *  前后截图是"近似现场"而非命令作用页(评审发现:审计者可能被无关页面误导,必须言明) */
+  shotNote: string | null
   result: { exitCode: number; head: string }
   site: string
 }
@@ -58,6 +61,9 @@ export function buildEvidence(input: EvidenceInput): EvidenceRecord {
     approval: input.approval,
     beforeShot: input.beforeShot ?? null,
     afterShot: input.afterShot ?? null,
+    shotNote: input.beforeShot != null || input.afterShot != null
+      ? '近似取证:截图为 dsh 会话当前页,非命令实际作用页(适配器经 daemon 浏览器执行)'
+      : null,
     result: { exitCode: Number(input.result.exitCode), head: String(input.result.head).slice(0, 200) },
     site: String(input.site),
   }

@@ -11,6 +11,22 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
+/** 目录桩:默认 5 站+测试专用站标记为 read,zhihu comment 为 write——安全不变量门
+ *  (只读冒烟)按目录权限拒绝写/未知命令,空目录会让一切变 unknown 而全军覆没。 */
+const LIST_JSON = JSON.stringify({
+  ok: true,
+  data: { commands: [
+    { command: 'juejin hot', description: 'x', access: 'read' },
+    { command: '36kr hot', description: 'x', access: 'read' },
+    { command: 'hackernews best', description: 'x', access: 'read' },
+    { command: 'v2ex hot', description: 'x', access: 'read' },
+    { command: 'bilibili hot', description: 'x', access: 'read' },
+    { command: 'weibo hot', description: 'x', access: 'read' },
+    { command: 'xiaohongshu hot', description: 'x', access: 'read' },
+    { command: 'zhihu comment', description: '写评论', access: 'write' },
+  ], total: 8 },
+})
+
 /** 桩 shell:按"<站点> <命令>"键路由三态(ok/fail/timeout),未登记默认 ok;离线可测。 */
 class StubShell extends Service {
   behavior: Record<string, 'ok' | 'fail' | 'timeout'> = {}
@@ -21,7 +37,7 @@ class StubShell extends Service {
     const cmd = String(Array.isArray(spec.command) ? spec.command.join(' ') : spec.command)
     this.calls.push(cmd)
     if (cmd.includes('--version')) return { exitCode: 0, stdout: { text: '2.0.0\n' }, stderr: { text: '' } }
-    if (cmd.includes('list') || cmd.includes('daemon')) return { exitCode: 0, stdout: { text: '{"ok":true,"data":{"commands":[],"total":0}}' }, stderr: { text: '' } }
+    if (cmd.includes('list') || cmd.includes('daemon')) return { exitCode: 0, stdout: { text: LIST_JSON }, stderr: { text: '' } }
     const key = Object.keys(this.behavior).find((k) => cmd.includes(k))
     const mode = key !== undefined ? this.behavior[key] : 'ok'
     if (mode === 'timeout') throw new Error('opencli 命令执行超时(60000ms)')
@@ -203,6 +219,22 @@ describe('benchmark-run RPC(桩 shell 三态 + 桩 so)', () => {
     expect(many.ok).toBe(false)
     expect(many.error).toContain('最多 10 站')
     expect(shell.calls.filter((c) => /s\d+ hot/.test(c))).toHaveLength(0)
+  })
+  it('安全不变量:写命令与未知权限命令在门口拒绝,不碰 shell(评审 HIGH 回归)', async () => {
+    shell.calls = []
+    const w = await R().benchmarkRun({ sites: ['zhihu comment', 'juejin hot'] })
+    expect(w.ok).toBe(false)
+    expect(w.error).toContain('只接受只读命令')
+    expect(w.error).toContain('zhihu comment(写命令)')
+    expect(shell.calls.filter((c) => c.includes('zhihu comment'))).toHaveLength(0)
+    const u = await R().benchmarkRun({ sites: ['nope hot'] })
+    expect(u.ok).toBe(false)
+    expect(u.error).toContain('nope hot(未知权限)')
+    expect(shell.calls.filter((c) => c.includes('nope hot'))).toHaveLength(0)
+    // 工具面同拦:benchmark 工具带写站 → 文本里是被拒提示而非执行结果
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('benchmark')!
+    const t = await tool.execute({ sites: ['zhihu comment'] })
+    expect(t.text).toContain('只接受只读命令')
   })
   it('轮转:目录超 20 份时删最旧,新报告保留', async () => {
     shell.behavior = {}

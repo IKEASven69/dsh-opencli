@@ -1250,6 +1250,12 @@ function fetchShot(path: string): Promise<{ data: string; mime: string } | null>
       ? { data: r.value.data, mime: typeof r.value.mime === 'string' && r.value.mime.length > 0 ? r.value.mime : 'image/png' }
       : null)
   shotCache.set(path, p)
+  // 封顶淘汰(评审发现:模块级缓存无上界,长驻面板持续累积 base64 大串):插入序近似 LRU,
+  // 单条约可达 ~10MB(8MB 文件 base64),40 条已远超一次时间线的可视需要
+  if (shotCache.size > 40) {
+    const oldest = shotCache.keys().next().value
+    if (oldest !== undefined) shotCache.delete(oldest)
+  }
   return p
 }
 
@@ -1285,9 +1291,9 @@ function ShotThumb(props: { path: string }): ReturnType<typeof createElement> {
   })
 }
 
-/** 时间线历史行:宿主 schedule-history 契约为 {at,ok,summary},shot 为可选扩展字段
- *  (轨迹侧已带步骤截图路径;此处按可选消费——宿主未发送时不渲染缩略图,零成本退化)。 */
-interface HistRow { at: string; ok: boolean; summary: string; shot?: string }
+/** 时间线历史行:宿主 schedule-history 契约为 {at,ok,summary}(评审清理:曾有可选 shot
+ *  字段但宿主从不发送——site 命令在 daemon 浏览器执行,插件侧截图只会拍到无关页面,死代码已删)。 */
+interface HistRow { at: string; ok: boolean; summary: string }
 
 /** 时间线面板:某定时任务的快照趋势(体积=采集规模的粗代理)+ 最近运行史。数据源 schedule-history。 */
 /** 行内时间线开关:按钮+面板自带局部状态(不依赖父组件 state,杜绝跨实例展开失效)。 */
@@ -1342,8 +1348,6 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
       hist.slice(0, 5).map((h, i) => createElement('div', { key: i, style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)', display: 'flex', gap: '6px', alignItems: 'center' } },
         createElement('span', null, h.at.slice(5, 16).replace('T', ' ')),
         createElement('span', { style: { color: h.ok ? '#34C759' : '#FF8D85', flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, h.summary || (h.ok ? 'ok' : 'fail')),
-        // 行内步骤截图缩略图:shot 路径存在时才渲染(可选字段,宿主未发送即无图)
-        typeof h.shot === 'string' && h.shot.length > 0 ? createElement(ShotThumb, { path: h.shot }) : null,
       )),
     ),
   )

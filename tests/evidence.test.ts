@@ -114,8 +114,13 @@ describe('buildEvidence 形状(纯函数)', () => {
     expect(r).toEqual({
       at: '2026-10-20T08:09:10.123Z', command: 'site zhihu comment', argv: ['zhihu', 'comment', 'hi'],
       approval: { mode: 'on', reason: null }, beforeShot: 'D:/a.png', afterShot: 'D:/b.png',
+      shotNote: '近似取证:截图为 dsh 会话当前页,非命令实际作用页(适配器经 daemon 浏览器执行)',
       result: { exitCode: 0, head: 'posted-ok' }, site: 'zhihu',
     })
+  })
+  it('shotNote:无截图时为 null', () => {
+    const r = buildEvidence({ command: 'c', argv: [], approval: null, result: { exitCode: 0, head: 'h' }, site: 'a' })
+    expect(r.shotNote).toBeNull()
   })
   it('approval 允许 null;argv 强转字符串;head 截 200 字;截图缺省为 null', () => {
     const r = buildEvidence({
@@ -263,5 +268,18 @@ describe('evidence-list RPC(路径+元数据,不读全文)', () => {
       expect(r2.ok).toBe(true)
       expect(r2.items).toEqual([])
     } finally { S().evidenceDir = real }
+  })
+})
+
+describe('证据覆盖面(评审:unknown 权限拒绝也要留痕)', () => {
+  it('目录外命令被拒 → 同样落 blocked 包(目录外的命令恰是最可疑的一类)', async () => {
+    const before = packs().length
+    const res = { isError: true, error: { message: 'site nope doog requires approval — 是写操作' } }
+    await dispatchPost('site', { adapter: 'nope', command: 'doog' }, res)
+    const after = packs()
+    expect(after.length).toBe(before + 1)
+    const pack = after.find((p) => String(p.command).includes('nope'))
+    expect(pack).toBeDefined()
+    expect(String(pack.approval?.reason)).toContain('blocked')
   })
 })

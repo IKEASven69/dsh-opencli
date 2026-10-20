@@ -419,11 +419,11 @@ export class OpencliService extends TypertRemoteService {
   }
 
   private registerBrowserTools(): void {
-    const run = async (session: string | undefined, argv: string[]): Promise<{ text: string }> => {
+    const run = async (session: string | undefined, argv: string[]): Promise<{ text: string; shot?: string }> => {
       // 录屏回放(BrowserSkill #79 同款需求):browser_* 全族与 replay/crawl 等 RPC 透传
-      // 统一走 runBrowserTraced 单点,每步 trace 落盘
+      // 统一走 runBrowserTraced 单点,每步 trace 落盘;shot(若有)随结果带给卡片渲染
       const out = await this.runBrowserTraced(session, argv)
-      return { text: this.renderOut(out) }
+      return out.shot !== undefined ? { text: this.renderOut(out), shot: out.shot } : { text: this.renderOut(out) }
     }
     const s = '浏览器会话名(默认 dsh;bind 过的会话复用登录态)'
 
@@ -762,7 +762,7 @@ export class OpencliService extends TypertRemoteService {
     })
     this.registerToolSafe({
       name: 'chrome_raw',
-      description: 'chrome 原生方法逃生口(高危,需人工确认):任意 method + JSON args 直调 browser chrome call——含 windows.* 窗口管理与 chrome_tabs/chrome_groups 白名单之外的方法,可能关闭窗口/重排用户真实浏览器布局。仅在用户明确确认必要时使用',
+      description: 'chrome 原生方法逃生口(高危):任意 method + JSON args 直调 browser chrome call——含 windows.* 窗口管理与白名单之外的方法,可能关闭窗口/重排真实浏览器布局。每次调用都会弹审批窗人工确认(写审批门覆盖)',
       parameters: {
         method: { type: 'string', description: '原生方法名(命名空间.方法,如 windows.create/windows.remove)' },
         args: { type: 'string', description: '位置参数 JSON 数组字符串,缺省 []' },
@@ -984,7 +984,9 @@ export class OpencliService extends TypertRemoteService {
         // 写命令证据包(任务 D):审批门放行的写命令 before/after 各拍一张截图,连同结果落
         // ~/.dsh/opencli-evidence/;失败也落——证据比成功更重要。读命令只付一次缓存查询;
         // 截图/落盘全程静默降级,绝不反噬写命令的结果回传。
-        const evidenceOn = (await this.lookupAccess(adapter, command)) === 'write'
+        // 覆盖面(评审发现):unknown 权限被审批门按写放行后同样留证据——目录外的命令
+        // 恰是最该留痕的一类,'===write' 会漏掉它们
+        const evidenceOn = (await this.lookupAccess(adapter, command)) !== 'read'
         const beforeShot = evidenceOn ? await this.captureEvidenceShot() : undefined
         const out = await this.runOpencli(argv)
         if (evidenceOn) await this.recordSiteEvidence(adapter, command, argv, out, beforeShot)
@@ -1547,6 +1549,17 @@ export class OpencliService extends TypertRemoteService {
         return { ok: false, error: `站点命令格式非法:"${line.slice(0, 40)}"(应为 "站点 命令" 两段,如 juejin hot)` }
       }
     }
+    // 安全不变量:基准是只读冒烟——任何 write/unknown 命令在门口拒绝(fail-closed)。
+    // 此前仅形状校验,`benchmark {sites:["zhihu comment"]}` 可绕过写审批门直执行(独立评审 HIGH)
+    const offenders: string[] = []
+    for (const line of lines) {
+      const [s2, c2] = line.split(/\s+/) as [string, string]
+      const acc = await this.lookupAccess(s2, c2)
+      if (acc !== 'read') offenders.push(`${line}(${acc === 'write' ? '写命令' : '未知权限'})`)
+    }
+    if (offenders.length > 0) {
+      return { ok: false, error: `基准只接受只读命令,以下行被拒:${offenders.join('、')}。写命令请走 site 工具(带审批门与证据包)。` }
+    }
     const results: BenchItem[] = []
     for (let i = 0; i < lines.length; i++) {
       const [site, command] = lines[i].split(/\s+/) as [string, string]
@@ -1875,6 +1888,14 @@ export class OpencliService extends TypertRemoteService {
     this.ctx.on('tools/pre-execute', async (exec, next) => {
       try {
         if (this.automationMode === 'unrestricted') return await next()
+        // chrome_raw 是高危逃生口:无条件走人工审批,兑现描述里"人工确认"的承诺
+        // (独立评审发现:此前描述承诺审批但 pre-execute 无任何设防)
+        if (exec.name === 'chrome_raw') {
+          const m = String(((exec.arguments ?? {}) as { method?: unknown }).method ?? '?')
+          const reason = `chrome_raw ${m} 直调 Chrome 原生 API——可能改动真实浏览器的窗口/标签布局,需人工确认。`
+          this.recordAudit(`chrome_raw ${m}`, reason)
+          return { kind: 'ask', reason }
+        }
         const a = (exec.arguments ?? {}) as { adapter?: unknown; command?: unknown }
         const argsOk = typeof a.adapter === 'string' && typeof a.command === 'string' && a.adapter.length > 0 && a.command.length > 0
         if (this.automationMode === 'read-only' && exec.name === 'site' && argsOk) {
@@ -1968,7 +1989,7 @@ export class OpencliService extends TypertRemoteService {
           const a = (exec.arguments ?? {}) as { adapter?: unknown; command?: unknown; args?: unknown }
           if (typeof a.adapter === 'string' && typeof a.command === 'string') {
             const denial = result.error.message
-            if (OpencliService.APPROVAL_DENIED_RE.test(denial) && (await this.lookupAccess(a.adapter, a.command)) === 'write') {
+            if (OpencliService.APPROVAL_DENIED_RE.test(denial) && (await this.lookupAccess(a.adapter, a.command)) !== 'read') {
               await this.recordBlockedEvidence(a.adapter, a.command, Array.isArray(a.args) ? a.args.map(String) : [], denial)
             }
           }
@@ -2219,7 +2240,7 @@ export class OpencliService extends TypertRemoteService {
    * 与 replay / script-run-builtin / crawl / userscript-run / recipe-run 五个 RPC 透传都经此——
    * 任何入口执行的 browser 命令都进「运行轨迹」,复盘链路不断(评审:面板回放按钮曾绕过单点)。
    */
-  private async runBrowserTraced(session: string | undefined, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  private async runBrowserTraced(session: string | undefined, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string; shot?: string }> {
     const started = Date.now()
     const major = await this.cliMajor()
     let out: { exitCode: number; stdout: string; stderr: string }
@@ -2241,7 +2262,9 @@ export class OpencliService extends TypertRemoteService {
     // 内部补拍走 runOpencli 直连,不经 runBrowserTraced——否则会自递归且把补拍当成用户步骤污染轨迹
     const shot = await this.captureStepShot(session, argv, out, major)
     this.recordTrace(`browser ${session ?? 'dsh'} ${argv.join(' ')}`, out, Date.now() - started, shot)
-    return out
+    // shot 随结果带出(独立评审发现:此前只进 trace 不进工具结果,browser_do 卡的
+    // (shot: 文件名) 提示是死路径)——undefined 不落字段,老消费者零影响
+    return shot !== undefined ? { ...out, shot } : out
   }
 
   /** 截图文件名时间段(本地 hhmmss,无冒号——文件系统安全;与 traceDateKey 同一时区体感,回放时对得上墙钟)。 */

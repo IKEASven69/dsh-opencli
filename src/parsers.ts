@@ -132,8 +132,7 @@ export function commandAccess(input: unknown, adapter: string, command: string):
   if (!Array.isArray(input)) return 'unknown'
   for (const raw of input as RawCommandEntry[]) {
     if (raw === null || typeof raw !== 'object') continue
-    const site = raw.site ?? raw.command?.split('/')[0]
-    const name = raw.name ?? raw.command?.split('/')[1]
+    const { site, name } = splitCommandEntry(raw)
     if (site !== adapter || name !== command) continue
     if (raw.access === 'write') return 'write'
     if (raw.access === 'read') return 'read'

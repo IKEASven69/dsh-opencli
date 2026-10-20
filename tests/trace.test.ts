@@ -395,3 +395,23 @@ describe('trace-shot RPC(截图直取 + 目录穿越拒绝)', () => {
     expect((await svc.traceShot({ path: miss })).ok).toBe(false)
   })
 })
+
+describe('browser_do 结果携带 shot(评审:此前只进 trace 不进工具结果,卡片提示是死路径)', () => {
+  it("open(页面变化类)执行后工具结果带 shot 绝对路径,与轨迹行一致", async () => {
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string; shot?: string }> }> }).registered.get('browser_do')!
+    expect(tool).toBeDefined()
+    const r = await tool.execute({ command: 'back', args: [] })
+    expect(typeof r.shot).toBe('string')
+    expect(r.shot).toMatch(/step-\d{6}-\d+\.png$/)
+    expect(fs.existsSync(r.shot!)).toBe(true) // 桩 screenshot 真写了文件——悬空引用零容忍
+    // 同一步的轨迹行也带同一 shot
+    const lines = fs.readFileSync(findTraceFile(), 'utf8').split('\n').filter((l) => l.includes('back'))
+    expect(lines.length).toBeGreaterThanOrEqual(1)
+    expect(JSON.parse(lines[lines.length - 1]!).shot).toBe(r.shot)
+  })
+  it('find(非页面变化且成功)不拍——截图频率有门槛,不是每条都拍', async () => {
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string; shot?: string }> }> }).registered.get('browser_do')!
+    const r = await tool.execute({ command: 'find', args: ['button'] })
+    expect(r.shot).toBeUndefined()
+  })
+})
