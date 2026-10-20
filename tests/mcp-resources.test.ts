@@ -24,7 +24,7 @@ describe('handleMcpResourceRequest(纯函数,MCP 三操作)', () => {
     expect(uris.every((u) => u.startsWith('opencli://sites/') && u.endsWith('/knowledge'))).toBe(true)
     expect(r.resources.every((x) => x.mimeType === 'text/markdown')).toBe(true)
     const xhs = r.resources.find((x) => x.uri === knowledgeResourceUri('xiaohongshu'))!
-    expect(xhs.description ?? '').toContain('受损')
+    expect(xhs.description ?? '').toContain('注意')
     expect(r.resources.find((x) => x.uri === knowledgeResourceUri('weibo'))!.description).toBeUndefined()
   })
 
@@ -40,7 +40,7 @@ describe('handleMcpResourceRequest(纯函数,MCP 三操作)', () => {
     expect(r.contents[0]!.uri).toBe(knowledgeResourceUri('xiaohongshu'))
     expect(r.contents[0]!.mimeType).toBe('text/markdown')
     expect(r.contents[0]!.text).toContain('# 站点知识卡:xiaohongshu')
-    expect(r.contents[0]!.text).toContain('站点健康度:受损')
+    expect(r.contents[0]!.text).toContain('站点健康度:注意')
     expect(r.contents[0]!.text).toContain('site xiaohongshu search')
   })
 
@@ -159,7 +159,7 @@ describe('knowledge-get RPC(0.1.x 回退路径,常驻)', () => {
     const r = await svc.knowledgeGet()
     expect(r.ok).toBe(true)
     const sites = r.cards!.map((c) => c.site).sort()
-    expect(sites).toEqual(['xiaohongshu', 'zhihu'])
+    expect(sites).toEqual(['xiaohongshu'])
   })
 
   it('目录外的站:ok=false(不编造)', async () => {

@@ -25,6 +25,9 @@ let ctx: InstanceType<typeof Context>
 let svc: OpencliService
 
 beforeAll(async () => {
+  // trace 目录按测试文件隔离:vitest 线程池下所有文件共享同 pid,共享目录会让
+  // 本文件的 recordTrace 与其他文件的轨迹交错,断言"文件末三行"时互相污染(曾长期 flake)
+  process.env.DSH_OPENCLI_TRACE_DIR = require('node:path').join(require('node:os').tmpdir(), 'dsh-opencli-test-traces-f-hardening-' + process.pid + '-' + Date.now())
   ctx = new Context()
   await ctx.plugin(StubShell)
   await ctx.plugin(StubTools)

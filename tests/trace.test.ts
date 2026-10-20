@@ -45,6 +45,8 @@ let ctx: InstanceType<typeof Context>
 let svc: OpencliService
 
 beforeAll(async () => {
+  // trace 目录按测试文件隔离(同上);本文件断言文件内容,必须独占
+  process.env.DSH_OPENCLI_TRACE_DIR = require('node:path').join(require('node:os').tmpdir(), 'dsh-opencli-test-traces-f-trace-' + process.pid + '-' + Date.now())
   ctx = new Context()
   await ctx.plugin(StubShell)
   await ctx.plugin(StubTools)
@@ -60,19 +62,19 @@ afterAll(async () => {
   await (c.stop ?? c.dispose ?? (async () => {}))()
 })
 
-const traceDir = process.env.DSH_OPENCLI_TRACE_DIR ?? ''
+const traceDir = (): string => process.env.DSH_OPENCLI_TRACE_DIR ?? ''
 /** 找到桩运行期间写出的唯一 trace 文件(临时目录按 pid 隔离,目录里只会有本进程的档)。 */
 const findTraceFile = (): string => {
-  const files = fs.readdirSync(traceDir).filter((f) => /^trace-\d{8}\.jsonl$/.test(f))
+  const files = fs.readdirSync(traceDir()).filter((f) => /^trace-\d{8}\.jsonl$/.test(f))
   expect(files.length).toBeGreaterThanOrEqual(1)
-  return path.join(traceDir, files[0]!)
+  return path.join(traceDir(), files[0]!)
 }
 
 describe('测试隔离(trace 目录不碰真实用户数据)', () => {
   it('traceDir 指向临时目录,绝不写 ~/.dsh/opencli-traces', () => {
-    expect(traceDir.length).toBeGreaterThan(0)
-    expect(traceDir).not.toContain('.dsh')
-    expect(traceDir).toContain('dsh-opencli-test-traces')
+    expect(traceDir().length).toBeGreaterThan(0)
+    expect(traceDir()).not.toContain('.dsh')
+    expect(traceDir()).toContain('dsh-opencli-test-traces')
   })
 })
 

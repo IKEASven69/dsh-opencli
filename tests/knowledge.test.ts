@@ -54,22 +54,27 @@ describe('renderKnowledgeMarkdown', () => {
     expect(md).not.toContain('健康度')
   })
 
-  it('健康度段:受损站渲染 issue 明细与兜底提示,正常站不渲染', () => {
+  it('健康度段:异常站渲染 issue 明细与兜底提示,正常站不渲染', () => {
     const md = renderKnowledgeMarkdown(buildKnowledge('xiaohongshu', [{ site: 'xiaohongshu', name: 'search', access: 'read', description: '搜索' }])!)
-    expect(md).toContain('站点健康度:受损')
-    expect(md).toContain('#2562 captcha 重定向(search)')
-    expect(md).toContain('browser_* 原语兜底')
+    expect(md).toContain('站点健康度:注意')
+    expect(md).toContain('#2562')
+    // degraded(instagram 仍 open)才渲染 browser_* 兜底提示;notice 不渲染
+    const ig = renderKnowledgeMarkdown(buildKnowledge('instagram', [{ site: 'instagram', name: 'user', access: 'read', description: 'x' }])!)
+    expect(ig).toContain('站点健康度:受损')
+    expect(ig).toContain('browser_* 原语兜底')
     expect(renderKnowledgeMarkdown(buildKnowledge('weibo', ENTRIES)!)).not.toContain('健康度')
   })
 })
 
 describe('站点健康度(SITE_HEALTH)', () => {
-  it('数据文件可加载:覆盖 2026-10-03 调研站点,issues 带上游 issue 号', () => {
-    expect(Object.keys(SITE_HEALTH).length).toBeGreaterThanOrEqual(4)
+  it('数据文件可加载:健康度跟踪站点齐全,issues 带上游 issue 号', () => {
+    expect(Object.keys(SITE_HEALTH).length).toBeGreaterThanOrEqual(3)
     expect(SITE_HEALTH.xiaohongshu?.issues.join(' ')).toContain('#2562')
     expect(SITE_HEALTH.instagram?.issues.join(' ')).toContain('#2553')
-    expect(healthOf('xiaohongshu')?.status).toBe('degraded')
-    expect(healthOf('zhihu')?.status).toBe('notice')
+    expect(healthOf('xiaohongshu')?.status).toBe('notice')
+    expect(healthOf('instagram')?.status).toBe('degraded')
+    // 已康复站(zhihu/bilibili 2.0 修复)从表移除——缺位即健康
+    expect(healthOf('zhihu')).toBeNull()
     // 不在表内的站返回 null(默认正常,不编造)
     expect(healthOf('weibo')).toBeNull()
   })
