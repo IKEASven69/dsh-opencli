@@ -6,7 +6,7 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis'
 import { OpencliService } from '../lib/index.js'
-import { BENCH_KEEP, DEFAULT_BENCH, buildBenchmarkReport, renderBenchmarkTable, type BenchItem } from '../src/benchmark.ts'
+import { BENCH_KEEP, DEFAULT_BENCH, buildBenchmarkReport, buildCanaryReport, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from '../src/benchmark.ts'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -267,5 +267,62 @@ describe('benchmark agent 工具装配', () => {
     expect(r.text).toContain('报告已生成:')
     const file = r.text.match(/报告已生成:(.+)/)?.[1]?.trim() ?? ''
     expect(fs.existsSync(file)).toBe(true)
+  })
+})
+
+describe('canary 漂移监控(纯函数 + 调度分支)', () => {
+  it('pickCanaryCommands:命令数排序取 top-20,热榜语义优先,只取读命令', () => {
+    const ads = [
+      { name: 'a', commands: ['hot', 'comment'], kinds: ['read', 'write'] },      // hot 优先
+      { name: 'b', commands: ['search', 'watchlater'], kinds: ['read', 'read'] }, // 无热榜词→首条 read
+      { name: 'c', commands: ['post'], kinds: ['write'] },                        // 纯写站跳过
+      { name: 'd', commands: Array.from({ length: 30 }, (_, i) => [`cmd${i}`]), kinds: Array.from({ length: 30 }, () => 'read') },
+    ]
+    const picks = pickCanaryCommands(ads as never)
+    expect(picks).toContain('a hot')
+    expect(picks).toContain('b search')
+    expect(picks.some((p) => p.startsWith('c '))).toBe(false)
+    expect(picks.length).toBeLessThanOrEqual(20)
+  })
+  it('快照解析↔报告生成闭环:本轮报告能被下一轮读回同基线;脏行跳过不炸', () => {
+    const items: BenchItem[] = [
+      { site: 'juejin', command: 'juejin hot', ok: true, p: 0.9, ms: 100 },
+      { site: 'weibo', command: 'weibo hot', ok: false, p: null, ms: 200, error: 'boom' },
+    ]
+    const md = buildCanaryReport(items, new Map(), '2026-10-20T00:00:00Z')
+    expect(md).toContain('# 站点漂移 canary 报告')
+    expect(md).toContain('首跑,建立基线')
+    expect(md).toContain('| juejin | `juejin hot` | ✓ ok |')
+    const snap = parseCanarySnapshot(md + '\n| 脏行 | 不解析 | ✗ |')
+    expect(snap.get('juejin hot')).toBe(true)
+    expect(snap.get('weibo hot')).toBe(false)
+    expect(snap.size).toBe(2)
+    // 第二轮:weibo 恢复 + juejin 新失败 → 漂移段如实呈现
+    const md2 = buildCanaryReport([
+      { site: 'juejin', command: 'juejin hot', ok: false, p: null, ms: 50, error: '改版' },
+      { site: 'weibo', command: 'weibo hot', ok: true, p: 0.8, ms: 60 },
+    ], snap, '2026-10-21T00:00:00Z')
+    expect(md2).toContain('新失败 1')
+    expect(md2).toContain('`juejin hot`')
+    expect(md2).toContain('恢复 1')
+    expect(md2).toContain('`weibo hot`')
+  })
+  it('调度分支:定时任务填 canary → 走 canaryRun 且历史行记录汇总,不执行单命令', async () => {
+    process.env.DSH_OPENCLI_CANARY_DIR = path.join(benchDir, 'canary')
+    const add = await (svc as unknown as { scheduleAdd: (x: { site: string; cron: string; retry?: number }) => Promise<{ ok: boolean; id?: string }> }).scheduleAdd({ site: 'canary', cron: '0 5 * * *', retry: 1 })
+    expect(add.ok).toBe(true)
+    const S = svc as unknown as { runSiteCommand: (s: string, id: string) => Promise<void>; canaryRun: () => Promise<{ ok: boolean; total: number; passed: number; newFailures: string[]; recovered: string[] }> }
+    const orig = S.canaryRun.bind(svc)
+    let called = 0
+    S.canaryRun = async () => { called++; return { ok: true, total: 20, passed: 18, newFailures: ['x hot'], recovered: [] } }
+    shell.calls = []
+    try { await S.runSiteCommand('canary', add.id!) } finally { S.canaryRun = orig }
+    expect(called).toBe(1)
+    expect(shell.calls.filter((c) => c.includes(' canary'))).toHaveLength(0) // 没把 canary 当站点命令跑
+    const st = JSON.parse(fs.readFileSync(process.env.DSH_OPENCLI_STATE!, 'utf8'))
+    const hist = (st.runHistory ?? {})[add.id!] as Array<{ summary: string }>
+    expect(hist[0].summary).toContain('canary:18/20')
+    expect(hist[0].summary).toContain('新失败:x hot')
+    await (svc as unknown as { scheduleRemove: (x: { id: string }) => Promise<{ ok: boolean }> }).scheduleRemove({ id: add.id! })
   })
 })

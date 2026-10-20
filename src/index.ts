@@ -28,7 +28,7 @@ import { SystemOne, noulYes } from './systemone.ts'
 import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, SITE_HEALTH, type RawEntry } from './knowledge.ts'
 import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
-import { BENCH_KEEP, DEFAULT_BENCH, buildBenchmarkReport, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
+import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, buildBenchmarkReport, buildCanaryReport, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
 import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } from './evidence.ts'
 
 // 对话内预览卡(site/site_batch/browser_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
@@ -366,6 +366,19 @@ export class OpencliService extends TypertRemoteService {
         const r = await this.benchmarkRun(sites !== undefined ? { sites } : {})
         if (!r.ok) return { text: `基准未完成:${r.error ?? '未知'}` }
         return { text: `${renderBenchmarkTable(r.results ?? []).slice(0, 4000)}\n\n报告已生成:${r.path ?? ''}` }
+      },
+    })
+    this.registerToolSafe({
+      name: 'canary',
+      description: '站点漂移巡检:top-20 站(按目录命令数)只读命令逐站实测,与上一轮 canary 对比出新失败/恢复,报告落 ~/.dsh/opencli-canary/。诊断"哪些站最近改版坏了"先跑这个;定时任务填 canary 可每晚自动巡检',
+      parameters: {},
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (): Promise<{ text: string }> => {
+        const r = await this.canaryRun()
+        if (!r.ok && r.total === 0) return { text: `canary 未完成:${r.error ?? '未知'}` }
+        const drift = r.newFailures.length > 0 ? `\n新失败 ${r.newFailures.length}:${r.newFailures.slice(0, 6).join('、')}` : '\n无新失败'
+        const rec = r.recovered.length > 0 ? `\n恢复 ${r.recovered.length}:${r.recovered.slice(0, 6).join('、')}` : ''
+        return { text: `canary 巡检:通过 ${r.passed}/${r.total}${drift}${rec}\n报告:${r.path ?? ''}` }
       },
     })
   }
@@ -1928,6 +1941,58 @@ export class OpencliService extends TypertRemoteService {
     return commandAccess(this.adapterCache?.json, adapter, command)
   }
 
+
+  /** canary 漂移巡检:top-20 站只读命令逐站跑,与上一轮 canary 报告对比出新失败/恢复。
+   * 产物 ~/.dsh/opencli-canary/canary-<时间戳>.md(保留 14 份);可被定时任务
+   * 以命令 "canary" 每晚触发——站点改版漂移当天可见,不依赖上游 issue 猜健康度。 */
+  @Remote('canary-run')
+  async canaryRun(): Promise<{ ok: boolean; total: number; passed: number; newFailures: string[]; recovered: string[]; path?: string; error?: string }> {
+    const list = await this.adapterList()
+    if (list === null) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], error: this.lastShellError ?? '目录不可用' }
+    const lines = pickCanaryCommands(list)
+    if (lines.length === 0) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], error: '目录无只读命令' }
+    const results: BenchItem[] = []
+    for (let i = 0; i < lines.length; i++) {
+      const [site, command] = lines[i]!.split(/s+/) as [string, string]
+      const started = Date.now()
+      try {
+        const out = await this.runOpencli([site, command], 45_000)
+        if (out.exitCode !== 0) {
+          results.push({ site, command: lines[i]!, ok: false, p: null, ms: Date.now() - started, error: clip((out.stderr || out.stdout).trim().slice(0, 120) || `退出码 ${out.exitCode}`, 120) })
+        } else {
+          const v = await this.verifyResult(site, command, out.stdout)
+          const silent = v !== null && !v.verdict
+          results.push({ site, command: lines[i]!, ok: !silent, p: v === null ? null : v.p, ms: Date.now() - started, ...(silent ? { error: clip(`静默失败:${v.why ?? ''}`, 120) } : {}) })
+        }
+      } catch (e) {
+        results.push({ site, command: lines[i]!, ok: false, p: null, ms: Date.now() - started, error: clip(e instanceof Error ? e.message : String(e), 120) })
+      }
+      if (i < lines.length - 1 && this.benchGapMs > 0) await new Promise((res) => setTimeout(res, this.benchGapMs))
+    }
+    const dir = process.env.DSH_OPENCLI_CANARY_DIR ?? join(homedir(), '.dsh', 'opencli-canary')
+    let prevText: string | null = null
+    try {
+      mkdirSync(dir, { recursive: true })
+      const olds = readdirSync(dir).filter((f) => /^canary-.+.md$/.test(f)).sort()
+      prevText = olds.length > 0 ? await readFile(join(dir, olds[olds.length - 1]!), 'utf8') : null
+    } catch { /* 首跑或目录不可读:无基线 */ }
+    const prev = parseCanarySnapshot(prevText)
+    const md = buildCanaryReport(results, prev, new Date().toISOString())
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const file = join(dir, `canary-${stamp}.md`)
+    try {
+      await writeFile(file, md, 'utf8')
+      const olds = readdirSync(dir).filter((f) => /^canary-.+.md$/.test(f)).sort()
+      if (olds.length > CANARY_KEEP) for (const f of olds.slice(0, olds.length - CANARY_KEEP)) { try { unlinkSync(join(dir, f)) } catch { /* 忽略 */ } }
+    } catch { /* 落盘失败不改变结论 */ }
+    const failedCmds = new Set(results.filter((x) => !x.ok).map((x) => x.command))
+    const prevMap = prev
+    const newFailures = results.filter((x) => !x.ok && prevMap.get(x.command) === true).map((x) => x.command)
+    const recovered = results.filter((x) => x.ok && prevMap.get(x.command) === false).map((x) => x.command)
+    const passed = results.filter((x) => x.ok).length
+    return { ok: failedCmds.size === 0, total: results.length, passed, newFailures, recovered, path: file }
+  }
+
   // ── 写操作证据包(任务 D)──────────────────────────────────
 
   /** 审批拒绝在 host 落地的最终文本特征(dsh-tools serviceAsk 的四种非授权拒绝 + 本插件
@@ -2452,6 +2517,15 @@ export class OpencliService extends TypertRemoteService {
     // 面板占位符是 'site zhihu hot' 形态,而 CLI 直接吃 'zhihu hot'——此前原样透传导致
     // 按占位符创建的任务 100% 失败(unknown command 'site')(真机走查发现 B)。剥掉 site 前缀。
     const norm = siteCmd.replace(/^\s*site\s+/i, '').trim()
+    // canary 特例:定时任务填 canary 即每晚漂移巡检(dogfooding——插件自监控),
+    // 走 canaryRun 全链(与上轮对比出漂移报告),不走单命令执行
+    if (norm === 'canary') {
+      const r = await this.canaryRun()
+      hist.unshift({ at: new Date().toISOString(), ok: r.ok, summary: r.ok ? `canary:${r.passed}/${r.total}${r.newFailures.length > 0 ? ' 新失败:' + r.newFailures.slice(0, 3).join(',') : ''}` : `canary 失败:${r.error ?? '未知'}` })
+      this.runHistory[id] = hist.slice(0, 5)
+      await this.saveState()
+      return
+    }
     const cmdLine = norm.length > 0 ? norm : siteCmd
     const [sSite = '', sCmd = ''] = cmdLine.split(/\s+/)
     let lastOk = false

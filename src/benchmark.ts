@@ -79,3 +79,63 @@ export function renderBenchmarkTable(items: BenchItem[]): string {
   }
   return out.join('\n')
 }
+
+/* ── canary 漂移监控(0.4.4 深化:插件自监控,dogfooding 即 QA)──────────────
+ * 每晚定时跑 top-20 站只读命令,与上一次 canary 对比:新失败/恢复/持续失败一目
+ * 了然——站点改版漂移当天可见,不再依赖上游 issue 标题猜健康度。 */
+
+export const CANARY_TOP = 20
+export const CANARY_KEEP = 14
+
+/** 从归一化适配器目录挑 canary 集:命令数 top-20 站,每站取第一条只读命令
+ * (优先热榜语义:hot/latest/feed/trending/daily/best/home,命中即用,否则首条 read)。 */
+export function pickCanaryCommands(adapters: Array<{ name: string; commands: string[]; kinds: string[] }>): string[] {
+  const hotWords = ['hot', 'latest', 'feed', 'trending', 'daily', 'best', 'home', 'frontpage']
+  const ranked = [...adapters].sort((a, b) => b.commands.length - a.commands.length || a.name.localeCompare(b.name))
+  const out: string[] = []
+  for (const a of ranked) {
+    if (out.length >= CANARY_TOP) break
+    const reads = a.commands.filter((_, i) => (a.kinds[i] ?? 'read') !== 'write')
+    const hit = reads.find((c) => hotWords.some((w) => c.includes(w)))
+    const pick = hit ?? reads[0]
+    if (pick !== undefined) out.push(`${a.name} ${pick}`)
+  }
+  return out
+}
+
+/** 上次 canary 的站点→ok 快照(文件不存在/脏行跳过,绝不因旧档坏而炸本轮)。 */
+export function parseCanarySnapshot(prevMd: string | null): Map<string, boolean> {
+  const m = new Map<string, boolean>()
+  if (prevMd === null) return m
+  for (const line of prevMd.split('\n')) {
+    const t = /^\| (\S+) \| `([^`]+)` \| (✓ ok|✗)/.exec(line.trim())
+    if (t !== null) m.set(t[2]!, t[3] === '✓ ok')
+  }
+  return m
+}
+
+/** canary 报告:基准表 + 漂移三段(新失败/恢复/无变化),漂移段是重点放最前。 */
+export function buildCanaryReport(items: BenchItem[], prev: Map<string, boolean>, genAt: string): string {
+  const newFailures = items.filter((x) => !x.ok && prev.get(x.command) === true)
+  const recovered = items.filter((x) => x.ok && prev.get(x.command) === false)
+  const passN = items.filter((x) => x.ok).length
+  const head = [
+    '# 站点漂移 canary 报告',
+    '',
+    `生成时间:${genAt} · 站点 ${items.length} 个(通过 ${passN})。上一轮基线 ${prev.size} 条;全部数字来自采集原文,零模型改写。`,
+    '',
+  ]
+  const drift = prev.size === 0
+    ? ['## 漂移(首跑,建立基线)', '', '无上一轮可比——本报告即基线。', '']
+    : [
+        '## 漂移(vs 上一轮)', '',
+        newFailures.length > 0 ? `**新失败 ${newFailures.length}:** ${newFailures.map((x) => `\`${x.command}\`(${x.error ?? 'exit≠0'})`).join('、')}` : '无新失败。',
+        '',
+        recovered.length > 0 ? `**恢复 ${recovered.length}:** ${recovered.map((x) => `\`${x.command}\``).join('、')}` : '无恢复。',
+        '',
+      ]
+  // 明细复用基准报告的 markdown 表——快照解析器(parseCanarySnapshot)认这个行格式,
+  // 用纯文本表会让下一轮永远解析不到基线、漂移段失效
+  const body = buildBenchmarkReport(items, genAt).replace(/^# 站点冒烟基准报告.*\n/, '')
+  return [...head, ...drift, '## 逐站明细', '', body].join('\n') + '\n'
+}
