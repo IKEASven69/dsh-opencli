@@ -48,7 +48,7 @@ dsh plugin add IKEASven69/dsh-opencli
 <details>
 <summary><b>安装注意事项(3 条,遇到问题再展开)</b></summary>
 
-- ⚠️ 插件目录内跑 `npm install` 会静默把宿主的 opencli 链接替换为 registry 副本([上游 #2555](https://github.com/jackwener/opencli/issues/2555))——请在本仓库外装依赖。
+- ⚠️ 旧版 opencli(≤1.8.8)在插件目录内跑 `npm install` 会静默替换宿主链接([#2555](https://github.com/jackwener/opencli/issues/2555),**2.0 已修复**)——仍在 1.8.x 的用户请在仓库外装依赖。
 - ⚠️ Windows:dsh shell 走 PowerShell,`DSH_OPENCLI_BIN` 需指向 `.cmd` 结尾的 shim(无扩展名会被静默忽略)。版本管理器(vfox/nvm)切 node 版本后插件会自动扫描各版本目录找回 opencli。
 - ⚠️ 升级 dsh 到 0.2 前自查 profile `cordis.patch.yml` 有无引用未安装的 bundle——0.2 对此静默退出。
 

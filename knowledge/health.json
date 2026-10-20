@@ -1,34 +1,32 @@
 {
   "xiaohongshu": {
-    "status": "degraded",
+    "status": "notice",
     "issues": [
-      "#2562 captcha 重定向(search)",
-      "#2552 publish --images 必败",
-      "#2550 filter 检测失效",
-      "#2549 MutationObserver 抛错"
+      "2.0 修复 captcha/search/comment(#2562 #2552 #2550 #2549 已关闭)+新增 comment/comment-delete 命令",
+      "本机未登录 XHS,search 实测报 search_input_not_available——登录后复验"
     ],
-    "updated": "2026-10-03"
+    "updated": "2026-10-20"
   },
   "instagram": {
     "status": "degraded",
     "issues": [
-      "#2553 /user /search 报 SyntaxError"
+      "#2553 /user /search 报 SyntaxError——上游仍 open"
     ],
-    "updated": "2026-10-03"
+    "updated": "2026-10-20"
   },
   "zhihu": {
-    "status": "notice",
+    "status": "ok",
     "issues": [
-      "#2551 answer-comments 翻页被服务端改写(可能已修)"
+      "#2551 answer-comments 翻页已修(2.0);匿名热榜返回空属登录墙,非损伤"
     ],
-    "updated": "2026-10-03"
+    "updated": "2026-10-20"
   },
   "bilibili": {
-    "status": "notice",
+    "status": "ok",
     "issues": [
-      "#2545 subtitle 输出暴露 track-type 元数据(小问题)"
+      "#2545 subtitle 元数据小问题已修(2.0)"
     ],
-    "updated": "2026-10-03"
+    "updated": "2026-10-20"
   },
   "threads": {
     "status": "unsupported",
