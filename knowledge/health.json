@@ -14,20 +14,6 @@
     ],
     "updated": "2026-10-20"
   },
-  "zhihu": {
-    "status": "ok",
-    "issues": [
-      "#2551 answer-comments 翻页已修(2.0);匿名热榜返回空属登录墙,非损伤"
-    ],
-    "updated": "2026-10-20"
-  },
-  "bilibili": {
-    "status": "ok",
-    "issues": [
-      "#2545 subtitle 元数据小问题已修(2.0)"
-    ],
-    "updated": "2026-10-20"
-  },
   "threads": {
     "status": "unsupported",
     "issues": [
