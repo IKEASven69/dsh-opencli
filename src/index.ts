@@ -48,7 +48,7 @@ declare module '@deepseek-ai/cordis' {
 const BROWSER_DO_ALLOW = new Set([
   'analyze', 'back', 'bind', 'check', 'close', 'console', 'dblclick', 'dialog',
   'drag', 'eval', 'find', 'focus', 'frames', 'get', 'hover', 'init', 'keys',
-  'network', 'select', 'tab', 'unbind', 'uncheck', 'upload', 'verify',
+  'network', 'scroll', 'select', 'tab', 'unbind', 'uncheck', 'upload', 'verify',
 ])
 
 /** 步骤自动截图的触发子命令:产生页面变化的动作族;state/extract 等只读命令不拍(页面没变,拍了也是重复证据)。
@@ -501,13 +501,14 @@ export class OpencliService extends TypertRemoteService {
     })
     this.registerToolSafe({
       name: 'browser_screenshot',
-      description: '对当前页截图保存到本地路径(仅在确需视觉信息时使用,优先 browser_state/extract)',
+      description: '对当前页截图保存到本地路径(仅在确需视觉信息时使用,优先 browser_state/extract;长页/整页内容用 fullPage)',
       parameters: {
         path: { type: 'string', description: '保存路径(绝对路径)' },
+        fullPage: { type: 'boolean', description: '截整个可滚动页面而非视口(上游 2.0 --full-page;1.x 忽略此参数)' },
         session: { type: 'string', description: s },
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
-      execute: async (a: ToolArgs) => run(a.session, ['screenshot', ...(a.path !== undefined ? [a.path] : [])]),
+      execute: async (a: ToolArgs) => run(a.session, ['screenshot', ...(a.path !== undefined ? [a.path] : []), ...(a.fullPage === true ? ['--full-page'] : [])]),
     })
     this.registerToolSafe({
       name: 'browser_scroll',

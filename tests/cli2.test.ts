@@ -317,3 +317,22 @@ describe('chrome_* 原生管理工具族(任务 B:免页面会话 browser chrome
     expect(calls).toHaveLength(1)
   })
 })
+
+describe('小补:全页截图透传与 scroll 白名单(竞品对照缺口 #6 #7)', () => {
+  it('browser_screenshot fullPage:true → argv 带 --full-page', async () => {
+    let captured: string[] = []
+    const S2 = S()
+    const orig = S2.runOpencli as (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+    S2.runOpencli = async (a: string[]) => { captured = a; return { exitCode: 0, stdout: 'saved', stderr: '' } }
+    try {
+      const tool = S().ctx.tools.registered.get('browser_screenshot')!
+      await tool.execute({ path: 'C:/tmp/x.png', fullPage: true, session: 'dsh' })
+    } finally { S2.runOpencli = orig }
+    expect(captured).toContain('--full-page')
+  })
+  it("browser_do scroll 不再被白名单拒(与专用 browser_scroll 一致)", async () => {
+    const tool = S().ctx.tools.registered.get('browser_do')!
+    const r = await tool.execute({ command: 'scroll', args: ['down'] })
+    expect(r.text).not.toContain('不允许的子命令')
+  })
+})
