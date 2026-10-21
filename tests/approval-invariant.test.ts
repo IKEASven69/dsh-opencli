@@ -61,6 +61,9 @@ const dispatch = async (name: string, args: Record<string, unknown>): Promise<{ 
 }
 
 beforeAll(async () => {
+  // 状态文件按测试文件唯一化(测试真实性审查发现 1:pid 键共享残档会让上轮 approval:'off'
+  // 被 loadState 读回,审批门对写命令放行,攻击表以 ~1/18 概率假绿——zerocfg 同款教训)
+  process.env.DSH_OPENCLI_STATE = path.join(os.tmpdir(), 'dsh-opencli-test-state-f-invariant-' + process.pid + '-' + Date.now() + '.json')
   process.env.DSH_OPENCLI_TRACE_DIR = path.join(os.tmpdir(), 'dsh-opencli-test-traces-f-invariant-' + process.pid + '-' + Date.now())
   process.env.DSH_OPENCLI_SHOTS_DIR = path.join(os.tmpdir(), 'dsh-opencli-test-shots-f-invariant-' + process.pid + '-' + Date.now())
   process.env.DSH_OPENCLI_BENCHMARKS_DIR = path.join(os.tmpdir(), 'dsh-opencli-test-bench-f-invariant-' + process.pid + '-' + Date.now())

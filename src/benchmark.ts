@@ -92,8 +92,8 @@ export const CANARY_KEEP = 14
  * 拿它们当站点命令跑必挂(真机首跑 0/20 的元凶之一),门口排除。 */
 export const RESERVED_NAMESPACES = new Set(['browser', 'adapter', 'daemon', 'auth', 'profile', 'doctor', 'extension', 'chrome', 'opencli', 'canary', 'benchmark'])
 
-/** 从归一化适配器目录挑 canary 集:命令数 top-20 站,每站取第一条只读命令
- * (优先热榜语义:hot/latest/feed/trending/daily/best/home,命中即用,否则首条 read)。 */
+/** 从归一化适配器目录挑 canary 集:命令数 top-20 站,只挑零参热榜语义命令
+ * (hot/latest/feed/…);无热词命令的站跳过——不回退首条 read(带参风险,真机实证)。 */
 export function pickCanaryCommands(adapters: Array<{ name: string; commands: string[] }>): string[] {
   // 只挑零参热榜语义命令:hot/latest/feed/… 这类天然免参;没有就跳过该站。
   // (真机首版用 kinds[i] 逐位过滤——但 kinds 是 Set 去重集合,与 commands 索引根本

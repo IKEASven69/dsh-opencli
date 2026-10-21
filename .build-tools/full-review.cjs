@@ -18,7 +18,9 @@ const BASE = 'http://127.0.0.1:3123';
 const TOKEN = process.argv[2] || '';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const results = [];
+const dshVersion = (() => { try { return require('C:/Users/20369/.vfox/sdks/nodejs/node_modules/@deepseek-ai/dsh/package.json').version } catch { return 'unknown' } })();
 const ok = (name, pass, detail = '') => { results.push(`${pass ? 'PASS' : 'FAIL'} | ${name}${detail ? ' | ' + detail : ''}`); };
+ok('宿主 dsh 版本记录', true, dshVersion);
 
 (async () => {
   const port = 9333;

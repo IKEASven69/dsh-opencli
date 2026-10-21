@@ -131,8 +131,8 @@ dsh plugin add IKEASven69/dsh-opencli
 
 | 层面 | 方式 | 结果 |
 |---|---|---|
-| 单元/回归 | vitest ×159(含 cron 回归/空参数护栏/trace/报告结构) | ✅ |
-| 全权审查套件 | 21 项真机逐项(渲染/真执行/状态对账/RPC 真值),`full-review.cjs` 一键复测;dsh 0.2.0-rc.2 与 0.2.1-rc.1 双版本通过 | ✅ |
+| 单元/回归 | vitest ×301(审批门不变量攻击表+200 次 fuzz/cron 回归/空参数护栏/trace/报告结构/机检器) | ✅ |
+| 全权审查套件 | 21 项真机逐项(渲染/真执行/状态对账/RPC 真值),`full-review.cjs` 一键复测(结果 JSON 记录宿主 dsh 版本,见 .design/video-frames/审查结果.json);dsh 0.2.0-rc.2 全套通过,0.2.1-rc.1 兼容回归通过 | ✅ |
 | 真模型 E2E | 会话调 `site zhihu hot`/写拒绝/browser 往返 | ✅ |
 | 登录态真数据 | 浏览器扩展桥 → try-run 真实热榜(判定 P=0.91)→ 定时采集 15s 回填 → 快照 → 时间线 → 带出处报告 | ✅ |
 

@@ -223,7 +223,7 @@ describe('§3 路由行为(无扩展 = daemon 明确报告 extensionConnected:fa
     S().cdpCache = { at: Date.now(), found: false, port: null, browser: null }
     const before = shell.calls.length
     const r = await tool('site').execute({ adapter: '36kr', command: 'hot' })
-    expect(r.text).toContain('无法匿名降级')
+    expect(r.text).toContain('无法降级执行')
     expect(r.text).toContain('装扩展')
     expect(r.text).toContain('site juejin hot')
     // 只有 --help 探测,没有实际执行
@@ -294,15 +294,15 @@ describe('§2.2 触发点文案(doctor / systemPrompt 目录 / 面板纯函数)'
     expect(r.text).toContain('✗ BrowserBridge:扩展未连接')
     expect(r.text).toContain('加载解压缩的扩展')
     expect(r.text).toContain('零配置继续用')
-    expect(r.text).toContain('匿名降级')
+    expect(r.text).toContain('CDP 通道默认关闭')
   })
 
-  it('systemPrompt 目录:无扩展时声明可用面(纯 HTTP 可跑/匿名降级标注/④⑤不可用/装扩展)', async () => {
+  it('systemPrompt 目录:无扩展时声明可用面(纯 HTTP 可跑/CDP 通道默认关闭/④⑤不可用/装扩展)', async () => {
     setExt(false)
     await S().updateDirectory()
     const text = S().directoryText as string
     expect(text).toContain('当前无扩展')
-    expect(text).toContain('匿名降级')
+    expect(text).toContain('暂不可降级执行')
     expect(text).toContain('browser_*/chrome_*')
     expect(text).toContain('https://github.com/jackwener/OpenCLI/releases')
   })
@@ -334,7 +334,7 @@ describe('通道B 默认关死(立项评审致命发现的信任守卫)', () => 
       shell.calls = []
       const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('site')!
       const r = await tool.execute({ adapter: '36kr', command: 'hot' })
-      expect(r.text).toContain('无法匿名降级执行')
+      expect(r.text).toContain('无法降级执行')
       expect(r.text).not.toContain('【匿名降级】')
       const injected = shell.calls.find((c) => c.env !== undefined)
       expect(injected, '默认路径不得注入 OPENCLI_CDP_ENDPOINT').toBeUndefined()

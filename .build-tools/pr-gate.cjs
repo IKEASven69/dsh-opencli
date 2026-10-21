@@ -7,7 +7,8 @@ const { scanPrivacy, scanInternalWords, extractNumberClaims, detectDeletedFacts,
 
 const args = process.argv.slice(2)
 const diffIdx = args.indexOf('--diff')
-const diffFile = diffIdx >= 0 ? args.splice(diffIdx, 2)[1] : null
+const diffFile = diffIdx >= 0 ? (args.splice(diffIdx, 2)[1] ?? null) : null
+if (diffIdx >= 0 && diffFile === null) { console.error('--diff 缺文件参数'); process.exit(2) }
 if (args.length === 0 && diffFile === null) {
   console.error('用法: node .build-tools/pr-gate.cjs <PR标题/正文/条目文件...> [--diff <diff文件>]')
   process.exit(2)

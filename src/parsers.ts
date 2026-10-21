@@ -41,6 +41,9 @@ export function parseDaemonStatus(text: string): DaemonStatus {
     const d = j?.ok === true && j.data && typeof j.data === 'object' ? (j.data as Record<string, unknown>) : null
     if (d !== null) {
       const extConnected = d.extensionConnected === true
+      // 缺字段(extensionConnected === undefined)≠ 显式断连:parseDaemonStatus 归一层若把缺字段
+      // 折成 'not connected',extensionState 的 explicitDown(只认显式否定,注释白纸黑字)会把
+      // 还能跑的 browser_* 一刀切死——缺字段单独给 'unknown',由消费方各自决定语义
       const profilesRaw = Array.isArray(d.profiles) ? (d.profiles as Array<Record<string, unknown>>) : []
       const profiles = profilesRaw.length > 0
         ? profilesRaw.map((p) => `${String(p.contextId ?? '?')}${p.extensionVersion ? ' ' + String(p.extensionVersion) : ''}${p.extensionConnected === false ? ' (未连)' : ''}`).join(', ')
@@ -53,7 +56,7 @@ export function parseDaemonStatus(text: string): DaemonStatus {
         version: typeof d.daemonVersion === 'string' ? d.daemonVersion : undefined,
         pid: typeof d.pid === 'number' ? d.pid : undefined,
         uptime: h !== null ? `${h}h ${m}m` : undefined,
-        extension: extConnected ? (d.profileRequired === true ? 'connected, none selected' : 'connected') : 'not connected',
+        extension: d.extensionConnected === undefined ? 'unknown' : extConnected ? (d.profileRequired === true ? 'connected, none selected' : 'connected') : 'not connected',
         profiles,
         port: typeof d.port === 'number' ? d.port : undefined,
       }

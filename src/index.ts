@@ -356,7 +356,7 @@ export class OpencliService extends TypertRemoteService {
               next.push('装扩展(需人在浏览器点一次):https://github.com/jackwener/OpenCLI/releases 下载 opencli-extension-*.zip 解压 → Chrome/Edge 扩展页开"开发者模式"→"加载解压缩的扩展";装完等扩展自动重连')
               // 零配置降级声明(设计 §2.2-1):红层不再只有"装扩展"一种结局——同步声明当前诚实的可用面,
               // 不让"全部工具族的错误文案都引向先装扩展"高估不可用面
-              next.push('零配置继续用:无扩展也能直跑纯 HTTP 只读命令(如 site juejin hot);需浏览器的只读命令在本机有 CDP 端点时经匿名会话降级执行,输出标注「匿名降级」;browser_*/chrome_* 与登录态命令暂不可用,装扩展后自动恢复')
+              next.push('零配置继续用:无扩展也能直跑纯 HTTP 只读命令(如 site juejin hot);需浏览器的只读命令当前不可自动降级(CDP 通道默认关闭:attach 现存标签页与匿名承诺冲突),装扩展后自动恢复全部能力')
             }
           }
         }
@@ -1141,7 +1141,7 @@ export class OpencliService extends TypertRemoteService {
     // (daemon 未运行/扩展非正向连接都算无扩展),与 ④⑤ 短路的"显式未连"刻意不同档(那是动作门,这是声明)
     const extLine = (daemon?.extension ?? '').trim()
     const extOk = daemon !== null && daemon.running === true && (/^connected/.test(extLine) || /profiles connected/.test(extLine))
-    const zeroCfg = extOk ? '' : `\n当前无扩展:site 的纯 HTTP 只读命令(如 juejin hot / hackernews best)可直接跑;需浏览器的只读命令若本机有 CDP 端点,会经匿名会话降级执行并标注「匿名降级」(非登录态数据);browser_*/chrome_* 与登录态(COOKIE)命令不可用。装扩展后全部恢复:https://github.com/jackwener/OpenCLI/releases`
+    const zeroCfg = extOk ? '' : `\n当前无扩展:site 的纯 HTTP 只读命令(如 juejin hot / hackernews best)可直接跑;需浏览器的只读命令暂不可降级执行(CDP 匿名通道默认关闭,评估中);browser_*/chrome_* 与登录态(COOKIE)命令不可用。装扩展后全部恢复:https://github.com/jackwener/OpenCLI/releases`
     this.directoryText = `浏览器代理(dsh-opencli):你在 Chrome 里登录的网站,dsh 都能用。170+ 站点适配器(知乎/B站/微博/arxiv/github/...),用 site <适配器> <命令>。
 
 按用户原话选:
@@ -1602,7 +1602,7 @@ export class OpencliService extends TypertRemoteService {
     }
     return {
       mode: 'skip',
-      text: `site ${adapter} ${command} 需要浏览器会话,当前无扩展且未探测到本机 CDP 端点,无法匿名降级执行。两条路:` +
+      text: `site ${adapter} ${command} 需要浏览器会话,当前无扩展${cdp.found ? '且 CDP 匿名通道默认关闭(评估中)' : '且未探测到本机 CDP 端点'},无法降级执行。两条路:` +
         `①装扩展(恢复全部能力):https://github.com/jackwener/OpenCLI/releases 下载 opencli-extension-*.zip 解压 → Chrome/Edge 扩展页开"开发者模式"→"加载解压缩的扩展";` +
         `②先用纯 HTTP 只读命令(如 site juejin hot,无需浏览器不受影响)。`,
     }

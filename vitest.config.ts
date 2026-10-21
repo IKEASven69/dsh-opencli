@@ -6,6 +6,7 @@ import { join } from 'node:path'
 // (曾发生单测定时任务写进真实状态文件的污染事故;trace 同理隔离)
 export default defineConfig({
   test: {
+    globalSetup: './tests/lib-staleness-setup.ts',
     env: {
       DSH_OPENCLI_STATE: join(tmpdir(), `dsh-opencli-test-state-${process.pid}.json`),
       DSH_OPENCLI_REPORTS_DIR: join(tmpdir(), `dsh-opencli-test-reports-${process.pid}`),

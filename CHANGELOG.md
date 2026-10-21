@@ -1,3 +1,31 @@
+## 未发布(0.4.4 候选)
+
+> 交叉审查四视角(正确性/安全/测试真实性/事实核对)发现全修;301 测试 + 22 项套件(含宿主版本记录)全绿。
+
+### 安全(安全审查:2 HIGH 2 MEDIUM + 机检器漏网)
+- **opencli_run 写命令绕门(HIGH)**:描述曾宣称"走审批"而 execute 直通——站点形态 argv 现进写审批门(write/未知→ask,浏览器/系统命名空间按 browser_* 边界)
+- **site_batch 多站写命令零检查(HIGH)**:整批 fail-closed 拒绝,未知站点仍走拼写提醒
+- **canary 防御性只读门(MEDIUM)**:热词伪装写命令夜间无人值守拦截
+- **browser_do eval 对齐 userscript-run 门(MEDIUM)**:登录页任意 JS=写原语,进人工审批
+- **presubmit 机检器三漏网**:细粒度 PAT(github_pat_)/长 TLD 邮箱/小写路径与行尾内部目录,实证回归
+
+### 正确性(正确性审查)
+- **零配置过期承诺收回(HIGH)**:通道B(CDP attach)默认关死后,doctor/systemPrompt/面板三处文案同步收回"匿名降级"承诺,skip 文案不再谎称"未探测到端点"(端点在但通道关闭时如实说)
+- **parseDaemonStatus 缺字段语义**:extensionConnected 缺失归一为 unknown 而非 not connected——explicitDown 只认显式否定,browser_* 不被一刀切死
+
+### 对外交付体系(2026-10-19 事故)
+- **提交前机检器**:隐私(本机身份/路径/会话id/token/邮箱/内部目录)全 FAIL 拦截+数字声明强制溯源+删除事实检测;#8007 真实翻车文本回归(180+×2 与被删前提均被当场抓住)
+- **站点数对齐上游 manifest**:180+→170+(注册表维护者 fkysly 纠正,#8007 事故全记录见 docs/LESSON-20261020-registry.md)
+- 「录屏回放」全仓正名「轨迹回放」
+
+### 功能补齐
+- browser_screenshot 透传 --full-page(上游 2.0 全页截图);browser_do 白名单补 scroll
+- canary 漂移巡检真机三轮调试(heredoc 反斜杠吞噬 argv 碎片化/选站 kinds 索引不对齐/seam 冷启动竞态)后可用:top-20 零参热榜命令,漂移对比实证(小红书新失败被准确捕获)
+
+### 测试
+- 审批门安全不变量套件:攻击表 21 形态+200 次可复现 fuzz(allow⟹只读)+独立通道+豁免边界;lib 捆绑陈旧守卫(vitest globalSetup,lib 落后 src 即红)
+- 301 全绿(180→234→259→264→266→282→290→301);21 项套件+宿主版本记录 22/22
+
 ## 0.4.3 — 2026-10-17
 
 > GUI 走查五连修 + 登录态真数据链路全线贯通(详见 `docs/FIX-20261008-GUI走查修复.md`)。

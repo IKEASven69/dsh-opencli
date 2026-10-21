@@ -21,7 +21,10 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var client_exports = {};
 __export(client_exports, {
   apply: () => apply,
-  inject: () => inject
+  inject: () => inject,
+  loginSitesFromAdapters: () => loginSitesFromAdapters,
+  readonlySiteCount: () => readonlySiteCount,
+  shouldShowOnboarding: () => shouldShowOnboarding
 });
 module.exports = __toCommonJS(client_exports);
 var import_react = require("react");
@@ -236,35 +239,19 @@ function siteIconOf(site) {
 // .build-tools/knowledge/health.json
 var health_default = {
   xiaohongshu: {
-    status: "degraded",
+    status: "notice",
     issues: [
-      "#2562 captcha \u91CD\u5B9A\u5411(search)",
-      "#2552 publish --images \u5FC5\u8D25",
-      "#2550 filter \u68C0\u6D4B\u5931\u6548",
-      "#2549 MutationObserver \u629B\u9519"
+      "2.0 \u4FEE\u590D captcha/search/comment(#2562 #2552 #2550 #2549 \u5DF2\u5173\u95ED)+\u65B0\u589E comment/comment-delete \u547D\u4EE4",
+      "\u672C\u673A\u672A\u767B\u5F55 XHS,search \u5B9E\u6D4B\u62A5 search_input_not_available\u2014\u2014\u767B\u5F55\u540E\u590D\u9A8C"
     ],
-    updated: "2026-10-03"
+    updated: "2026-10-20"
   },
   instagram: {
     status: "degraded",
     issues: [
-      "#2553 /user /search \u62A5 SyntaxError"
+      "#2553 /user /search \u62A5 SyntaxError\u2014\u2014\u4E0A\u6E38\u4ECD open"
     ],
-    updated: "2026-10-03"
-  },
-  zhihu: {
-    status: "notice",
-    issues: [
-      "#2551 answer-comments \u7FFB\u9875\u88AB\u670D\u52A1\u7AEF\u6539\u5199(\u53EF\u80FD\u5DF2\u4FEE)"
-    ],
-    updated: "2026-10-03"
-  },
-  bilibili: {
-    status: "notice",
-    issues: [
-      "#2545 subtitle \u8F93\u51FA\u66B4\u9732 track-type \u5143\u6570\u636E(\u5C0F\u95EE\u9898)"
-    ],
-    updated: "2026-10-03"
+    updated: "2026-10-20"
   },
   threads: {
     status: "unsupported",
@@ -300,7 +287,7 @@ var RELEASES_URL = "https://github.com/IKEASven69/dsh-opencli/releases";
 var STR = {
   zh: {
     title: "OpenCLI \u6D4F\u89C8\u5668\u4EE3\u7406",
-    desc: `\u9A71\u52A8\u4F60\u767B\u5F55\u6001\u7684\u771F\u5B9E\u6D4F\u89C8\u5668 \xB7 ${status?.adapterSites ?? 180} \u7AD9 / 200+ \u547D\u4EE4\u4E00\u6B65\u5F0F\u6267\u884C \xB7 \u7531 OpenCLI daemon \u9A71\u52A8`,
+    desc: "\u9A71\u52A8\u4F60\u767B\u5F55\u6001\u7684\u771F\u5B9E\u6D4F\u89C8\u5668 \xB7 170+ \u7AD9 / 200+ \u547D\u4EE4\u4E00\u6B65\u5F0F\u6267\u884C \xB7 \u7531 OpenCLI daemon \u9A71\u52A8",
     tabOverview: "\u603B\u89C8",
     tabCommands: "\u547D\u4EE4",
     tabAuto: "\u81EA\u52A8\u5316",
@@ -438,6 +425,20 @@ var STR = {
     step2: "\u542F\u52A8 daemon,\u88C5 Chrome \u6269\u5C55",
     step2c: "opencli daemon restart",
     step3: "\u56DE\u5230\u8FD9\u91CC\u70B9\u300C\u5237\u65B0/\u8BCA\u65AD\u300D",
+    obT: "\u9996\u542F\u5411\u5BFC",
+    obSub: "\u56DB\u5C42\u81EA\u68C0:CLI \u2192 daemon \u2192 BrowserBridge \u2192 \u767B\u5F55\u6001;\u9010\u5C42\u4FEE\u590D,\u5168\u7EFF\u540E\u672C\u5361\u81EA\u52A8\u9690\u85CF",
+    obCliOk: "opencli CLI \u5DF2\u5C31\u7EEA",
+    obCliBad: "\u672A\u68C0\u6D4B\u5230 opencli CLI",
+    obCliFix: "\u590D\u5236\u5B89\u88C5\u547D\u4EE4",
+    obBridgeHint: "\u4ECE GitHub Releases \u4E0B\u8F7D BrowserBridge \u6269\u5C55,\u5230 Chrome \u6269\u5C55\u9875\u5F00\u53D1\u8005\u6A21\u5F0F\u52A0\u8F7D,\u518D\u56DE\u9762\u677F\u91CD\u5DE1\u68C0",
+    obRelBtn: "\u6253\u5F00 Releases",
+    // 零配置降级可用面(设计 §2.2-2):无扩展时的黄色状态行——向导不再只有"装扩展"一种结局
+    obZeroCfgN: (n) => `\u964D\u7EA7\u53EF\u7528\u9762:${n} \u4E2A\u7AD9\u7684\u53EA\u8BFB\u547D\u4EE4\u65E0\u6269\u5C55\u4E5F\u80FD\u8DD1(\u533F\u540D);browser_*/chrome_* \u6682\u4E0D\u53EF\u7528`,
+    obZeroCfgNa: "\u964D\u7EA7\u53EF\u7528\u9762:\u90E8\u5206\u53EA\u8BFB\u547D\u4EE4\u65E0\u6269\u5C55\u4E5F\u80FD\u8DD1(\u533F\u540D);browser_*/chrome_* \u6682\u4E0D\u53EF\u7528",
+    obLoginOk: "\u767B\u5F55\u6001\u6B63\u5E38",
+    obLoginPart: "\u767B\u5F55\u6001\u90E8\u5206\u5931\u6548",
+    obLoginBad: "\u767B\u5F55\u5DE1\u68C0\u5168\u7EA2",
+    obLoginNa: "\u5C1A\u672A\u5DE1\u68C0\u767B\u5F55\u6001",
     siteEmpty: "\u9002\u914D\u5668\u8FD4\u56DE\u7A7A(\u53EF\u80FD\u672A\u767B\u5F55\u6216\u65E0\u6570\u636E)\u3002\u8BF7\u5148\u5728\u771F\u5B9E Chrome \u767B\u5F55\u540E\u91CD\u8BD5\u3002",
     guideS1: "\u5B89\u88C5 opencli CLI:npm i -g @jackwener/opencli",
     guideS2: "\u542F\u52A8 daemon(opencli daemon restart),Chrome \u88C5 BrowserBridge \u6269\u5C55\u5E76\u767B\u5F55\u5E38\u7528\u7AD9",
@@ -459,7 +460,7 @@ var STR = {
   },
   en: {
     title: "OpenCLI Browser Proxy",
-    desc: `Drive your logged-in real browser \xB7 ${status?.adapterSites ?? 180} sites / 200+ commands one-shot \xB7 powered by the OpenCLI daemon`,
+    desc: "Drive your logged-in real browser \xB7 170+ sites / 200+ commands one-shot \xB7 powered by the OpenCLI daemon",
     tabOverview: "Overview",
     tabCommands: "Commands",
     tabAuto: "Automation",
@@ -597,6 +598,19 @@ var STR = {
     step2: "Start daemon, install Chrome extension",
     step2c: "opencli daemon restart",
     step3: "Come back and hit Refresh",
+    obT: "Onboarding wizard",
+    obSub: "Four-layer self-check: CLI \u2192 daemon \u2192 BrowserBridge \u2192 logins; fix layer by layer, this card hides itself once all green",
+    obCliOk: "opencli CLI ready",
+    obCliBad: "opencli CLI not detected",
+    obCliFix: "Copy install command",
+    obBridgeHint: "Download the BrowserBridge extension from GitHub Releases, load it on the Chrome extensions page in developer mode, then re-check here",
+    obRelBtn: "Open Releases",
+    obZeroCfgN: (n) => `Degraded mode: read-only commands on ${n} sites still run without the extension (anonymous); browser_*/chrome_* unavailable`,
+    obZeroCfgNa: "Degraded mode: some read-only commands still run without the extension (anonymous); browser_*/chrome_* unavailable",
+    obLoginOk: "Logins healthy",
+    obLoginPart: "Some logins failed",
+    obLoginBad: "All login checks failed",
+    obLoginNa: "Login check not run yet",
     siteEmpty: "Adapter returned empty (not logged in?). Log in on real Chrome first.",
     guideS1: "Install opencli CLI: npm i -g @jackwener/opencli",
     guideS2: "Start the daemon (opencli daemon restart), install the BrowserBridge Chrome extension and log in to your sites",
@@ -946,7 +960,7 @@ function Panel() {
   const t = (k) => STR[lang][k] ?? STR.zh[k];
   const [tab, setTab] = (0, import_react.useState)("ov");
   const [phase, setPhase] = (0, import_react.useState)("loading");
-  const [status1, setStatus] = (0, import_react.useState)(null);
+  const [status, setStatus] = (0, import_react.useState)(null);
   const [settings, setSettings] = (0, import_react.useState)(null);
   const [adapters, setAdapters] = (0, import_react.useState)(null);
   const [schedules, setSchedules] = (0, import_react.useState)([]);
@@ -1316,8 +1330,8 @@ function Panel() {
     setUpdState(t2("updFallback"));
   };
   const loginResults = login?.results ?? [];
-  const daemonUp = status1?.daemon?.running === true;
-  const binOk = status1?.ok === true && status1.bin !== null;
+  const daemonUp = status?.daemon?.running === true;
+  const binOk = status?.ok === true && status.bin !== null;
   const loading = phase === "loading";
   const chip = (icon, label, state, tip) => (0, import_react.createElement)("span", {
     className: "o4-chip",
@@ -1334,6 +1348,27 @@ function Panel() {
     return (0, import_react.createElement)(
       "div",
       null,
+      // 首启向导(置顶):任一层未就绪才渲染,门槛判定在纯函数里(全绿不占位)
+      shouldShowOnboarding({
+        status,
+        loginResults
+      }) ? (0, import_react.createElement)(OnboardingWizard, {
+        lang,
+        status,
+        adapters,
+        loginResults,
+        starting,
+        running,
+        onFixDaemon: () => {
+          void startDaemon();
+        },
+        onOpenLogin: (site) => {
+          void runDemo(`site ${site} login`);
+        },
+        onCopyCliInstall: () => {
+          void copyText("npm i -g @jackwener/opencli").then((ok) => showToast(ok ? t2("copied") : t2("errReq"), ok));
+        }
+      }) : null,
       // 试试看(通栏)
       (0, import_react.createElement)("div", {
         className: "o4-card"
@@ -1487,7 +1522,7 @@ ${runOut.text}`);
           gap: "11px",
           marginBottom: "13px"
         }
-      }, status1 === null ? (0, import_react.createElement)("span", {
+      }, status === null ? (0, import_react.createElement)("span", {
         className: "o4-dot n"
       }) : daemonUp ? (0, import_react.createElement)("span", {
         className: "o4-pulse"
@@ -1499,9 +1534,9 @@ ${runOut.text}`);
         }
       }), (0, import_react.createElement)("div", {
         className: "o4-big"
-      }, status1 === null ? t2("loading") : daemonUp ? "daemon " + t2("daemonRunning") : "daemon " + t2("daemonDown"), status1?.version ? (0, import_react.createElement)("span", {
+      }, status === null ? t2("loading") : daemonUp ? "daemon " + t2("daemonRunning") : "daemon " + t2("daemonDown"), status?.version ? (0, import_react.createElement)("span", {
         className: "o4-vchip"
-      }, "v" + String(status1.version).replace(/^v/, "")) : null), (0, import_react.createElement)("button", {
+      }, "v" + String(status.version).replace(/^v/, "")) : null), (0, import_react.createElement)("button", {
         className: "o4-btn ghost sm",
         style: {
           marginLeft: "auto"
@@ -1518,20 +1553,20 @@ ${runOut.text}`);
         className: "l"
       }, "sites"), (0, import_react.createElement)("div", {
         className: "v big"
-      }, status1 === null ? "\u2026" : String(adapters?.length ?? 0), (0, import_react.createElement)("small", null, "\u7AD9"))), (0, import_react.createElement)("div", {
+      }, status === null ? "\u2026" : String(adapters?.length ?? 0), (0, import_react.createElement)("small", null, "\u7AD9"))), (0, import_react.createElement)("div", {
         className: "o4-cell"
       }, (0, import_react.createElement)("div", {
         className: "l"
       }, "Chrome \u6269\u5C55"), (0, import_react.createElement)("div", {
-        className: `v big${status1?.daemon?.extension === "connected" ? " on" : ""}`,
-        style: status1?.daemon?.extension === "connected" ? {
+        className: `v big${status?.daemon?.extension === "connected" ? " on" : ""}`,
+        style: status?.daemon?.extension === "connected" ? {
           fontSize: "15px"
         } : {
           fontSize: "13px",
           color: "#5F6873",
           fontWeight: 500
         }
-      }, status1 === null ? "\u2026" : status1.daemon?.extension ?? t2("unknown"))), (0, import_react.createElement)("div", {
+      }, status === null ? "\u2026" : status.daemon?.extension ?? t2("unknown"))), (0, import_react.createElement)("div", {
         className: "o4-cell"
       }, (0, import_react.createElement)("div", {
         className: "l"
@@ -1546,12 +1581,12 @@ ${runOut.text}`);
         style: {
           fontSize: "14px"
         }
-      }, autoMode))), status1?.ok === false && status1.error !== void 0 ? (0, import_react.createElement)("div", {
+      }, autoMode))), status?.ok === false && status.error !== void 0 ? (0, import_react.createElement)("div", {
         className: "o4-tryout",
         style: {
           marginTop: "9px"
         }
-      }, status1.error) : null, daemonOff || !binOk ? (0, import_react.createElement)("div", {
+      }, status.error) : null, daemonOff || !binOk ? (0, import_react.createElement)("div", {
         style: {
           marginTop: "10px"
         }
@@ -2026,7 +2061,7 @@ ${c.description}`,
       })), (0, import_react.createElement)("div", {
         className: "o4-note"
       }, t2("v4host"))),
-      // 运行轨迹:browser 命令全量 JSONL 落盘的时间线(录屏回放,模块级组件经 props 拿 lang)
+      // 运行轨迹:browser 命令全量 JSONL 落盘的时间线(轨迹回放,模块级组件经 props 拿 lang)
       (0, import_react.createElement)(TracePanel, {
         lang
       }),
@@ -2190,7 +2225,7 @@ ${c.description}`,
         "alert"
       ]
     ];
-    const diagText = `bin: ${status1?.bin ?? "\u2014"} | version: ${status1?.version ?? "\u2014"} | mode: ${autoMode} | approval: ${settings?.approvalOn === true ? "on" : "off"} | daemon: ${daemonUp ? "running" : "down"}`;
+    const diagText = `bin: ${status?.bin ?? "\u2014"} | version: ${status?.version ?? "\u2014"} | mode: ${autoMode} | approval: ${settings?.approvalOn === true ? "on" : "off"} | daemon: ${daemonUp ? "running" : "down"}`;
     return (0, import_react.createElement)("div", null, (0, import_react.createElement)("div", {
       className: "o4-sec"
     }, (0, import_react.createElement)("div", {
@@ -2497,14 +2532,14 @@ ${c.description}`,
       className: "o4-status"
     }, (0, import_react.createElement)("span", {
       className: "o4-chip",
-      title: `daemon ${status1 === null ? t2("loading") : daemonUp ? t2("daemonRunning") : t2("daemonDown")}`
+      title: `daemon ${status === null ? t2("loading") : daemonUp ? t2("daemonRunning") : t2("daemonDown")}`
     }, (0, import_react.createElement)("span", {
-      className: `o4-dot ${status1 === null ? "n" : daemonUp ? "g" : "r"}`
+      className: `o4-dot ${status === null ? "n" : daemonUp ? "g" : "r"}`
     }), "daemon"), (0, import_react.createElement)("span", {
       className: "o4-chip",
-      title: `BrowserBridge ${status1?.daemon?.extension ?? t2("unknown")}`
+      title: `BrowserBridge ${status?.daemon?.extension ?? t2("unknown")}`
     }, (0, import_react.createElement)("span", {
-      className: `o4-dot ${status1?.daemon?.extension === "connected" ? "g" : "n"}`
+      className: `o4-dot ${status?.daemon?.extension === "connected" ? "g" : "n"}`
     }), "Bridge"), (0, import_react.createElement)("span", {
       className: "o4-chip",
       title: "Chrome"
@@ -2530,11 +2565,11 @@ ${c.description}`,
     }, ic("refresh", true))),
     // 诊断条
     (0, import_react.createElement)("div", {
-      className: `o4-diag ${status1 === null ? "ok" : daemonUp && binOk ? "ok" : "bad"}`,
+      className: `o4-diag ${status === null ? "ok" : daemonUp && binOk ? "ok" : "bad"}`,
       onClick: () => {
         void openDiag();
       }
-    }, ic(status1 === null ? "refresh" : daemonUp && binOk ? "check-c" : "alert", true), status1 === null ? t2("loading") : daemonUp && binOk ? t2("diagAll") : t2("depDaemon"), (0, import_react.createElement)("span", {
+    }, ic(status === null ? "refresh" : daemonUp && binOk ? "check-c" : "alert", true), status === null ? t2("loading") : daemonUp && binOk ? t2("diagAll") : t2("depDaemon"), (0, import_react.createElement)("span", {
       className: "o4arr"
     }, t2("detail"), ic("chev-d", true))),
     // 内容
@@ -2553,6 +2588,87 @@ function apply(ctx) {
     order: 41,
     label: "\u6D4F\u89C8\u5668\u4EE3\u7406"
   }, () => (0, import_react.createElement)(Panel)));
+}
+var shotCache = /* @__PURE__ */ new Map();
+function fetchShot(path) {
+  const hit = shotCache.get(path);
+  if (hit !== void 0) return hit;
+  const p = rpc("trace-shot", {
+    request: {
+      path
+    }
+  }).then((r) => r.ok && r.value?.ok === true && typeof r.value.data === "string" && r.value.data.length > 0 ? {
+    data: r.value.data,
+    mime: typeof r.value.mime === "string" && r.value.mime.length > 0 ? r.value.mime : "image/png"
+  } : null);
+  shotCache.set(path, p);
+  if (shotCache.size > 40) {
+    const oldest = shotCache.keys().next().value;
+    if (oldest !== void 0) shotCache.delete(oldest);
+  }
+  return p;
+}
+function ShotThumb(props) {
+  const { path } = props;
+  const [shot, setShot] = (0, import_react.useState)(void 0);
+  const [zoom, setZoom] = (0, import_react.useState)(false);
+  (0, import_react.useEffect)(() => {
+    let alive = true;
+    void fetchShot(path).then((s) => {
+      if (alive) setShot(s);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [
+    path
+  ]);
+  if (shot === null) {
+    return (0, import_react.createElement)("span", {
+      title: "\u622A\u56FE\u4E0D\u53EF\u7528",
+      style: {
+        width: "48px",
+        height: "48px",
+        borderRadius: "6px",
+        background: "rgba(255,255,255,.08)",
+        flex: "none"
+      }
+    });
+  }
+  if (shot === void 0) {
+    return (0, import_react.createElement)("span", {
+      style: {
+        width: "48px",
+        height: "48px",
+        borderRadius: "6px",
+        background: "rgba(255,255,255,.05)",
+        flex: "none"
+      }
+    });
+  }
+  return (0, import_react.createElement)("img", {
+    src: `data:${shot.mime};base64,${shot.data}`,
+    alt: "",
+    title: zoom ? "\u6536\u8D77" : "\u653E\u5927",
+    onClick: (e) => {
+      e.stopPropagation();
+      setZoom(!zoom);
+    },
+    style: zoom ? {
+      height: "auto",
+      maxHeight: "420px",
+      maxWidth: "100%",
+      borderRadius: "8px",
+      cursor: "zoom-out",
+      flex: "none",
+      objectFit: "contain"
+    } : {
+      height: "48px",
+      borderRadius: "6px",
+      cursor: "zoom-in",
+      flex: "none"
+    }
+  });
 }
 function TimelineToggle(props) {
   const { id, lang, label } = props;
@@ -2690,7 +2806,8 @@ function TimelinePanel(props) {
       fontSize: "10.5px",
       color: "rgba(249,250,251,.6)",
       display: "flex",
-      gap: "6px"
+      gap: "6px",
+      alignItems: "center"
     }
   }, (0, import_react.createElement)("span", null, h.at.slice(5, 16).replace("T", " ")), (0, import_react.createElement)("span", {
     style: {
@@ -2773,71 +2890,181 @@ function TracePanel(props) {
       flexDirection: "column",
       gap: "6px"
     }
-  }, ...(rows ?? []).slice(0, 50).map((r, i) => (0, import_react.createElement)("div", {
-    key: `${r.at}-${i}`,
-    style: {
-      display: "contents"
-    }
-  }, (0, import_react.createElement)("div", {
-    className: "o4-qrow",
-    style: {
-      alignItems: "center"
-    },
-    title: `${r.cmd}
+  }, ...(rows ?? []).slice(0, 50).map((r, i) => {
+    const shot = typeof r.shot === "string" && r.shot.length > 0 ? r.shot : null;
+    return (0, import_react.createElement)("div", {
+      key: `${r.at}-${i}`,
+      style: {
+        display: "contents"
+      }
+    }, (0, import_react.createElement)("div", {
+      className: "o4-qrow",
+      style: {
+        alignItems: "center"
+      },
+      title: `${r.cmd}
 ${r.at}`,
-    onClick: () => {
-      setOpenIdx(openIdx === i ? null : i);
-    }
+      onClick: () => {
+        setOpenIdx(openIdx === i ? null : i);
+      }
+    }, (0, import_react.createElement)("span", {
+      className: `o4-dot ${r.exitCode === 0 ? "g" : "r"}`,
+      style: {
+        flex: "none"
+      }
+    }), (0, import_react.createElement)("span", {
+      style: {
+        flex: "none",
+        fontSize: "10.5px",
+        color: "#5F6873",
+        fontFamily: "ui-monospace,Consolas,monospace"
+      }
+    }, traceClock(r.at)), shot !== null ? (0, import_react.createElement)("span", {
+      title: "\u672C\u6B65\u81EA\u52A8\u622A\u56FE",
+      style: {
+        flex: "none",
+        fontSize: "10.5px",
+        color: "#8B9AFF",
+        fontFamily: "ui-monospace,Consolas,monospace"
+      }
+    }, "[\u56FE]") : null, shot !== null ? (0, import_react.createElement)(ShotThumb, {
+      path: shot
+    }) : null, (0, import_react.createElement)("span", {
+      style: {
+        flex: "1",
+        minWidth: "0",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        fontSize: "11px",
+        fontFamily: "ui-monospace,Consolas,monospace",
+        color: "rgba(249,250,251,.75)"
+      }
+    }, r.cmd), (0, import_react.createElement)("span", {
+      className: "o4-bdg",
+      style: {
+        flex: "none"
+      }
+    }, `exit ${r.exitCode}`), (0, import_react.createElement)("span", {
+      style: {
+        flex: "none",
+        fontSize: "10.5px",
+        color: "#5F6873"
+      }
+    }, `${r.ms}ms`), (0, import_react.createElement)("span", {
+      style: {
+        color: "#5F6873",
+        display: "flex",
+        flex: "none"
+      }
+    }, ic(openIdx === i ? "chev-d" : "chev-r", true))), openIdx === i ? (0, import_react.createElement)("div", {
+      className: "o4-tryout",
+      style: {
+        marginTop: "-2px",
+        marginBottom: "4px"
+      }
+    }, r.outHead.length > 0 ? r.outHead : "\u2014") : null);
+  })));
+}
+function OnboardingWizard(props) {
+  const { lang, status, adapters, loginResults, starting, running, onFixDaemon, onOpenLogin, onCopyCliInstall } = props;
+  const tt = (k) => STR[lang][k] ?? STR.zh[k];
+  const cliOk = status?.ok === true && status.bin !== null;
+  const daemonUp = status?.daemon?.running === true;
+  const bridgeOn = status?.daemon?.extension === "connected";
+  const extRaw = status?.daemon?.extension ?? "";
+  const extConnected = /^connected/.test(extRaw) || /profiles connected/.test(extRaw);
+  const loginOk = loginResults.length > 0 && loginResults.every((r) => r.ok === true);
+  const loginAllRed = loginResults.length > 0 && loginResults.every((r) => r.ok !== true);
+  const loginDot = loginOk ? "g" : loginAllRed ? "r" : loginResults.length === 0 ? "n" : "y";
+  const loginText = loginOk ? tt("obLoginOk") : loginAllRed ? tt("obLoginBad") : loginResults.length === 0 ? tt("obLoginNa") : tt("obLoginPart");
+  const loginSitesAll = loginSitesFromAdapters(adapters);
+  const loginSites = loginSitesAll.slice(0, 24);
+  const loginHidden = loginSitesAll.length - loginSites.length;
+  const ver = status?.version != null && status.version !== "" ? " \xB7 v" + String(status.version).replace(/^v/, "") : "";
+  const row = (key, dot, text, action) => (0, import_react.createElement)("div", {
+    key,
+    className: "o4-row"
   }, (0, import_react.createElement)("span", {
-    className: `o4-dot ${r.exitCode === 0 ? "g" : "r"}`,
-    style: {
-      flex: "none"
-    }
-  }), (0, import_react.createElement)("span", {
-    style: {
-      flex: "none",
-      fontSize: "10.5px",
-      color: "#5F6873",
-      fontFamily: "ui-monospace,Consolas,monospace"
-    }
-  }, traceClock(r.at)), (0, import_react.createElement)("span", {
-    style: {
-      flex: "1",
-      minWidth: "0",
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      whiteSpace: "nowrap",
-      fontSize: "11px",
-      fontFamily: "ui-monospace,Consolas,monospace",
-      color: "rgba(249,250,251,.75)"
-    }
-  }, r.cmd), (0, import_react.createElement)("span", {
-    className: "o4-bdg",
-    style: {
-      flex: "none"
-    }
-  }, `exit ${r.exitCode}`), (0, import_react.createElement)("span", {
-    style: {
-      flex: "none",
-      fontSize: "10.5px",
-      color: "#5F6873"
-    }
-  }, `${r.ms}ms`), (0, import_react.createElement)("span", {
-    style: {
-      color: "#5F6873",
-      display: "flex",
-      flex: "none"
-    }
-  }, ic(openIdx === i ? "chev-d" : "chev-r", true))), openIdx === i ? (0, import_react.createElement)("div", {
-    className: "o4-tryout",
-    style: {
-      marginTop: "-2px",
-      marginBottom: "4px"
-    }
-  }, r.outHead.length > 0 ? r.outHead : "\u2014") : null))));
+    className: `o4-dot ${dot}`
+  }), (0, import_react.createElement)("div", {
+    className: "grow"
+  }, (0, import_react.createElement)("div", {
+    className: "o4-tt"
+  }, text)), action);
+  return (0, import_react.createElement)(
+    "div",
+    {
+      className: "o4-card"
+    },
+    (0, import_react.createElement)("div", {
+      className: "o4-h3"
+    }, (0, import_react.createElement)("span", {
+      className: "o4-miniico"
+    }, ic("zap", true)), tt("obT")),
+    (0, import_react.createElement)("div", {
+      className: "o4-sub"
+    }, tt("obSub")),
+    row("cli", cliOk ? "g" : "r", cliOk ? tt("obCliOk") + ver : tt("obCliBad"), cliOk ? null : (0, import_react.createElement)("button", {
+      className: "o4-btn ghost sm",
+      onClick: onCopyCliInstall
+    }, tt("obCliFix"))),
+    row("daemon", daemonUp ? "g" : "r", "daemon " + (daemonUp ? tt("daemonRunning") : tt("daemonDown")), daemonUp ? null : (0, import_react.createElement)("button", {
+      className: "o4-btn sm",
+      disabled: starting,
+      onClick: onFixDaemon
+    }, starting ? "\u2026" : tt("fix"))),
+    row("bridge", bridgeOn ? "g" : "r", "BrowserBridge " + (bridgeOn ? tt("bridgeOn") : tt("bridgeOff")), bridgeOn ? null : (0, import_react.createElement)("button", {
+      className: "o4-btn ghost sm",
+      onClick: () => {
+        window.open(RELEASES_URL, "_blank");
+      }
+    }, ic("ext", true), tt("obRelBtn"))),
+    !bridgeOn ? (0, import_react.createElement)("div", {
+      className: "o4-note"
+    }, tt("obBridgeHint")) : null,
+    // 降级可用面黄行(设计 §2.2-2):bridge 红时声明"现在还能跑什么",向导不再只有"装扩展"一种结局;
+    // 目录未载入时用无数字文案,不给猜出来的 N
+    !bridgeOn && !extConnected ? row("zerocfg", "y", adapters !== null ? tt("obZeroCfgN")(readonlySiteCount(adapters)) : tt("obZeroCfgNa"), null) : null,
+    row("login", loginDot, loginText, null),
+    // 登录层修复动作:每个可登录站一枚「打开登录」按钮 → try-run 跑 `site <站> login`,浏览器会开登录页
+    loginSites.length > 0 ? (0, import_react.createElement)("div", {
+      className: "o4-sites",
+      style: {
+        marginTop: "2px"
+      }
+    }, ...loginSites.map((s) => (0, import_react.createElement)("span", {
+      key: s.site,
+      className: "o4-site"
+    }, ava(s.site, 24), s.site, (0, import_react.createElement)("button", {
+      className: "o4-btn ghost sm",
+      disabled: running,
+      onClick: () => onOpenLogin(s.site)
+    }, tt("openLogin")))), loginHidden > 0 ? (0, import_react.createElement)("span", {
+      className: "o4-chip"
+    }, `+${loginHidden}`) : null) : null
+  );
+}
+function shouldShowOnboarding(p) {
+  const daemonUp = p.status?.daemon?.running === true;
+  const bridgeOn = p.status?.daemon?.extension === "connected";
+  const allRed = p.loginResults.length > 0 && p.loginResults.every((r) => r.ok !== true);
+  return !daemonUp || !bridgeOn || allRed;
+}
+function loginSitesFromAdapters(adapters) {
+  return (adapters ?? []).filter((a) => a.commands.includes("login")).map((a) => ({
+    site: a.name,
+    line: `site ${a.name} login`
+  }));
+}
+function readonlySiteCount(adapters) {
+  return (adapters ?? []).filter((a) => (a.kinds ?? []).includes("read")).length;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   apply,
-  inject
+  inject,
+  loginSitesFromAdapters,
+  readonlySiteCount,
+  shouldShowOnboarding
 });

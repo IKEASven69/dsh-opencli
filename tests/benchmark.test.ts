@@ -275,7 +275,7 @@ describe('canary 漂移监控(纯函数 + 调度分支)', () => {
   it('pickCanaryCommands:命令数排序取 top-20,只挑零参热榜语义命令,没有则跳站', () => {
     const ads = [
       { name: 'a', commands: ['hot', 'comment'], kinds: ['read', 'write'] },      // hot 优先
-      { name: 'b', commands: ['search', 'watchlater'], kinds: ['read', 'read'] }, // 无热榜词→首条 read
+      { name: 'b', commands: ['search', 'watchlater'], kinds: ['read', 'read'] }, // 无热榜词→跳站
       { name: 'c', commands: ['post'], kinds: ['write'] },                        // 纯写站跳过
       { name: 'd', commands: Array.from({ length: 30 }, (_, i) => `cmd${i}`), kinds: Array.from({ length: 30 }, () => 'read') },
     ]
