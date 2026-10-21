@@ -24,7 +24,8 @@ const LIST_JSON = JSON.stringify({
     { command: 'weibo hot', description: 'x', access: 'read' },
     { command: 'xiaohongshu hot', description: 'x', access: 'read' },
     { command: 'zhihu comment', description: '写评论', access: 'write' },
-  ], total: 8 },
+    { command: 'fakehot hot', description: '热词伪装的写命令', access: 'write' },
+  ], total: 9 },
 })
 
 /** 桩 shell:按"<站点> <命令>"键路由三态(ok/fail/timeout),未登记默认 ok;离线可测。 */
@@ -354,5 +355,17 @@ describe('canaryRun 真实 argv(回归:heredoc 曾把 split(/\s+/) 吃成 split(
       expect(toks.every((x) => x.length > 0 && x !== 'undefined'), 'call=' + c).toBe(true)
     }
     expect(r.path ?? '', 'path').toMatch(/canary-.+\.md$/)
+  })
+})
+
+describe('canary 防御性只读门(安全审查 MEDIUM 回归)', () => {
+  it('热词命名的写命令被选中但跳过执行,shell 零调用', async () => {
+    process.env.DSH_OPENCLI_CANARY_DIR = path.join(benchDir, 'canary3')
+    shell.calls = []
+    const r = await (svc as unknown as { canaryRun: () => Promise<{ ok: boolean; total: number; passed: number; path?: string }> }).canaryRun()
+    expect(shell.calls.filter((c) => c.includes('fakehot'))).toHaveLength(0)
+    const md = fs.readFileSync(r.path!, 'utf8')
+    expect(md).toContain('防御性跳过')
+    expect(md).toContain('fakehot hot')
   })
 })

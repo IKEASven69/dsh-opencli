@@ -26,15 +26,18 @@ export function scanPrivacy(text: string): Finding[] {
   const rules: Array<[string, RegExp, 'FAIL']> = [
     // 20369 是本机 Windows 用户名——对外内容出现即身份泄露(注意小数/长数字误报,用前后非数字边界)
     ['本机用户名', /(?<![\d.])20369(?![\d.])/g],
-    ['本机路径', /(?:[A-Za-z]:[\\/](?:Users[\\/]20369|CodingProjects|CodingSoftware)|~\/\.vfox|\/c\/Users\/20369)/g],
+    ['本机路径', /(?:[A-Za-z]:[\\/](?:Users[\\/]20369|CodingProjects|CodingSoftware)|~\/\.vfox|\/c\/Users\/20369)/gi],
     ['会话id', /\bsess_[A-Za-z0-9-]{8,}\b/g],
     ['子代理id', /\bagent_[A-Za-z0-9-]{8,}\b/g],
     ['工作流运行id', /\bdwfrun-[A-Za-z0-9-]{6,}\b/g],
     ['工具调用id', /\bcall_[A-Za-z0-9]{16,}\b/g],
-    ['token', /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g],
-    ['邮箱', /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b/g],
+    // 经典 PAT(ghp_ 族) + 细粒度 PAT(github_pat_,2022 起现行格式,安全审查实证漏网)
+    ['token', /\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b/g],
+    // TLD 上限 24(现行最长 TLD 实际值;此前 {2,6} 漏掉 .technology/.international 等安全审查实证)
+    ['邮箱', /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}\b/g],
     ['会话工件CDN', /maas-log-prod|ufileos\.com\/anthropic/g],
-    ['内部目录', /[\\/]\.zcode[\\/]|[\\/]\.agents[\\/]/g],
+    // 尾部分隔符可省(行尾 "~/.zcode" 形态);大小写不敏感(安全审查实证小写路径漏网)
+    ['内部目录', /[\\/]\.zcode(?![A-Za-z0-9])|[\\/]\.agents(?![A-Za-z0-9])/gi],
   ]
   for (const [rule, re] of rules) {
     for (const m of text.matchAll(re)) {

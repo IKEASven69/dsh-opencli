@@ -66,3 +66,18 @@ describe('verdict 汇总', () => {
     expect(verdict([{ rule: 'x', hit: '', context: '', level: 'WARN' }], [{ claim: '170+', context: '' }])).toEqual({ pass: true, failN: 0, warnN: 1, numberN: 1 })
   })
 })
+
+describe('安全交叉审查实证的漏网回归(2026-10-20)', () => {
+  it('细粒度 PAT github_pat_ 前缀命中(此前整串漏过)', () => {
+    const r = scanPrivacy('leak github_pat_11ABcdefGHIjklMNOpqrsTUVwxyZ0123456789_1234567890')
+    expect(r.some((x) => x.rule === 'token')).toBe(true)
+  })
+  it('长 TLD 邮箱命中(.technology/.international)', () => {
+    const r = scanPrivacy('a@example.technology b@example.international')
+    expect(r.filter((x) => x.rule === '邮箱')).toHaveLength(2)
+  })
+  it('小写路径与行尾无分隔符的内部目录命中', () => {
+    expect(scanPrivacy('moved to C:/codingprojects/foo').some((x) => x.rule === '本机路径')).toBe(true)
+    expect(scanPrivacy('see docs in ~/.zcode end').some((x) => x.rule === '内部目录')).toBe(true)
+  })
+})

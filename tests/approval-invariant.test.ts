@@ -97,9 +97,25 @@ describe('攻击表:已知高危形态逐条拦截', () => {
     { name: 'chrome_raw', args: {}, want: 'ask', note: '无参数也确认(缺省不能漏)' },
     { name: 'chrome_tabs', args: { method: 'tabs.query' }, want: 'allow', note: '受控白名单(对照)' },
     { name: 'so_verify', args: { expectation: 'x', page_text: 'y' }, want: 'allow', note: '只读判定工具(对照)' },
+    // 安全审查 HIGH 回归:通用网关与 eval 双标(2026-10-20 交叉审查发现)
+    { name: 'opencli_run', args: { args: ['zhihu', 'comment', 'x'] }, want: 'ask', note: '通用网关·已知写命令' },
+    { name: 'opencli_run', args: { args: ['weibo', 'publish'] }, want: 'ask', note: '通用网关·另一站写命令' },
+    { name: 'opencli_run', args: { args: ['nope', 'anything'] }, want: 'ask', note: '通用网关·未知站点 fail-closed' },
+    { name: 'opencli_run', args: { args: ['browser', 'state', '--session', 'dsh'] }, want: 'allow', note: '通用网关·浏览器命名空间(对照)' },
+    { name: 'opencli_run', args: { args: ['zhihu', 'hot'] }, want: 'allow', note: '通用网关·只读命令(对照)' },
+    { name: 'browser_do', args: { command: 'eval', args: ['1+1'] }, want: 'ask', note: 'eval=登录页任意JS,等价写原语' },
   ])('$note → $want', async ({ name, args, want }) => {
     const d = await dispatch(name, args)
     expect(d.kind).toBe(want)
+  })
+
+  it('安全审查 HIGH:site_batch 写命令整批拒绝,shell 零调用', async () => {
+    shell.calls = []
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('site_batch')!
+    const r = await tool.execute({ command: 'publish', sites: ['weibo', 'zhihu'] })
+    expect(r.text).toContain('只接受只读命令')
+    expect(r.text).toContain('weibo publish(写命令)')
+    expect(shell.calls.filter((c) => c.includes('publish'))).toHaveLength(0)
   })
 })
 

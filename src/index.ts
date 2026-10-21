@@ -28,7 +28,7 @@ import { SystemOne, noulYes } from './systemone.ts'
 import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, SITE_HEALTH, type RawEntry } from './knowledge.ts'
 import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
-import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, buildBenchmarkReport, buildCanaryReport, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
+import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
 import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } from './evidence.ts'
 
 // 对话内预览卡(site/site_batch/browser_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
@@ -642,6 +642,17 @@ export class OpencliService extends TypertRemoteService {
           }
         }
         const unknownSites = known === null ? [] : sites.filter((s) => !known!.has(s))
+        // 安全审查 HIGH:批量是采集语义,写命令一律整批拒绝(fail-closed)——此前 command 只查
+        // 非空,`site_batch {command:"publish"}` 可在审批门开启下多站直发写命令。未知站点不在此
+        // 拦(它们由下方目录预检的拼写提醒负责,信息更有用)
+        {
+          const offenders: string[] = []
+          for (const s of sites.filter((x) => !unknownSites.includes(x))) {
+            const acc = await this.lookupAccess(s, command)
+            if (acc !== 'read') offenders.push(`${s} ${command}(${acc === 'write' ? '写命令' : '未知权限'})`)
+          }
+          if (offenders.length > 0) return { text: `批量采集只接受只读命令,以下组合被拒:${offenders.join('、')}。写命令请逐站走 site 工具(带审批门与证据包)。` }
+        }
         // 登录态 preflight(BrowserSkill #132 同源问题:同域并行互相踩登录态/标签页且无报错):
         // 同域站点改为组内串行,其余照常并行
         const byDomain = new Map<string, string[]>()
@@ -736,7 +747,7 @@ export class OpencliService extends TypertRemoteService {
     })
     this.registerToolSafe({
       name: 'opencli_run',
-      description: '通用 OpenCLI argv 网关（除 unrestricted 外走审批；常规搜索优先 site 直调）',
+      description: '通用 OpenCLI argv 网关（站点命令经写审批门:write/未知权限弹审批,只读放行;浏览器/系统子命令按 browser_* 同款边界;常规搜索优先 site 直调）',
       parameters: {
         args: { type: 'array', items: { type: 'string' }, description: 'argv 数组（如 ["reddit","search","DeepSeek Harness"]），不拼 shell' },
       },
@@ -2051,6 +2062,28 @@ export class OpencliService extends TypertRemoteService {
     this.ctx.on('tools/pre-execute', async (exec, next) => {
       try {
         if (this.automationMode === 'unrestricted') return await next()
+        // 通用 argv 网关的写审批(安全审查 HIGH:描述宣称走审批,实际 execute 直通,
+        // `opencli_run {args:["weibo","publish"]}` 可绕门直执行写命令):站点形态两段 argv
+        // 按目录查权限,write/未知一律 ask(fail-closed);浏览器/系统命名空间按 browser_* 同款边界放行
+        if (exec.name === 'opencli_run') {
+          const arr = Array.isArray(((exec.arguments ?? {}) as { args?: unknown }).args) ? (((exec.arguments ?? {}) as { args?: unknown }).args as unknown[]).map(String) : []
+          const [a0, a1] = arr
+          if (a0 !== undefined && a1 !== undefined && !RESERVED_NAMESPACES.has(a0) && a0 !== 'list' && a0 !== 'help' && !a0.startsWith('--')) {
+            const acc = await this.lookupAccess(a0, a1)
+            if (acc !== 'read') {
+              const reason = `opencli_run ${a0} ${a1} 是写命令或未知权限(${acc})——会在登录态浏览器真实执行,需人工确认。`
+              this.recordAudit(`opencli_run ${a0} ${a1}`, reason)
+              return { kind: 'ask', reason }
+            }
+          }
+        }
+        // browser_do eval 在登录态页面执行任意 JS,等价写原语——与 userscript-run 的门对齐,
+        // 不再裸放(安全审查 MEDIUM:同能力双标)
+        if (exec.name === 'browser_do' && String(((exec.arguments ?? {}) as { command?: unknown }).command ?? '') === 'eval') {
+          const reason = 'browser_do eval 在登录态页面执行任意 JavaScript,等价于写原语(可发帖/点赞/改数据),需人工确认。'
+          this.recordAudit('browser_do eval', reason)
+          return { kind: 'ask', reason }
+        }
         // chrome_raw 是高危逃生口:无条件走人工审批,兑现描述里"人工确认"的承诺
         // (独立评审发现:此前描述承诺审批但 pre-execute 无任何设防)
         if (exec.name === 'chrome_raw') {
@@ -2104,6 +2137,12 @@ export class OpencliService extends TypertRemoteService {
     const results: BenchItem[] = []
     for (let i = 0; i < lines.length; i++) {
       const [site, command] = lines[i]!.split(/\s+/) as [string, string]
+      // 防御性只读门(安全审查 MEDIUM):pickCanaryCommands 按热词名挑命令不查权限——
+      // 若上游目录某条 hot 词命名命令实为 write,这里挡住,绝不无人值守执行写命令
+      if ((await this.lookupAccess(site, command)) !== 'read') {
+        results.push({ site, command: lines[i]!, ok: false, p: null, ms: 0, error: '目录标记为非只读,防御性跳过' })
+        continue
+      }
       const started = Date.now()
       try {
         const out = await this.runOpencli([site, command], 45_000)
