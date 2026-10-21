@@ -457,7 +457,7 @@ export class OpencliService extends TypertRemoteService {
 
   private registerBrowserTools(): void {
     const run = async (session: string | undefined, argv: string[]): Promise<{ text: string; shot?: string }> => {
-      // 录屏回放(BrowserSkill #79 同款需求):browser_* 全族与 replay/crawl 等 RPC 透传
+      // 轨迹回放(BrowserSkill #79 同款需求):browser_* 全族与 replay/crawl 等 RPC 透传
       // 统一走 runBrowserTraced 单点,每步 trace 落盘;shot(若有)随结果带给卡片渲染
       const out = await this.runBrowserTraced(session, argv)
       return out.shot !== undefined ? { text: this.renderOut(out), shot: out.shot } : { text: this.renderOut(out) }
@@ -952,7 +952,7 @@ export class OpencliService extends TypertRemoteService {
     })
     this.registerToolSafe({
       name: 'trace_replay',
-      description: '录屏回放:最近 30 步 browser 命令的 markdown 时间线(时间/命令/exit/耗时,失败步附输出摘录)。复盘"上次为什么失败"先调它,别盲目重试',
+      description: '轨迹回放:最近 30 步 browser 命令的 markdown 时间线(时间/命令/exit/耗时,失败步附输出摘录)。复盘"上次为什么失败"先调它,别盲目重试',
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async () => out(await this.renderTraceTimeline(30)),
@@ -2454,7 +2454,7 @@ export class OpencliService extends TypertRemoteService {
     return `命令失败(退出码 ${out.exitCode}):\n${clip(out.stdout, 2000)}\n${clip(out.stderr, 2000)}`
   }
 
-  // ── 录屏回放:browser 命令运行轨迹(BrowserSkill #79 同款需求) ──
+  // ── 轨迹回放:browser 命令运行轨迹(BrowserSkill #79 同款需求) ──
 
   /** 轨迹文件日期键(本地日期 yyyymmdd,recordTrace 写入与 trace-list/get 读取共用同一把尺)。 */
   private static traceDateKey(d = new Date()): string {

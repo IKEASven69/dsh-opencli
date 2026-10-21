@@ -3,7 +3,7 @@
 [![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-listed-17695?logo=github&labelColor=555)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/tree/main/data/plugins/IKEASven69__dsh-opencli.yml)
 [![dsh-plugin](https://img.shields.io/badge/GitHub%20topic-dsh--plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
 
-> Let your DeepSeek Harness agent work in **your logged-in browser**: 知乎/B站/微博/GitHub 等 **180+ 站点一步式命令**,发帖点赞带审批门。
+> Let your DeepSeek Harness agent work in **your logged-in browser**: 知乎/B站/微博/GitHub 等 **170+ 站点一步式命令**,发帖点赞带审批门。
 
 **dsh 自带的 web 工具是"搜索"——所有人拿到一样的匿名结果。这个插件给它补上"办事"的那一半:agent 操纵你自己日常使用的、带登录态的真实浏览器,以你的账号视角拿数据、替你动手(写操作先弹审批,你点了允许才执行)。**
 
@@ -22,7 +22,7 @@
 |---|---|
 | ![试试看](docs/assets/readme/demo-try-run.png) | ![真实数据时间线](docs/assets/readme/demo-timeline-realdata.png) |
 
-**没适配器的网站?** 180+ 站目录之外,`browser_*` 通用原语覆盖任意网页;agent 还能当场造适配器,越用越会浏览。完整命令目录:
+**没适配器的网站?** 170+ 站目录之外,`browser_*` 通用原语覆盖任意网页;agent 还能当场造适配器,越用越会浏览。完整命令目录:
 
 ![命令目录](docs/assets/readme/demo-catalog.png)
 
@@ -43,7 +43,7 @@ dsh plugin add IKEASven69/dsh-opencli
 
 > 请按 https://github.com/IKEASven69/dsh-opencli/blob/opencli-release/AGENT_INSTALL.md 里的步骤帮我安装 dsh-opencli,装完跑一次自检并告诉我结果。
 
-装完打开 dsh 设置 →「浏览器代理」面板:四 tab(总览/命令/自动化/安全与设置)、180 站目录、登录态巡检、daemon 一键修复。
+装完打开 dsh 设置 →「浏览器代理」面板:四 tab(总览/命令/自动化/安全与设置)、170+ 站目录、登录态巡检、daemon 一键修复。
 
 <details>
 <summary><b>安装注意事项(3 条,遇到问题再展开)</b></summary>
@@ -71,7 +71,7 @@ dsh plugin add IKEASven69/dsh-opencli
 
 ## 它回答的三个真实缺口
 
-- *"browser agents re-learn every site on every session"*([browser-use#5841](https://github.com/browser-use/browser-use/issues/5841))→ **180+ 站预置结构化命令**:站点知识预编译,不重学。
+- *"browser agents re-learn every site on every session"*([browser-use#5841](https://github.com/browser-use/browser-use/issues/5841))→ **170+ 站预置结构化命令**:站点知识预编译,不重学。
 - *"想在当前打开的 Chrome 实例上做自动化"*([browser-use#4709](https://github.com/browser-use/browser-use/issues/4709))→ **登录态原生**:所有命令跑在你已登录的浏览器里,不另起无头实例。
 - *"求结构化动作证据:动作到底改没改页面"*([browser-use#5137](https://github.com/browser-use/browser-use/issues/5137);同源 [BrowserSkill#242](https://github.com/Tencent/BrowserSkill/issues/242))→ **执行真实性层**:采集结果经确定性规则+亚秒决策模型两层判定,`exit 0` 但内容无效会被标"疑似静默失败",无人值守定时任务按失败重试。
 
@@ -91,7 +91,7 @@ dsh plugin add IKEASven69/dsh-opencli
 
 | 模块 | 能力 |
 |---|---|
-| **site 适配器** | 180+ 站 / 200+ 命令,蒸馏目录注入 systemPrompt;`site_batch` 多站并行 |
+| **site 适配器** | 170+ 站 / 200+ 命令,蒸馏目录注入 systemPrompt;`site_batch` 多站并行 |
 | **browser 原语** | open/click/type/fill/scroll/state/screenshot/extract/wait/crawl 全套(泛爬带限流) |
 | **定时任务** | cron,持久化真执行,重启不丢;失败重试 ×3 + 通知 + 运行历史 |
 | **采集快照/时间线** | 成功执行存结构化快照(50 份轮转);时间线趋势+历史;**带出处报告导出**(每节:命令+时间+快照路径,零模型改写) |

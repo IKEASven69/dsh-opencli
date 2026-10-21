@@ -23,7 +23,7 @@
 > ⚠️ **升级必读:插件更新后必须重启 dsh daemon 才生效**(长驻进程不热加载插件构建)。
 
 ### 新功能
-- **录屏回放**:browser_* 全族命令自动落盘 trace(~/.dsh/opencli-traces,jsonl+5MB 轮转);trace-list/trace-get RPC;**trace_replay 工具**(agent 复盘"上次为什么失败",跨日聚合+本地时区);面板「运行轨迹」卡(红绿状态点/耗时/展开原文)
+- **轨迹回放**:browser_* 全族命令自动落盘 trace(~/.dsh/opencli-traces,jsonl+5MB 轮转);trace-list/trace-get RPC;**trace_replay 工具**(agent 复盘"上次为什么失败",跨日聚合+本地时区);面板「运行轨迹」卡(红绿状态点/耗时/展开原文)
 - **对话内任务预览卡片**:site/site_batch/browser_do 输出结构化渲染(命令块+四态状态色 ✓✗⚠+汇总表+原文围栏,0.2 视觉)
 - **报告导出(带出处)**:buildReport 纯渲染层——多站/定时快照合并为 markdown,每节**出处三元组(命令+时间+快照路径)+判定结论**,尾部"数据源与缺口声明"逐条列失败/静默失败/缺席,**零模型介入**;site_batch 自动落盘+report-build RPC+面板「生成报告」按钮
 - **站点健康度**:上游 issue 实测数据(小红书/instagram 受损等)驱动命令页徽章+知识卡健康段,受损站自动提示 browser 兜底

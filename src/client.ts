@@ -30,7 +30,7 @@ type Lang = 'zh' | 'en'
 const STR = {
   zh: {
     title: 'OpenCLI 浏览器代理',
-    desc: '驱动你登录态的真实浏览器 · 180 站 / 200+ 命令一步式执行 · 由 OpenCLI daemon 驱动',
+    desc: '驱动你登录态的真实浏览器 · 170+ 站 / 200+ 命令一步式执行 · 由 OpenCLI daemon 驱动',
     tabOverview: '总览', tabCommands: '命令', tabAuto: '自动化', tabSec: '安全与设置',
     daemonRunning: '运行中', daemonDown: '未运行', daemonStale: '失联', bridgeOn: '已连接', bridgeOff: '未连接',
     recheck: '重新巡检', checking: '巡检中…', diagAll: '一切正常', detail: '详情',
@@ -81,6 +81,9 @@ const STR = {
     obCliOk: 'opencli CLI 已就绪', obCliBad: '未检测到 opencli CLI', obCliFix: '复制安装命令',
     obBridgeHint: '从 GitHub Releases 下载 BrowserBridge 扩展,到 Chrome 扩展页开发者模式加载,再回面板重巡检',
     obRelBtn: '打开 Releases',
+    // 零配置降级可用面(设计 §2.2-2):无扩展时的黄色状态行——向导不再只有"装扩展"一种结局
+    obZeroCfgN: (n: number) => `降级可用面:${n} 个站的只读命令无扩展也能跑(匿名);browser_*/chrome_* 暂不可用`,
+    obZeroCfgNa: '降级可用面:部分只读命令无扩展也能跑(匿名);browser_*/chrome_* 暂不可用',
     obLoginOk: '登录态正常', obLoginPart: '登录态部分失效', obLoginBad: '登录巡检全红', obLoginNa: '尚未巡检登录态',
     siteEmpty: '适配器返回空(可能未登录或无数据)。请先在真实 Chrome 登录后重试。',
     guideS1: '安装 opencli CLI:npm i -g @jackwener/opencli',
@@ -101,7 +104,7 @@ const STR = {
   },
   en: {
     title: 'OpenCLI Browser Proxy',
-    desc: 'Drive your logged-in real browser · 180 sites / 200+ commands one-shot · powered by the OpenCLI daemon',
+    desc: 'Drive your logged-in real browser · 170+ sites / 200+ commands one-shot · powered by the OpenCLI daemon',
     tabOverview: 'Overview', tabCommands: 'Commands', tabAuto: 'Automation', tabSec: 'Security',
     daemonRunning: 'running', daemonDown: 'not running', daemonStale: 'stale', bridgeOn: 'connected', bridgeOff: 'not connected',
     recheck: 'Re-check', checking: 'checking…', diagAll: 'All good', detail: 'detail',
@@ -152,6 +155,8 @@ const STR = {
     obCliOk: 'opencli CLI ready', obCliBad: 'opencli CLI not detected', obCliFix: 'Copy install command',
     obBridgeHint: 'Download the BrowserBridge extension from GitHub Releases, load it on the Chrome extensions page in developer mode, then re-check here',
     obRelBtn: 'Open Releases',
+    obZeroCfgN: (n: number) => `Degraded mode: read-only commands on ${n} sites still run without the extension (anonymous); browser_*/chrome_* unavailable`,
+    obZeroCfgNa: 'Degraded mode: some read-only commands still run without the extension (anonymous); browser_*/chrome_* unavailable',
     obLoginOk: 'Logins healthy', obLoginPart: 'Some logins failed', obLoginBad: 'All login checks failed', obLoginNa: 'Login check not run yet',
     siteEmpty: 'Adapter returned empty (not logged in?). Log in on real Chrome first.',
     guideS1: 'Install opencli CLI: npm i -g @jackwener/opencli',
@@ -1024,7 +1029,7 @@ function Panel(): ReturnType<typeof createElement> {
         ),
         createElement('div', { className: 'o4-note' }, t2('v4host')),
       ),
-      // 运行轨迹:browser 命令全量 JSONL 落盘的时间线(录屏回放,模块级组件经 props 拿 lang)
+      // 运行轨迹:browser 命令全量 JSONL 落盘的时间线(轨迹回放,模块级组件经 props 拿 lang)
       createElement(TracePanel, { lang }),
       createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '12px' } },
         createElement('div', { className: 'o4-card' },
@@ -1442,6 +1447,10 @@ function OnboardingWizard(props: {
   const cliOk = status?.ok === true && status.bin !== null
   const daemonUp = status?.daemon?.running === true
   const bridgeOn = status?.daemon?.extension === 'connected'
+  // 零配置降级可用面的显示判据比红点更严:扩展确已连(如多档案未选的 'connected, none selected')
+  // 不显示,避免"扩展在却劝降级"的误导;正则口径与 host 侧 doctor 的 extConnected 同源
+  const extRaw = status?.daemon?.extension ?? ''
+  const extConnected = /^connected/.test(extRaw) || /profiles connected/.test(extRaw)
   const loginOk = loginResults.length > 0 && loginResults.every((r) => r.ok === true)
   const loginAllRed = loginResults.length > 0 && loginResults.every((r) => r.ok !== true)
   const loginDot: 'g' | 'r' | 'y' | 'n' = loginOk ? 'g' : (loginAllRed ? 'r' : (loginResults.length === 0 ? 'n' : 'y'))
@@ -1467,6 +1476,11 @@ function OnboardingWizard(props: {
     row('bridge', bridgeOn ? 'g' : 'r', 'BrowserBridge ' + (bridgeOn ? tt('bridgeOn') : tt('bridgeOff')),
       bridgeOn ? null : createElement('button', { className: 'o4-btn ghost sm', onClick: () => { window.open(RELEASES_URL, '_blank') } }, ic('ext', true), tt('obRelBtn'))),
     !bridgeOn ? createElement('div', { className: 'o4-note' }, tt('obBridgeHint')) : null,
+    // 降级可用面黄行(设计 §2.2-2):bridge 红时声明"现在还能跑什么",向导不再只有"装扩展"一种结局;
+    // 目录未载入时用无数字文案,不给猜出来的 N
+    !bridgeOn && !extConnected
+      ? row('zerocfg', 'y', adapters !== null ? tt('obZeroCfgN')(readonlySiteCount(adapters)) : tt('obZeroCfgNa'), null)
+      : null,
     row('login', loginDot, loginText, null),
     // 登录层修复动作:每个可登录站一枚「打开登录」按钮 → try-run 跑 `site <站> login`,浏览器会开登录页
     loginSites.length > 0
@@ -1499,4 +1513,11 @@ export function shouldShowOnboarding(p: { status: OpencliStatus | null; loginRes
  *  衍生命令生成跑不通的 `site <站> login`);返回站名 + 可直接交给 try-run 的命令行。 */
 export function loginSitesFromAdapters(adapters: ReadonlyArray<AdapterInfo> | null): Array<{ site: string; line: string }> {
   return (adapters ?? []).filter((a) => a.commands.includes('login')).map((a) => ({ site: a.name, line: `site ${a.name} login` }))
+}
+
+/** 零配置降级可用面(纯函数,导出供 tests/zerocfg.test.ts):无扩展时仍有只读命令的站点数。
+ *  kinds 是 normalizeAdapterList 聚合的每站 access 集合,含 'read' 即计入——只做正向提示不做门控
+ *  (设计 §2.1:漏标不该挡住一个实际能跑的命令,数字只用于"还能跑什么"的声明)。 */
+export function readonlySiteCount(adapters: ReadonlyArray<AdapterInfo> | null): number {
+  return (adapters ?? []).filter((a) => (a.kinds ?? []).includes('read')).length
 }
