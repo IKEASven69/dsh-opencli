@@ -13,7 +13,7 @@ import { defineTool, type DefineToolOptions, type ParameterSchemaSpec, type Valu
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
 import { homedir } from 'node:os'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -65,6 +65,17 @@ const CHROME_METHODS_ALLOW = new Set([
   'tabGroups.query', 'tabGroups.get', 'tabGroups.update', 'tabGroups.move',
   'windows.get', 'windows.getAll', 'windows.create', 'windows.update', 'windows.remove',
 ])
+
+/** ④⑤ 无扩展短路统一文案(docs/DESIGN-zero-config-fallback.md §5 三件套:缺什么/装什么/装完会发生什么)。
+ *  browser_* 与 chrome_* 两族是 CLI→daemon→扩展硬链路(上游架构事实),无扩展不做伪造降级,只给确切出路。 */
+const NO_EXT_GUIDANCE =
+  '需要 OpenCLI 扩展(当前未检测到):browser_*/chrome_* 走 CLI→daemon→扩展链路,无扩展无法工作,也不伪造降级。' +
+  '装法:https://github.com/jackwener/OpenCLI/releases 下载 opencli-extension-*.zip 解压 → Chrome/Edge 扩展页开"开发者模式"→"加载解压缩的扩展";装好自动重连,本工具立即可用,无需重启 dsh。' +
+  '无扩展期间:site 的纯 HTTP 只读命令(如 site juejin hot)不受影响。'
+
+/** ② 通道B 注入的固定 argv 尾(上游 execution.js:--site-session ephemeral = 一次性匿名 tab,
+ *  与 OPENCLI_SITE_SLOTS 互斥由该 flag 解除)。测试钉死:注入只加 env 与这组 flag,别无改动。 */
+const CDP_ARGV_TAIL: readonly string[] = ['--site-session', 'ephemeral']
 
 const OUTPUT_LIMIT = 16000
 const ADAPTER_TTL_MS = 60 * 60 * 1000
@@ -248,8 +259,18 @@ export class OpencliService extends TypertRemoteService {
     // 决策层后台预热:laya 权重冷加载约 60s,不能让 agent 的首次 so_verify/so_pick 吃这个延迟。
     // vitest 里跳过:测试会拉起真实 service,后台真加载权重既慢又晃动测试进程。
     if (process.env.VITEST === undefined) void this.so.prewarm()
+    // 扩展状态缓存同样启动期预热(fire-and-forget,与 laya 预热同一理由):让零配置降级的
+    // ④⑤ 短路/② 路由在首条 browser/site 命令上直接命中缓存,不为冷探测多付一次子进程
+    void this.extensionState().catch(() => {})
     void this.injectSystemPrompt()
     if (this.schedules.some((s) => s.enabled)) this.startScheduler()
+    // 调度计时器随服务停机清除:cordis stop 不自动收走裸 setInterval,vitest 复用 worker 跑
+    // 多个测试文件与插件热重载都会留下僵尸调度器——它在服务"死后"继续触发
+    // runSiteCommand/saveState,是并发写状态文件竞态的来源之一(effect 先例见
+    // registerKnowledgeResources)
+    ;(this.ctx as unknown as { effect?: (f: () => () => void) => unknown }).effect?.(() => () => {
+      if (this.schedTimer !== undefined) { clearInterval(this.schedTimer); this.schedTimer = undefined }
+    })
     // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务。
     // 不能把带 typertRemote 的原始实例直接 provide：网关遍历 ctx.reflect.props 时,
     // 'browser' 条目会在 namespace 过滤前走 readBinding,serviceKey('browser')≠绑定
@@ -333,6 +354,9 @@ export class OpencliService extends TypertRemoteService {
             } else {
               lines.push('✗ BrowserBridge:扩展未连接')
               next.push('装扩展(需人在浏览器点一次):https://github.com/jackwener/OpenCLI/releases 下载 opencli-extension-*.zip 解压 → Chrome/Edge 扩展页开"开发者模式"→"加载解压缩的扩展";装完等扩展自动重连')
+              // 零配置降级声明(设计 §2.2-1):红层不再只有"装扩展"一种结局——同步声明当前诚实的可用面,
+              // 不让"全部工具族的错误文案都引向先装扩展"高估不可用面
+              next.push('零配置继续用:无扩展也能直跑纯 HTTP 只读命令(如 site juejin hot);需浏览器的只读命令在本机有 CDP 端点时经匿名会话降级执行,输出标注「匿名降级」;browser_*/chrome_* 与登录态命令暂不可用,装扩展后自动恢复')
             }
           }
         }
@@ -818,6 +842,13 @@ export class OpencliService extends TypertRemoteService {
    * 补升级指引而不是让用户面对裸错(本机真机实测 2026-10-20,describe 同款报错)。
    */
   private async runChromeCall(method: string, args: unknown[]): Promise<{ text: string }> {
+    // ⑤ 无扩展短路(同④):chrome 通道同样经 daemon→扩展(且需扩展 ≥1.0.25),
+    // 显式未连时不发注定失败的调用,直接给装扩展指引
+    if ((await this.extensionState()).explicitDown) {
+      const out = { exitCode: 1, stdout: '', stderr: NO_EXT_GUIDANCE }
+      this.recordTrace(`chrome ${method} [no-ext]`, out, 0)
+      return { text: this.renderOut(out) }
+    }
     const started = Date.now()
     const out = await this.runOpencli(['browser', 'chrome', 'call', method, JSON.stringify(args)], 30_000)
     this.recordTrace(`chrome ${method}`, out, Date.now() - started)
@@ -1002,11 +1033,32 @@ export class OpencliService extends TypertRemoteService {
         // 恰是最该留痕的一类,'===write' 会漏掉它们
         const evidenceOn = (await this.lookupAccess(adapter, command)) !== 'read'
         const beforeShot = evidenceOn ? await this.captureEvidenceShot() : undefined
-        const out = await this.runOpencli(argv)
+        // 零配置降级路由(设计 §3,P0):确定无扩展时——browser:false 直跑(①现状零改动);
+        // browser:true 只读命令命中本机 CDP 端点则匿名降级(②注入 env+flag);无端点按④诚实报不可用;
+        // 写/未知权限命令在 zeroCfgPlan 内部按硬不变量直接返回 null,走现状路径
+        const zc = await this.zeroCfgPlan(adapter, command)
+        if (zc !== null && zc.mode === 'skip') return { text: zc.text }
+        const inj = zc !== null && zc.mode === 'inject' ? zc : null
+        const out = await this.runOpencli(
+          inj !== null ? [...argv, ...inj.argvTail] : argv,
+          60_000, 1_048_576,
+          inj !== null ? inj.env : undefined,
+        )
         if (evidenceOn) await this.recordSiteEvidence(adapter, command, argv, out, beforeShot)
         const text = this.renderOut(out)
-        if (text.trim() === '[]') return { text: `适配器 ${adapter} 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 ${adapter}，或运行 \`opencli ${adapter} login\` 后用面板“巡检登录态”确认。` }
-        if (out.exitCode !== 0 && /Navigation rejected/i.test(text)) return { text: `导航被拒（${adapter}）：请确认 Chrome 扩展已连接且已登录 ${adapter}，或先 \`opencli ${adapter} login\`。原错：${text.slice(0,300)}` }
+        // 匿名降级标注(硬边界):降级路径的输出必须可识别,避免用户误以为是登录态数据
+        const anon = inj !== null ? '【匿名降级】当前无扩展,本命令经本机匿名 CDP 会话执行——不是你的登录态数据。\n' : ''
+        if (text.trim() === '[]') {
+          return { text: inj !== null
+            ? `${anon}适配器 ${adapter} 返回空(匿名会话无登录态;若该站需要登录,装扩展后可恢复:https://github.com/jackwener/OpenCLI/releases)`
+            : `适配器 ${adapter} 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 ${adapter}，或运行 \`opencli ${adapter} login\` 后用面板“巡检登录态”确认。` }
+        }
+        if (out.exitCode !== 0 && /Navigation rejected/i.test(text)) return { text: `${anon}导航被拒（${adapter}）：请确认 Chrome 扩展已连接且已登录 ${adapter}，或先 \`opencli ${adapter} login\`。原错：${text.slice(0,300)}` }
+        // ③(设计 §3-③):无扩展时的 AUTH 失败不是"去浏览器登录"能解决的——登录态整体不可用,
+        // 换成降级引导(装扩展+为何不能降级);有扩展时维持原登录指引不变
+        if (out.exitCode !== 0 && /AUTH_REQUIRED|请先登录|NOT_LOGGED_IN/i.test(`${out.stdout}\n${out.stderr}`) && (await this.extensionState()).connected === false) {
+          return { text: `${anon}登录态缺失:当前无扩展,登录态(COOKIE)命令整体不可用——匿名会话拿不到你的 cookie,写命令也永不降级。装扩展后可恢复:https://github.com/jackwener/OpenCLI/releases。原错:${text.slice(0, 300)}` }
+        }
         // 真实性判定标注(与 site_batch/try-run 同源 verifyResult/verifyBadge):exit 0 ≠ 有效数据,
         // 登录墙/风控页/空壳以 ⚠ 前缀标注进 {text},预览卡(siteCardRender)据此落 ⚠ 琥珀。
         // 只标注不拦截——模型仍见原文(与 site_batch 先例一致;拦截级处置留给无人值守的 schedule 路径)。
@@ -1014,9 +1066,9 @@ export class OpencliService extends TypertRemoteService {
         // SystemOne 不可用/未预热时 verifyResult 返回 null → 不标注,行为与升级前一致
         if (out.exitCode === 0) {
           const badge = this.verifyBadge(await this.verifyResult(adapter, command, out.stdout, { warmOnly: true }))
-          if (badge !== '') return { text: `${badge} ${text}` }
+          if (badge !== '') return { text: `${anon}${badge} ${text}` }
         }
-        return { text }
+        return { text: `${anon}${text}` }
       },
     })
   }
@@ -1073,6 +1125,12 @@ export class OpencliService extends TypertRemoteService {
       ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
       : 'daemon 未运行——browser_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
     const gate = this.state.approval === 'on' ? 'site 的 write 命令会先请求用户审批。' : '审批门已关闭(write 命令直接执行)。'
+    // 无扩展的诚实可用面(设计 §2.2-3):目录是模型可见的动态能力声明——工具 description 是一次性
+    // 注册的静态文案改不了,动态能力只能走目录文本与错误文案两个通道。判据与 doctor 同源
+    // (daemon 未运行/扩展非正向连接都算无扩展),与 ④⑤ 短路的"显式未连"刻意不同档(那是动作门,这是声明)
+    const extLine = (daemon?.extension ?? '').trim()
+    const extOk = daemon !== null && daemon.running === true && (/^connected/.test(extLine) || /profiles connected/.test(extLine))
+    const zeroCfg = extOk ? '' : `\n当前无扩展:site 的纯 HTTP 只读命令(如 juejin hot / hackernews best)可直接跑;需浏览器的只读命令若本机有 CDP 端点,会经匿名会话降级执行并标注「匿名降级」(非登录态数据);browser_*/chrome_* 与登录态(COOKIE)命令不可用。装扩展后全部恢复:https://github.com/jackwener/OpenCLI/releases`
     this.directoryText = `浏览器代理(dsh-opencli):你在 Chrome 里登录的网站,dsh 都能用。170+ 站点适配器(知乎/B站/微博/arxiv/github/...),用 site <适配器> <命令>。
 
 按用户原话选:
@@ -1088,7 +1146,7 @@ export class OpencliService extends TypertRemoteService {
 - site_batch → 多站同命令并行采集,自带同域冲突串行化(preflight)与"疑似静默失败"标注
 - 定时任务建在面板"自动化"页,可加 watch 关键词(命中即🔔通知);撞风控墙自动 2 分钟退避
 
-不要:写命令不在用户登录态时跑(先 opencli <site> login);cookie/密码不放工具参数。${state}。${gate}\n${buildAdapterDirectory(active)}`
+不要:写命令不在用户登录态时跑(先 opencli <site> login);cookie/密码不放工具参数。${state}。${gate}${zeroCfg}\n${buildAdapterDirectory(active)}`
   }
 
   // ── RPC(面板) ────────────────────────────────────────────
@@ -1453,6 +1511,92 @@ export class OpencliService extends TypertRemoteService {
   private static readonly CDP_PORTS = [9222, 9234, 9236, 9238]
   private cdpCache: { at: number; found: boolean; port: number | null; browser: string | null } | null = null
 
+  /** 扩展连接态缓存(≤15s,与 probeCdp 同量级;设计 §2.2-4:每命令路由读缓存,不逐条打 daemon status)。 */
+  private extCache: { at: number; connected: boolean | null; explicitDown: boolean } | null = null
+
+  /**
+   * 扩展状态快照,两档判据刻意分开(零配置降级设计 §2.1,信号复用 daemonStatus/parseDaemonStatus):
+   * - connected(false=宽档"非正向连接"):daemon 未运行/字段缺失/显式未连都算——给 ②③ 的 site 路由用,
+   *   降级是加路不是拆路,判宽些只影响"要不要尝试匿名通道",不会拦掉任何现状路径;
+   * - explicitDown(仅显式未连):daemon 明确报告扩展未连(2.0 extensionConnected:false → 归一
+   *   'not connected';1.x `Extension: not*`)——给 ④⑤ 的 browser_* 与 chrome_* 短路用。
+   *   只认显式否定:daemon 运行但不上报 Extension 字段的旧形态下 browser_* 仍可能工作,
+   *   缺字段≠否定,短路会把还能跑的路径一刀切死,不做。
+   * null=探测失败(状态未知):一切按现状路径,不降级也不短路。
+   */
+  private async extensionState(): Promise<{ connected: boolean | null; explicitDown: boolean }> {
+    if (this.extCache !== null && Date.now() - this.extCache.at < 15_000) {
+      return { connected: this.extCache.connected, explicitDown: this.extCache.explicitDown }
+    }
+    let connected: boolean | null = null
+    let explicitDown = false
+    try {
+      // 探测走 runOpencliUngoverned(而非 daemonStatus/runOpencli):本机 RPC 不吃 site 限流,
+      // 也不经会被覆写的实例方法——两条理由见该方法的注释(零配置降级实测教训)
+      const r = await this.runOpencliUngoverned(['daemon', 'status'], 15_000, 262_144)
+      const ds = r.exitCode !== 0 ? null : parseDaemonStatus(r.stdout + '\n' + r.stderr)
+      if (ds === null) {
+        connected = null // daemon status 命令本身失败:分不清"未运行"还是"坏了",按未知处理
+      } else if (ds.running !== true) {
+        connected = false // daemon 明确未运行 = 必然无扩展;但对 ④⑤ 不短路(可能自行拉起/自愈)
+      } else {
+        const extLine = (ds.extension ?? '').trim()
+        const up = /^connected/.test(extLine) || /profiles connected/.test(extLine)
+        connected = up
+        explicitDown = !up && (extLine === 'not connected' || /^not\b/i.test(extLine) || /disconnected/i.test(extLine))
+      }
+    } catch { connected = null; explicitDown = false }
+    this.extCache = { at: Date.now(), connected, explicitDown }
+    return { connected, explicitDown }
+  }
+
+  /**
+   * 命令级 browser 字段探测(设计 §2.1):`<site> <cmd> --help -f json` 的 browser 布尔是区分
+   * 通道A(纯 HTTP,零依赖直跑)与通道B(需浏览器)的唯一可靠判据(实测:juejin hot→false,36kr hot→true)。
+   * 失败/无字段返回 null=未知,按保守侧"需要浏览器"处理(§3 判据级联的约定)。
+   * 只在"确定无扩展 + read"的降级路径上才被调用,正常路径零成本;P0 不做 TTL 缓存(P1 项)。
+   */
+  private async commandNeedsBrowser(adapter: string, command: string): Promise<boolean | null> {
+    const r = await this.runOpencli([adapter, command, '--help', '-f', 'json'], 15_000)
+    if (r.exitCode !== 0) return null
+    const j = extractJsonObject(r.stdout) as { browser?: unknown } | null
+    return j !== null && typeof j.browser === 'boolean' ? j.browser : null
+  }
+
+  /**
+   * 零配置降级路由(site 命令执行前的唯一降级决策点,设计 §3 P0-②)。返回:
+   * - null:现状路径(有扩展/状态未知/写或未知权限/browser:false/1.x 宿主);
+   * - inject:② 通道B——注入 OPENCLI_CDP_ENDPOINT + --site-session ephemeral(匿名会话);
+   * - skip:④式诚实报不可用(browser:true + read + 无扩展 + 无 CDP 端点,注定失败不执行)。
+   * 硬不变量:写/未知权限命令一律返回 null 永不降级——没有用户身份的写不是降级是伪造(§3 不变量1)。
+   * 1.x 宿主维持①/④现状(§7-2:--site-session 是 2.0 语法)。
+   */
+  private async zeroCfgPlan(adapter: string, command: string): Promise<
+    { mode: 'inject'; env: Record<string, string>; argvTail: string[] } | { mode: 'skip'; text: string } | null
+  > {
+    const ext = await this.extensionState()
+    if (ext.connected !== false) return null // 有扩展或状态未知:现状路径,通道B 不介入(§5 无缝切回)
+    const access = await this.lookupAccess(adapter, command)
+    if (access !== 'read') return null // 判据级联第一级(零成本):写/未知永不降级
+    const needsBrowser = await this.commandNeedsBrowser(adapter, command)
+    if (needsBrowser === false) return null // ① 通道A纯 HTTP:直跑,现状零改动
+    if ((await this.cliMajor()) < 2) return null // 1.x 宿主:维持现状
+    const cdp = await this.probeCdp()
+    // 通道B(CDP attach)默认关死(立项评审致命发现):上游 CDPBridge 是 attach 端点浏览器
+    // 已存在的真实标签页(无隐身上下文/独立 profile),而候选口 9222 族恰是用户自开调试
+    // Chrome 的惯用口——attach 上去执行会带着用户登录态,与「匿名降级」标注构成信任断裂。
+    // 正解是 headless 自管 Chrome(设计稿 P1,唯一正当端点来源);在那之前只留显式实验开关。
+    if (process.env.OPENCLI_ZEROCDP_CDP === '1' && cdp.found && cdp.port !== null) {
+      return { mode: 'inject', env: { OPENCLI_CDP_ENDPOINT: `http://127.0.0.1:${cdp.port}` }, argvTail: [...CDP_ARGV_TAIL] }
+    }
+    return {
+      mode: 'skip',
+      text: `site ${adapter} ${command} 需要浏览器会话,当前无扩展且未探测到本机 CDP 端点,无法匿名降级执行。两条路:` +
+        `①装扩展(恢复全部能力):https://github.com/jackwener/OpenCLI/releases 下载 opencli-extension-*.zip 解压 → Chrome/Edge 扩展页开"开发者模式"→"加载解压缩的扩展";` +
+        `②先用纯 HTTP 只读命令(如 site juejin hot,无需浏览器不受影响)。`,
+    }
+  }
+
   /** 探测 daemon Chrome 的 CDP 端点:并发 probe /json/version,响应含 "Browser" 即命中。 */
   private async probeCdp(): Promise<{ found: boolean; port: number | null; browser: string | null }> {
     if (this.cdpCache !== null && Date.now() - this.cdpCache.at < 15_000) {
@@ -1710,8 +1854,13 @@ export class OpencliService extends TypertRemoteService {
     if (out.exitCode !== 0) {
       // 修复(核验A-3):exit≠0 原样透传原始 YAML,绕过统一恢复指引。归类+附插件层指引
       const raw = out.stdout + out.stderr
+      // ③(设计 §3-③):无扩展时的 AUTH 失败换降级引导——登录态整体不可用,不是"去登录"能解决的;
+      // 有扩展时维持原文案。前缀「登录态缺失」保持不变(hardening A-3 归类锚点)
       const kind = /BROWSER_CONNECT|extension not connected/i.test(raw) ? '扩展未连接——请打开 Chrome 并启用 OpenCLI 扩展(装法见 https://github.com/jackwener/opencli/releases),再在面板「总览」巡检登录态'
-        : /AUTH_REQUIRED|请先登录|NOT_LOGGED_IN/i.test(raw) ? '登录态缺失——先在真实 Chrome 登录该站或运行 opencli <site> login'
+        : /AUTH_REQUIRED|请先登录|NOT_LOGGED_IN/i.test(raw)
+          ? ((await this.extensionState()).connected === false
+              ? '登录态缺失:当前无扩展,登录态(COOKIE)命令整体不可用——匿名降级拿不到你的 cookie(写命令永不降级);装扩展后可恢复:https://github.com/jackwener/OpenCLI/releases'
+              : '登录态缺失——先在真实 Chrome 登录该站或运行 opencli <site> login')
         : /验证码|captcha|Verifying your browser/i.test(raw) ? '风控墙——停止自动化,冷却后人工过盾,写操作务必低频'
         : null
       return { ok: false, error: kind !== null ? '【' + kind + '】原始输出:' + text.slice(0, 300) : text }
@@ -2143,7 +2292,7 @@ export class OpencliService extends TypertRemoteService {
    * 旧 ctx.shell.execute 在 0.2.0 需要 sandbox policy 管线,插件直调已不可靠)。
    * 返回 null = 该 seam 不可用,调用方回落老路径。
    */
-  private async runSubprocess(argv: string[], timeoutMs: number, stdoutMaxBytes: number): Promise<{ exitCode: number; stdout: string; stderr: string } | null> {
+  private async runSubprocess(argv: string[], timeoutMs: number, stdoutMaxBytes: number, env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string } | null> {
     // 不能把 'subprocess' 放进 static inject:cordis 对声明服务做加载期解析,0.1.x 宿主没有它会
     // 让整个插件加载失败。改走 reflect 旁路(可选读取,缺失即 undefined→回落老 shell 路径)。
     let sub: SubprocessSeam | undefined
@@ -2161,6 +2310,9 @@ export class OpencliService extends TypertRemoteService {
       stdio: { stdin: 'ignore', stdout: { maxBytes: stdoutMaxBytes }, stderr: { maxBytes: 262_144 } },
       graceMs: 1_000,
       signal: AbortSignal.timeout(timeoutMs),
+      // env 显式条目与擦净后的父环境合并(dsh-subprocess 0.2.0 SubprocessSpawnRequest.env,本次实测确认);
+      // per-spawn spec 携带、绝不写 process.env——降级注入对插件进程环境零残留(设计 §4-2-4)
+      ...(env !== undefined ? { env } : {}),
     })
     const outcome = await h.done
     const read = async (r: { readFrom: (o: number) => Promise<{ text?: string }> } | undefined): Promise<string> => {
@@ -2173,8 +2325,8 @@ export class OpencliService extends TypertRemoteService {
     }
   }
 
-  private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
-    const raw = await this.runOpencliRaw(argv, timeoutMs, stdoutMaxBytes)
+  private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576, env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
+    const raw = await this.runOpencliRaw(argv, timeoutMs, stdoutMaxBytes, env)
     return this.unwrapCli2(argv, raw)
   }
 
@@ -2209,67 +2361,10 @@ export class OpencliService extends TypertRemoteService {
     return this.cliMajorCache
   }
 
-  private async runOpencliRaw(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
+  private async runOpencliRaw(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576, env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
     await this.acquireGovernor()
     try {
-      // 0.2.0+ 原生 seam 优先。防线:seam 冷启动有竞态(真机实测:daemon 刚起时首几条
-      // 抛 'reading includes'/'destructure policy',几分钟后自愈;而 0.1.x shell 回落
-      // 在 0.2.1 宿主上会截断 argv——'xiaohongshu' 变 'xiaohong')。所以 seam 抛错先
-      // 重试 seam(400ms×2),三败才回落 shell。
-      let viaSub: Awaited<ReturnType<OpencliService['runSubprocess']>> = null
-      for (let attempt = 0; attempt < 3 && viaSub === null; attempt++) {
-        try {
-          viaSub = await this.runSubprocess(argv, timeoutMs, stdoutMaxBytes)
-        } catch {
-          if (attempt < 2) await new Promise((res) => setTimeout(res, 400))
-        }
-      }
-      if (viaSub !== null) {
-        this.noteRateLimit(`${viaSub.stdout}\n${viaSub.stderr}`)
-        return viaSub
-      }
-      // 回落:0.1.x 的 ctx.shell 多形态(run/execute × resolve/直传/argv)
-      const shellAny = this.ctx.shell as any
-      const runner = typeof shellAny.run === 'function' ? shellAny.run.bind(shellAny) : (typeof shellAny.execute === 'function' ? shellAny.execute.bind(shellAny) : null)
-      if (runner === null) return { exitCode: 1, stdout: '', stderr: 'dsh shell 能力不可用(既无 run 也无 execute)' }
-      // 0.2.0 起 spec 必须携带沙箱策略(否则 shell 内部 destructure policy.mode 直接抛错);
-      // 插件是可信进程内消费者,用 danger-full-access(与 0.1.x 无沙箱行为一致);老版本忽略多余字段。
-      const policy = { mode: 'danger-full-access' as const, workspaceRoot: homedir() }
-      const baseSpec = { command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes, policy }
-      const argvSpec = { ...baseSpec, command: [this.bin, ...argv], policy }
-      const attempts: Array<'resolved' | 'direct' | 'array'> = this.shellMode !== null ? [this.shellMode] : ['resolved', 'direct', 'array']
-      let out: { exitCode: number; stdout: string; stderr: string } = { exitCode: 1, stdout: '', stderr: '' }
-      for (const mode of attempts) {
-        let spec: unknown
-        let threw = false
-        try {
-          spec = mode === 'resolved' ? (typeof shellAny.resolve === 'function' ? shellAny.resolve({ ...baseSpec } as ShellExecRequest) : baseSpec)
-            : mode === 'direct' ? baseSpec
-            : argvSpec
-          const raw = await runner(spec)
-          // 归一化:0.1.5 流式 {text} 与字符串形态统一为纯文本,维持下游契约
-          const asText = (x: unknown): string => {
-            if (x && typeof x === 'object' && typeof (x as { text?: unknown }).text === 'string') return (x as { text: string }).text
-            return typeof x === 'string' ? x : ''
-          }
-          out = {
-            exitCode: typeof raw?.exitCode === 'number' ? raw.exitCode : 1,
-            stdout: asText(raw?.stdout),
-            stderr: asText(raw?.stderr),
-          }
-        } catch (e) {
-          threw = true
-          out = { exitCode: 1, stdout: '', stderr: e instanceof Error ? e.message : String(e) }
-        }
-        // 形态判定:调用于抛错且(有输出或退出码 0)才锁定该形态;
-        // 抛错一律换下一形态(异常文本不是真实 stderr,不能当有效输出)
-        if (!threw && (out.stdout.length > 0 || out.stderr.length > 0 || out.exitCode === 0)) {
-          this.shellMode = mode
-          break
-        }
-      }
-      this.noteRateLimit(`${out.stdout}\n${out.stderr}`)
-      return out
+      return await this.runOpencliUngoverned(argv, timeoutMs, stdoutMaxBytes, env)
     } catch (e) {
       // 沙箱不可用（家目录启动 dsh web 时 ACL temp ⊂ workspace 必然触发）:
       // 降级为"无可用 opencli"，绝不让插件初始化把整个 dsh web 拖死
@@ -2281,6 +2376,77 @@ export class OpencliService extends TypertRemoteService {
     } finally {
       this.releaseGovernor()
     }
+  }
+
+  /**
+   * runOpencliRaw 的无限流内核(执行体拆分):供 daemon status 探测等**本机 RPC**直调,刻意
+   * 不吃 site 命令的礼貌限流、也不经 this.runOpencli——两条都是零配置降级实测换来的:
+   * ①限流间隔(750ms 级)会挂进命令热路径,紧时限用例(tests/trace.test.ts 的 browser 三连,
+   * 原本 ~4.5s/5s)被探测多付的一跳顶爆超时;②runOpencli 实例方法在测试与生产包装层常被覆写,
+   * 探测调用混进去会污染调用方对 argv 的记账(tests/cli2.test.ts 的 runOpencli 覆写捕获栽过)。
+   * 站点命令一律走 runOpencli/runOpencliRaw,别用这个。
+   */
+  private async runOpencliUngoverned(argv: string[], timeoutMs: number, stdoutMaxBytes: number, env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
+    // 0.2.0+ 原生 seam 优先。防线:seam 冷启动有竞态(真机实测:daemon 刚起时首几条
+    // 抛 'reading includes'/'destructure policy',几分钟后自愈;而 0.1.x shell 回落
+    // 在 0.2.1 宿主上会截断 argv——'xiaohongshu' 变 'xiaohong')。所以 seam 抛错先
+    // 重试 seam(400ms×2),三败才回落 shell。
+    let viaSub: Awaited<ReturnType<OpencliService['runSubprocess']>> = null
+    for (let attempt = 0; attempt < 3 && viaSub === null; attempt++) {
+      try {
+        viaSub = await this.runSubprocess(argv, timeoutMs, stdoutMaxBytes, env)
+      } catch {
+        if (attempt < 2) await new Promise((res) => setTimeout(res, 400))
+      }
+    }
+    if (viaSub !== null) {
+      this.noteRateLimit(`${viaSub.stdout}\n${viaSub.stderr}`)
+      return viaSub
+    }
+    // 回落:0.1.x 的 ctx.shell 多形态(run/execute × resolve/直传/argv)
+    const shellAny = this.ctx.shell as any
+    const runner = typeof shellAny.run === 'function' ? shellAny.run.bind(shellAny) : (typeof shellAny.execute === 'function' ? shellAny.execute.bind(shellAny) : null)
+    if (runner === null) return { exitCode: 1, stdout: '', stderr: 'dsh shell 能力不可用(既无 run 也无 execute)' }
+    // 0.2.0 起 spec 必须携带沙箱策略(否则 shell 内部 destructure policy.mode 直接抛错);
+    // 插件是可信进程内消费者,用 danger-full-access(与 0.1.x 无沙箱行为一致);老版本忽略多余字段。
+    const policy = { mode: 'danger-full-access' as const, workspaceRoot: homedir() }
+    // env 同样进 shell 回落 spec(设计 §3-②:回落路径也要带 env,两处都注)——
+    // dsh-shell ShellExecRequest.env 与凭据擦净后的环境合并(0.2.0 types.d.ts 实测确认),老版本忽略多余字段
+    const baseSpec = { command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes, policy, ...(env !== undefined ? { env } : {}) }
+    const argvSpec = { ...baseSpec, command: [this.bin, ...argv], policy }
+    const attempts: Array<'resolved' | 'direct' | 'array'> = this.shellMode !== null ? [this.shellMode] : ['resolved', 'direct', 'array']
+    let out: { exitCode: number; stdout: string; stderr: string } = { exitCode: 1, stdout: '', stderr: '' }
+    for (const mode of attempts) {
+      let spec: unknown
+      let threw = false
+      try {
+        spec = mode === 'resolved' ? (typeof shellAny.resolve === 'function' ? shellAny.resolve({ ...baseSpec } as ShellExecRequest) : baseSpec)
+          : mode === 'direct' ? baseSpec
+          : argvSpec
+        const raw = await runner(spec)
+        // 归一化:0.1.5 流式 {text} 与字符串形态统一为纯文本,维持下游契约
+        const asText = (x: unknown): string => {
+          if (x && typeof x === 'object' && typeof (x as { text?: unknown }).text === 'string') return (x as { text: string }).text
+          return typeof x === 'string' ? x : ''
+        }
+        out = {
+          exitCode: typeof raw?.exitCode === 'number' ? raw.exitCode : 1,
+          stdout: asText(raw?.stdout),
+          stderr: asText(raw?.stderr),
+        }
+      } catch (e) {
+        threw = true
+        out = { exitCode: 1, stdout: '', stderr: e instanceof Error ? e.message : String(e) }
+      }
+      // 形态判定:调用于抛错且(有输出或退出码 0)才锁定该形态;
+      // 抛错一律换下一形态(异常文本不是真实 stderr,不能当有效输出)
+      if (!threw && (out.stdout.length > 0 || out.stderr.length > 0 || out.exitCode === 0)) {
+        this.shellMode = mode
+        break
+      }
+    }
+    this.noteRateLimit(`${out.stdout}\n${out.stderr}`)
+    return out
   }
 
   private renderOut(out: { exitCode: number; stdout: string; stderr: string }): string {
@@ -2318,6 +2484,15 @@ export class OpencliService extends TypertRemoteService {
    */
   private async runBrowserTraced(session: string | undefined, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string; shot?: string }> {
     const started = Date.now()
+    // ④ 无扩展短路(设计 §3-④):browser_* 是 CLI→daemon→扩展硬链路(上游 daemon.js 头注释,
+    // 无 CDP 分支),daemon 明确报告扩展未连时注定失败——把注定失败的往返(默认 60s 超时)换成
+    // 一次性"缺什么/装什么/装完会怎样"。只认显式未连(extensionState.explicitDown):
+    // daemon 运行但不上报 Extension 字段的旧形态仍按现状放行,缺字段≠否定
+    if ((await this.extensionState()).explicitDown) {
+      const out = { exitCode: 1, stdout: '', stderr: NO_EXT_GUIDANCE }
+      this.recordTrace(`browser ${session ?? 'dsh'} ${argv.join(' ')} [no-ext]`, out, 0)
+      return out
+    }
     const major = await this.cliMajor()
     let out: { exitCode: number; stdout: string; stderr: string }
     if (major >= 2) {
@@ -2475,10 +2650,20 @@ export class OpencliService extends TypertRemoteService {
     } catch { /* 无文件或损坏:用默认值 */ }
   }
 
+  /** 原子写的临时文件序号(同毫秒并发 saveState 防自撞)。 */
+  private stateTmpSeq = 0
+
   private async saveState(): Promise<void> {
     try {
       await mkdir(join(homedir(), '.dsh'), { recursive: true })
-      await writeFile(this.statePath, JSON.stringify({ ...this.state, schedules: this.schedules, runHistory: this.runHistory, audit: this.state.audit }, null, 2), 'utf8')
+      // 原子写:先写同目录临时文件再 rename——writeFile 是"截断再写",并发读者
+      // (tests/benchmark.test.ts 的裸 JSON.parse 回读、面板 settings)会撞见空文件窗口,
+      // 全量门禁实测以低概率红(Unexpected end of JSON input);rename 落盘只见旧或新。
+      // 并发写者(recordAudit 的 void saveState 与后台调度任务)各写各的 tmp,后 rename 者胜。
+      const body = JSON.stringify({ ...this.state, schedules: this.schedules, runHistory: this.runHistory, audit: this.state.audit }, null, 2)
+      const tmp = `${this.statePath}.${process.pid}.${Date.now()}.${++this.stateTmpSeq}.tmp`
+      await writeFile(tmp, body, 'utf8')
+      await rename(tmp, this.statePath)
     } catch { /* 状态写不进(权限等):仅本次会话生效 */ }
   }
 
