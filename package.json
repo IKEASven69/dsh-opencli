@@ -1,6 +1,6 @@
 {
   "name": "dsh-opencli",
-  "description": "登录态浏览器自动化 × dsh 插件:170+ 站点结构化命令(site)+ 通用 browser 原语 + SystemOne 亚秒决策层 + 执行真实性判定(失败说真话);write 命令带审批门。Logged-in browser automation for DeepSeek Harness: 176-site structured commands, generic browser primitives, sub-second decision layer, action-evidence verification.",
+  "description": "登录态浏览器自动化 dsh 插件:让 agent 用你自己登录态的真实浏览器办事——170+ 站点一步式结构化命令(site),任意网页 browser 原语兜底,写操作带审批门,采集结果经执行真实性判定。Logged-in browser automation for DeepSeek Harness: 170+ one-step structured site commands, generic browser primitives for any page, approval-gated writes, and action-evidence verification of collected results.",
   "version": "0.4.4",
   "publishConfig": {
     "access": "public"
@@ -18,12 +18,18 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "lib/index.js",
-    "lib/client.js",
-    "cordis.patch.yml",
-    "SKILL.md"
+    "lib/",
+    "knowledge/",
+    "SKILL.md",
+    "README.md",
+    "CHANGELOG.md",
+    "cordis.patch.yml"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IKEASven69/dsh-opencli.git"
+  },
   "scripts": {
     "build": "tsdown",
     "test": "vitest run",
@@ -59,19 +65,19 @@
     "vitest": "^3.0.0"
   },
   "engines": {
+    "node": ">=18",
     "dsh": ">=0.1.5-0"
   },
   "dependencies": {
     "@receptron/laya": "^0.1.2"
   },
   "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "opencli",
+    "dsh-plugin",
     "browser-automation",
-    "logged-in-browser",
+    "logged-in",
     "site-commands",
-    "watch",
-    "decision-layer"
+    "data-product",
+    "scheduled-collection",
+    "provenance-report"
   ]
 }

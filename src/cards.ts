@@ -1,5 +1,5 @@
 /**
- * 对话内任务预览卡(site / site_batch / browser_do 三工具的 output.render)。
+ * 对话内任务预览卡(site / site_batch / opencli_do 三工具的 output.render)。
  *
  * 能力边界(实测 @deepseek-ai/dsh-tools 0.2.0-rc.2 的 ToolOutputDefinition):
  * render 是 "validated value → Native/模型内容" 的纯投影,产物 ContentBlock[] 里
@@ -33,7 +33,7 @@ const EXIT_FAIL = /^命令失败\(退出码 (-?\d+)\):\n?/
 const VERIFY_NOTE = /\((⚠ 疑似静默失败:[^)]*|⚠ 内容可疑:[^)]*|实测有效 P=[\d.]+)\)/
 
 /** 失败卡末尾的人工接管提示:✗ 时追加,引导模型别在坏状态上盲目重试。 */
-const TAKEOVER_HINT = '👉 状态异常:建议人工接管或改用 browser_* 原语'
+const TAKEOVER_HINT = '👉 状态异常:建议人工接管或改用 opencli_* 原语'
 
 /** 原文已自带登录指引(site 的返回空/导航被拒文案):再附接管提示即重复,不加。 */
 const HAS_LOGIN_HINT = /登录|login/i
@@ -168,7 +168,7 @@ function batchRow(s: BatchSection): { glyph: string; status: CardStatus; label: 
  * site_batch 预览卡:汇总头(成功数/总数+疑似静默失败计数)→ 前置注记 →
  * 每站一行表(站名+状态+P 值)→ 原文分节围栏(逐字保留)。
  * 无分节(参数校验拒绝等)退化为"✗ 被拒绝 + 原因原文"卡。
- * 失败兜底与 site/browser_do 同族:整卡被拒,或存在 ✗ 失败站(⚠ 疑似静默失败不算)时,
+ * 失败兜底与 site/opencli_do 同族:整卡被拒,或存在 ✗ 失败站(⚠ 疑似静默失败不算)时,
  * 卡末尾附人工接管提示——多站批量失败恰是盲目重试高发场景;互斥按站判定:仅当全部
  * 失败站原文都已自带登录指引(如"请先登录")才省略,任一站无指引(如纯超时)即附一次。
  */
@@ -203,7 +203,7 @@ export function siteBatchCardRender(args: unknown, value: unknown): TextCardBloc
   return card(head, ...(notes.length > 0 ? [notes.join('\n')] : []), table, fence(raw), ...hint)
 }
 
-// ── browser_do:步骤式(命令/结果分段) ──
+// ── opencli_do:步骤式(命令/结果分段) ──
 
 /**
  * 步骤截图文件名提取:跨平台路径分隔(win32 反斜杠/POSIX 正斜杠)取末段。
@@ -215,7 +215,7 @@ function shotNameOf(shot: string): string {
 }
 
 /**
- * browser_do 预览卡:徽章头(子命令+状态色)→ 命令段 → 结果段,原文逐字保留。
+ * opencli_do 预览卡:徽章头(子命令+状态色)→ 命令段 → 结果段,原文逐字保留。
  * 失败前缀/白名单拒绝按 site 同款规则分类;✗ 时末尾附人工接管提示(原文自带
  * 登录指引的除外,与 site 同款互斥)。
  * 宿主 execute 结果可带可选 shot 字段(步骤自动截图的绝对路径,老结果没有):
@@ -235,8 +235,8 @@ export function browserDoCardRender(args: unknown, value: unknown): TextCardBloc
   const st: SiteCardStatus = ex !== null
     ? { status: 'fail', label: `exit ${ex[1]}` }
     : /^不允许的子命令/.test(text) ? { status: 'fail', label: '子命令被拒' } : { status: 'ok', label: 'exit 0' }
-  const head = `▣ browser_do · ${command}${session !== null ? ` · session ${session}` : ''} — ${GLYPH[st.status]} ${st.label}`
-  const cmdSeg = `**命令**\n${fence(`$ ${shellJoin(['browser_do', command, ...rest])}${shotHint}`, 'console')}`
+  const head = `▣ opencli_do · ${command}${session !== null ? ` · session ${session}` : ''} — ${GLYPH[st.status]} ${st.label}`
+  const cmdSeg = `**命令**\n${fence(`$ ${shellJoin(['opencli_do', command, ...rest])}${shotHint}`, 'console')}`
   const payload = ex !== null ? text.slice(ex[0].length) : text
   const hint = st.status === 'fail' && !HAS_LOGIN_HINT.test(payload) ? [TAKEOVER_HINT] : []
   if (payload.trim().length === 0) return card(head, cmdSeg, ...hint)

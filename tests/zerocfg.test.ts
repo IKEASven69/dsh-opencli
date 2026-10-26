@@ -5,7 +5,7 @@
  *   ①降级模式下 site 写命令仍 kind:'ask';②注入只加 env 与 flag 不改输出语义;
  *   ③OPENCLI_CDP_ENDPOINT 只来自 probeCdp 候选端口;④插件进程环境零残留(不写 process.env)。
  * - §3 路由行为:①通道A直跑零改动 / ②注入形状与「匿名降级」标注 / ③AUTH 降级引导文案 /
- *   ④⑤browser_*、chrome_* 无扩展短路 / 写命令永不降级 / 有扩展时通道B不介入(无缝切回)。
+ *   ④⑤opencli_*、chrome_* 无扩展短路 / 写命令永不降级 / 有扩展时通道B不介入(无缝切回)。
  * 方法:cordis 裸 Context + 桩 shell(approval-invariant 同款),daemon 桩固定 2.0 信封
  * extensionConnected:false(→ 归一 'not connected',显式未连);CDP 端点用本地 http 伪装,
  * OPENCLI_CDP_PORT 前置候选保证探测顺序确定。client 侧纯函数直接引 src/client.ts(onboarding 先例)。
@@ -254,10 +254,10 @@ describe('§3 路由行为(无扩展 = daemon 明确报告 extensionConnected:fa
     expect(r.error ?? '').toContain('整体不可用')
   })
 
-  it('④ browser_* 无扩展短路:一次性装扩展指引,零注定失败的 daemon 往返', async () => {
+  it('④ opencli_* 无扩展短路:一次性装扩展指引,零注定失败的 daemon 往返', async () => {
     setExt(false)
     const before = shell.calls.length
-    const r = await tool('browser_open').execute({ url: 'https://example.com/1' })
+    const r = await tool('opencli_open').execute({ url: 'https://example.com/1' })
     expect(r.text).toContain('需要 OpenCLI 扩展')
     expect(r.text).toContain('releases')
     // 除 daemon status 探测外零调用:没有 browser open、没有补拍截图
@@ -303,7 +303,7 @@ describe('§2.2 触发点文案(doctor / systemPrompt 目录 / 面板纯函数)'
     const text = S().directoryText as string
     expect(text).toContain('当前无扩展')
     expect(text).toContain('暂不可降级执行')
-    expect(text).toContain('browser_*/chrome_*')
+    expect(text).toContain('opencli_*/chrome_*')
     expect(text).toContain('https://github.com/jackwener/OpenCLI/releases')
   })
 

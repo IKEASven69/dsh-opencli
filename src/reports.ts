@@ -38,7 +38,32 @@ function fence(text: string, max = 2000): string {
   return clipped.replace(/```/g, '``')
 }
 
-export function buildReport(title: string, sources: ReportSource[], genAt: string): string {
+/** 摘要版上限:转发进群机器人/邮箱通知时通吃(与 notify.ts 通知正文 500 字同口径)。 */
+const SUMMARY_MAX = 500
+
+/** 摘要版的异常标注:ok 不占字数,异常才标出来(全文版用 STATUS_LABEL,这里压到最短)。 */
+const SUMMARY_BADGE: Record<ReportStatus, string> = { ok: '', fail: '失败', silent: '疑似静默失败', suspect: '内容可疑' }
+
+/**
+ * 摘要版:每源一行「top 变化 + 异常标注 + 出处文件名」。top 变化取该源原文首个非空行
+ * (采集输出的 headline 就是本轮最显眼的变化,往下整段对 500 字预算没有信息增益);
+ * 出处只留文件名——完整路径是本机信息,摘要会被转发到群/邮箱等不可控面(与通知出口
+ * 同一安全口径)。超长整段截断,绝不逐源删减(截断痕迹在结尾的 … 上,诚实可见)。
+ */
+function buildReportSummary(title: string, sources: ReportSource[], genAt: string): string {
+  const lines: string[] = [`# ${title} · 摘要`, `生成时间:${genAt} · 数据源 ${sources.length} 个(每行=单源 top 行,全文见完整版)`]
+  for (const s of sources) {
+    const base = s.source !== undefined && s.source.length > 0 ? (s.source.split(/[\\/]/).filter((p) => p.length > 0).pop() ?? '') : ''
+    const head = (s.text.split('\n').find((l) => l.trim().length > 0) ?? '').trim().slice(0, 80)
+    const badge = SUMMARY_BADGE[s.status]
+    lines.push(`- ${s.site}${badge.length > 0 ? `[${badge}]` : ''}:${head}${base.length > 0 ? `(出处:${base})` : ''}`)
+  }
+  const joined = lines.join('\n')
+  return joined.length > SUMMARY_MAX ? `${joined.slice(0, SUMMARY_MAX - 1)}…` : joined
+}
+
+export function buildReport(title: string, sources: ReportSource[], genAt: string, opts?: { summary?: boolean }): string {
+  if (opts?.summary === true) return buildReportSummary(title, sources, genAt)
   const okN = sources.filter((s) => s.status === 'ok').length
   const lines: string[] = []
   lines.push(`# ${title}`)

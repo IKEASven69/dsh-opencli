@@ -48,7 +48,7 @@ export const SITE_HEALTH_STATUS_LABELS: Record<string, string> = {
 
 /** 失败签名→含义→恢复动作(与 index.verifyResult 的规则层同源;agent 拿到失败输出时按签名自救)。 */
 export const FAILURE_SIGNATURES: Array<{ pattern: string; meaning: string; recovery: string }> = [
-  { pattern: 'EMPTY_RESULT / NO_DATA', meaning: '命令成功但站点返回空——多为未登录或站点改版', recovery: '`opencli <site> login` 后用 whoami 验证;仍空则换命令或 browser_* 浏览器兜底' },
+  { pattern: 'EMPTY_RESULT / NO_DATA', meaning: '命令成功但站点返回空——多为未登录或站点改版', recovery: '`opencli <site> login` 后用 whoami 验证;仍空则换命令或 opencli_* 浏览器兜底' },
   { pattern: 'AUTH_REQUIRED / NOT_LOGGED_IN / 请先登录', meaning: '登录态失效或被判未登录(部分站风控误报)', recovery: '先 `opencli <site> whoami` 确认;真失效再 login' },
   { pattern: 'RATE_LIMITED / 429', meaning: '请求过频被限流', recovery: '冷却 ≥2 分钟再试;定时任务已自动风控退避(120s)' },
   { pattern: 'NAVIGATION_REJECTED', meaning: '页面拒绝导航——偶发为时序,持续为扩展/浏览器状态异常', recovery: '重试一次;持续出现跑 `opencli doctor` 检查扩展连接' },
@@ -118,7 +118,7 @@ export function renderKnowledgeMarkdown(k: SiteKnowledge): string {
     const label = SITE_HEALTH_STATUS_LABELS[k.health.status] ?? k.health.status
     const stale = k.health.updated !== '' ? `(数据 ${k.health.updated})` : ''
     lines.push(`## 🩺 站点健康度:${label}${stale}`)
-    if (k.health.status === 'degraded') lines.push('上游 issue 实测核心命令失效——优先 browser_* 原语兜底,失败别反复重试。')
+    if (k.health.status === 'degraded') lines.push('上游 issue 实测核心命令失效——优先 opencli_* 原语兜底,失败别反复重试。')
     for (const i of k.health.issues) lines.push(`- ${i}`)
   }
   lines.push('')

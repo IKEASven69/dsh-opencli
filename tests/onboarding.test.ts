@@ -4,7 +4,7 @@
  * 组件渲染(OnboardingWizard 卡)client 侧无测试基建,留给 GUI 人工验收。
  * 直接引 src/client.ts:本文件同时回归"模块级求值可在 Node 进行"——desc 模板串曾引用
  * 未声明变量 status,import 即 ReferenceError。不构造 OpencliService,无需独立 trace 目录。
- * 另追加 browser_do 卡步骤截图提示的纯渲染断言(src/cards.ts 纯函数,同款直引)。
+ * 另追加 opencli_do 卡步骤截图提示的纯渲染断言(src/cards.ts 纯函数,同款直引)。
  */
 import { describe, expect, it } from 'vitest'
 import { shouldShowOnboarding, loginSitesFromAdapters } from '../src/client.ts'
@@ -73,13 +73,13 @@ describe('loginSitesFromAdapters(登录层站点过滤)', () => {
   })
 })
 
-describe('browser_do 卡步骤截图提示(纯渲染:shot 文件名入卡,base64 绝不入卡)', () => {
+describe('opencli_do 卡步骤截图提示(纯渲染:shot 文件名入卡,base64 绝不入卡)', () => {
   it('结果带 shot(win32 反斜杠绝对路径)→ 步骤命令行尾附 (shot: 文件名),不含完整路径不嵌 base64', () => {
     const t = browserDoCardRender(
       { command: 'find', args: ['登录'] },
       { text: 'found 3', shot: 'C:\\Users\\u\\.dsh\\opencli-shots\\20261020\\dsh\\step-143005-3.png' },
     )[0]!.text
-    expect(t).toContain('$ browser_do find 登录 (shot: step-143005-3.png)')
+    expect(t).toContain('$ opencli_do find 登录 (shot: step-143005-3.png)')
     // 模型侧只要文件名提示:完整路径与 base64 载荷都不进卡(防上下文膨胀)
     expect(t).not.toContain('opencli-shots')
     expect(t).not.toContain('base64')
@@ -95,8 +95,8 @@ describe('browser_do 卡步骤截图提示(纯渲染:shot 文件名入卡,base64
 
   it('无 shot 字段(老契约)→ 不附提示,卡形状不变', () => {
     const t = browserDoCardRender({ command: 'find' }, { text: 'found 3' })[0]!.text
-    expect(t).toContain('▣ browser_do · find — ✓ exit 0')
-    expect(t).toContain('$ browser_do find')
+    expect(t).toContain('▣ opencli_do · find — ✓ exit 0')
+    expect(t).toContain('$ opencli_do find')
     expect(t).not.toContain('(shot:')
   })
 

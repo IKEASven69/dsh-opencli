@@ -1,0 +1,21 @@
+# 兜底:package.json 的 files 白名单之外,开发与内部产物一律不进 npm 包。
+# 注意:files 字段存在时 npm 会忽略根目录 .npmignore,本文件是将来若移除 files 时的双保险,
+# 以及子目录(如 lib/、knowledge/ 内)若有临时产物时的过滤层。
+.git
+.gitignore
+.zcode
+.qa
+.build-tools
+.design
+node_modules
+src
+tests
+docs
+assets
+*.tgz
+*.log
+package-lock.json
+tsconfig.json
+tsconfig.local.json
+vitest.config.ts
+AGENT_INSTALL.md

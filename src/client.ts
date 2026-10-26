@@ -1,13 +1,13 @@
 /**
  * dsh-opencli 浏览器半 v0.4:设置页「浏览器代理」——按 2026-09 施工图重排。
- * 四 tab(总览/命令/自动化/安全与设置)+ 状态机四态 + 真数据真 RPC(零 emoji)。
+ * 五 tab(总览/命令/自动化/安全与设置/画布)+ 状态机四态 + 真数据真 RPC(零 emoji)。
  * 视觉:冷灰深色 + #4A9EFF 界面强调,品牌鲸标(DS 鲸 × CLI 提示符),统一线性图标 sprite。
  * 施工注记(详见 .design/06-状态机规格):基宽 800 自适应;响应式按容器;host v0.4 新增
  * audit-list / logs-tail / schedule-run-now / sha256 / 定时重试通知均已接线。
  * @module dsh-opencli/client
  */
 
-import { createElement, useEffect, useState } from 'react'
+import { createElement, useEffect, useRef, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
@@ -16,6 +16,8 @@ import type {
 } from './types.ts'
 import { siteIconOf } from './site-icons.ts'
 import { healthOf } from './knowledge.ts'
+// 画布数据层(纯函数,任务 G):聚合/合并/分页全在这——client 只管取数与投影
+import { buildCanvasData, CANVAS_PAGE_DEFAULT, type CanvasCard, type SnapshotMeta } from './canvas.ts'
 
 export const inject = ['slots']
 
@@ -31,7 +33,7 @@ const STR = {
   zh: {
     title: 'OpenCLI 浏览器代理',
     desc: '驱动你登录态的真实浏览器 · 170+ 站 / 200+ 命令一步式执行 · 由 OpenCLI daemon 驱动',
-    tabOverview: '总览', tabCommands: '命令', tabAuto: '自动化', tabSec: '安全与设置',
+    tabOverview: '总览', tabCommands: '命令', tabAuto: '自动化', tabSec: '安全与设置', tabCanvas: '画布',
     daemonRunning: '运行中', daemonDown: '未运行', daemonStale: '失联', bridgeOn: '已连接', bridgeOff: '未连接',
     recheck: '重新巡检', checking: '巡检中…', diagAll: '一切正常', detail: '详情',
     tryT: '试试看', trySub: '在对话里直接说,或先在这里跑一条 · 点右侧快捷/命令徽章 → 填入输入框',
@@ -55,14 +57,20 @@ const STR = {
     cmdT: '命令', cmdSearch: '搜索站点或命令,如:热榜 / search / bilibili',
     cmdFmt: '点命令行 → 复制调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)',
     knowExp: '导出知识卡', knowExpDo: '导出中…',
-    timeline: '时间线', reportBtn: '生成报告', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=内容规模)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计',
-    healthDegraded: '已知受损', healthNotice: '注意', healthIssueT: (d: string) => `上游 issue 实测(${d});点击行展开命令,受损命令优先用 browser_* 兜底`,
+    timeline: '时间线', reportBtn: '生成报告', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=内容规模)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计', tlFlow: '画布卡片流(本站近 24h,替代运行史文本)',
+    // 画布(任务 H+I+J):全活动卡片流;文案与色调口径见 canvasCardTone/CANVAS_SUSPECT_P
+    canvasT: '活动画布', canvasSub: '轨迹 / 写操作 / 定时采集聚合为卡片 · 点卡片展开步骤回放 · 拖拽平移,滚轮缩放',
+    canvasEmpty: '暂无活动——跑一条命令或到点采集后,这里会长出卡片',
+    canvasZoomIn: '放大', canvasZoomOut: '缩小', canvasReplay: '步骤回放', canvasMore: '加载更多',
+    canvasCardsN: (n: number) => `${n} 张卡`, canvasNoShot: '无截图', canvasSuspect: '低分通过',
+    canvasSuspectTip: '判定分低(0.7≤P<0.8),建议复核', cvTypeSite: '写操作', cvTypeBrowser: '浏览器', cvTypeSchedule: '定时采集',
+    healthDegraded: '已知受损', healthNotice: '注意', healthIssueT: (d: string) => `上游 issue 实测(${d});点击行展开命令,受损命令优先用 opencli_* 兜底`,
     disable: '禁用', enable: '启用', commandsN: (n: number) => `${n} 命令`,
     autoT: '定时任务', autoNew: '新建', autoSub: '持久化到 dsh.schedule,重启不丢 · 失败按策略重试并通知',
     depDaemon: 'daemon 未运行——定时任务暂停执行,恢复后自动补跑', fix: '一键修复',
     last: '上次', next: '下次', retryN: (n: number) => `重试 ×${n}`, notifyOn: '通知 开', notifyOff: '通知 关',
     runNow: '立即跑', running2: '执行中…', del: '删', create: '创建',
-    recT: '录制回放', recSub: '录制 site / browser 步骤,一键回放', recStart: '开始录制', recStop: '停止录制',
+    recT: '录制回放', recSub: '录制 site / opencli 步骤,一键回放', recStart: '开始录制', recStop: '停止录制',
     recName: '录制名,如:每日知识采集', recStep: '一条步骤,如:site zhihu hot', recAdd: '+ 加步骤', replay: '回放',
     traceT: '运行轨迹', traceSub: '每条 browser 命令逐步落盘(~/.dsh/opencli-traces),复盘"上次为什么失败"', traceEmpty: '暂无轨迹——跑一条 browser 命令后这里会长出来',
     assetT: '资产库', assetSub: '脚本 / 配方 / 规则包', assetSearch: '搜资产(如:arxiv)', assetSearchBtn: '搜索',
@@ -82,13 +90,13 @@ const STR = {
     obBridgeHint: '从 GitHub Releases 下载 BrowserBridge 扩展,到 Chrome 扩展页开发者模式加载,再回面板重巡检',
     obRelBtn: '打开 Releases',
     // 零配置降级可用面(设计 §2.2-2):无扩展时的黄色状态行——向导不再只有"装扩展"一种结局
-    obZeroCfgN: (n: number) => `降级可用面:${n} 个站的只读命令无扩展也能跑(匿名);browser_*/chrome_* 暂不可用`,
-    obZeroCfgNa: '降级可用面:部分只读命令无扩展也能跑(匿名);browser_*/chrome_* 暂不可用',
+    obZeroCfgN: (n: number) => `降级可用面:${n} 个站的只读命令无扩展也能跑(匿名);opencli_*/chrome_* 暂不可用`,
+    obZeroCfgNa: '降级可用面:部分只读命令无扩展也能跑(匿名);opencli_*/chrome_* 暂不可用',
     obLoginOk: '登录态正常', obLoginPart: '登录态部分失效', obLoginBad: '登录巡检全红', obLoginNa: '尚未巡检登录态',
     siteEmpty: '适配器返回空(可能未登录或无数据)。请先在真实 Chrome 登录后重试。',
     guideS1: '安装 opencli CLI:npm i -g @jackwener/opencli',
     guideS2: '启动 daemon(opencli daemon restart),Chrome 装 BrowserBridge 扩展并登录常用站',
-    guideS3: '回到本面板看健康区全绿,即可在对话里用 site / browser_* 命令',
+    guideS3: '回到本面板看健康区全绿,即可在对话里用 site / opencli_* 命令',
     profileBody1: '登录态来自你日常使用的 Chrome:插件经 OpenCLI daemon + BrowserBridge 扩展驱动「你已登录」的真实浏览器,',
     profileBody2: '与 dsh 内置浏览器无关;Cookie/会话留在本机,不经过任何第三方。',
     bridgeT: '登录态桥(Browser Use)',
@@ -105,7 +113,7 @@ const STR = {
   en: {
     title: 'OpenCLI Browser Proxy',
     desc: 'Drive your logged-in real browser · 170+ sites / 200+ commands one-shot · powered by the OpenCLI daemon',
-    tabOverview: 'Overview', tabCommands: 'Commands', tabAuto: 'Automation', tabSec: 'Security',
+    tabOverview: 'Overview', tabCommands: 'Commands', tabAuto: 'Automation', tabSec: 'Security', tabCanvas: 'Canvas',
     daemonRunning: 'running', daemonDown: 'not running', daemonStale: 'stale', bridgeOn: 'connected', bridgeOff: 'not connected',
     recheck: 'Re-check', checking: 'checking…', diagAll: 'All good', detail: 'detail',
     tryT: 'Try it', trySub: 'Say it in chat, or run one here · click a quick pick/command badge to fill the input',
@@ -129,14 +137,19 @@ const STR = {
     cmdT: 'Commands', cmdSearch: 'Search sites or commands, e.g. trending / search / bilibili',
     cmdFmt: 'Click a command row → copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)',
     knowExp: 'Export knowledge cards', knowExpDo: 'Exporting…',
-    timeline: 'Timeline', reportBtn: 'Build report', tlT: 'Collection snapshot trend', tlSub: 'Each bar = one successful collection (size = content scale)', tlEmpty: 'No snapshots yet — they grow after scheduled runs', tlN: (n: number) => `${n} snapshots`, tlTotal: 'total',
-    healthDegraded: 'degraded', healthNotice: 'notice', healthIssueT: (d: string) => `confirmed upstream issues (${d}); expand the row, prefer browser_* fallback for broken commands`,
+    timeline: 'Timeline', reportBtn: 'Build report', tlT: 'Collection snapshot trend', tlSub: 'Each bar = one successful collection (size = content scale)', tlEmpty: 'No snapshots yet — they grow after scheduled runs', tlN: (n: number) => `${n} snapshots`, tlTotal: 'total', tlFlow: 'Canvas card flow (this site, last 24h — replaces text history)',
+    canvasT: 'Activity canvas', canvasSub: 'Traces, write evidence and scheduled runs as cards · click a card to replay its steps · drag to pan, wheel to zoom',
+    canvasEmpty: 'No activity yet — cards appear after your first command or scheduled run',
+    canvasZoomIn: 'Zoom in', canvasZoomOut: 'Zoom out', canvasReplay: 'Step replay', canvasMore: 'Load more',
+    canvasCardsN: (n: number) => `${n} cards`, canvasNoShot: 'no screenshot', canvasSuspect: 'weak pass',
+    canvasSuspectTip: 'low verification score (0.7≤P<0.8), worth a review', cvTypeSite: 'write', cvTypeBrowser: 'browser', cvTypeSchedule: 'schedule',
+    healthDegraded: 'degraded', healthNotice: 'notice', healthIssueT: (d: string) => `confirmed upstream issues (${d}); expand the row, prefer opencli_* fallback for broken commands`,
     disable: 'Disable', enable: 'Enable', commandsN: (n: number) => `${n} cmds`,
     autoT: 'Schedules', autoNew: 'New', autoSub: 'Persisted to dsh.schedule, survives restart · retries then notifies on failure',
     depDaemon: 'daemon not running — schedules paused, will catch up when it returns', fix: 'Fix',
     last: 'last', next: 'next', retryN: (n: number) => `retry ×${n}`, notifyOn: 'notify on', notifyOff: 'notify off',
     runNow: 'Run now', running2: 'running…', del: 'Del', create: 'Create',
-    recT: 'Record & replay', recSub: 'Record site / browser steps, replay in one click', recStart: 'Record', recStop: 'Stop',
+    recT: 'Record & replay', recSub: 'Record site / opencli steps, replay in one click', recStart: 'Record', recStop: 'Stop',
     recName: 'name, e.g. daily knowledge', recStep: 'one step, e.g. site zhihu hot', recAdd: '+ add step', replay: 'Replay',
     traceT: 'Run trace', traceSub: 'every browser command logged to ~/.dsh/opencli-traces — replay why the last run failed', traceEmpty: 'No traces yet — they appear after the first browser command',
     assetT: 'Assets', assetSub: 'scripts / recipes / rulepacks', assetSearch: 'search assets (e.g. arxiv)', assetSearchBtn: 'Search',
@@ -155,13 +168,13 @@ const STR = {
     obCliOk: 'opencli CLI ready', obCliBad: 'opencli CLI not detected', obCliFix: 'Copy install command',
     obBridgeHint: 'Download the BrowserBridge extension from GitHub Releases, load it on the Chrome extensions page in developer mode, then re-check here',
     obRelBtn: 'Open Releases',
-    obZeroCfgN: (n: number) => `Degraded mode: read-only commands on ${n} sites still run without the extension (anonymous); browser_*/chrome_* unavailable`,
-    obZeroCfgNa: 'Degraded mode: some read-only commands still run without the extension (anonymous); browser_*/chrome_* unavailable',
+    obZeroCfgN: (n: number) => `Degraded mode: read-only commands on ${n} sites still run without the extension (anonymous); opencli_*/chrome_* unavailable`,
+    obZeroCfgNa: 'Degraded mode: some read-only commands still run without the extension (anonymous); opencli_*/chrome_* unavailable',
     obLoginOk: 'Logins healthy', obLoginPart: 'Some logins failed', obLoginBad: 'All login checks failed', obLoginNa: 'Login check not run yet',
     siteEmpty: 'Adapter returned empty (not logged in?). Log in on real Chrome first.',
     guideS1: 'Install opencli CLI: npm i -g @jackwener/opencli',
     guideS2: 'Start the daemon (opencli daemon restart), install the BrowserBridge Chrome extension and log in to your sites',
-    guideS3: 'Back here — when the health card is all green, use site / browser_* commands in chat',
+    guideS3: 'Back here — when the health card is all green, use site / opencli_* commands in chat',
     profileBody1: 'Logins come from your everyday Chrome: the plugin drives your already-logged-in browser via the OpenCLI daemon + BrowserBridge extension,',
     profileBody2: 'unrelated to the built-in dsh browser; cookies stay on this machine and never touch third parties.',
     bridgeT: 'Login-state bridge (Browser Use)',
@@ -473,6 +486,15 @@ const CSS = `
 .o4-hero .o4-cell .v.big small { font-size:11px; font-weight:500; color:rgba(249,250,251,.38); }
 .o4-cell .v.dim { color:rgba(249,250,251,.38); font-weight:500; }
 
+/* 画布(任务 H+I+J):viewport 滚动平移(不走 transform——逐帧重排所有卡片,性能差)+ zoom state 控卡宽 */
+.o4-cvwrap { position:relative; overflow:auto; border:1px solid rgba(255,255,255,.06); border-radius:11px; background:rgba(0,0,0,.22); cursor:grab; box-shadow:inset 0 2px 8px rgba(0,0,0,.35); }
+.o4-cvwrap.drag { cursor:grabbing; }
+.o4-cvflow { display:flex; flex-wrap:wrap; gap:8px; padding:10px; width:max-content; min-width:100%; min-height:100%; align-content:flex-start; }
+.o4-cvcard { display:flex; flex-direction:column; gap:6px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:10px; padding:8px 9px; position:relative; cursor:pointer; transition:border-color .16s ease, box-shadow .16s ease, background .16s ease; }
+.o4-cvcard:hover { background:rgba(255,255,255,.06); box-shadow:0 4px 14px -6px rgba(0,0,0,.5); }
+.o4-cvcard.open { background:rgba(18,21,27,.97); box-shadow:0 12px 32px -10px rgba(0,0,0,.7); }
+.o4-cvsteps { display:flex; flex-direction:column; gap:5px; border-top:1px solid rgba(255,255,255,.08); padding-top:6px; }
+
 .o4-toast { position:fixed; right:16px; bottom:16px; background:#34C759; color:#06210D; font-size:12px; font-weight:600; border-radius:10px; padding:9px 15px; z-index:50; box-shadow:0 8px 24px -6px rgba(52,199,89,.5); animation:o4toast .25s ease; }
 @keyframes o4toast { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
 `
@@ -480,7 +502,7 @@ const CSS = `
 function Panel(): ReturnType<typeof createElement> {
   const [lang, setLang] = useState<Lang>('zh')
   const t = (k: StrKey): string => (STR[lang][k] ?? STR.zh[k]) as string
-  const [tab, setTab] = useState<'ov' | 'cmd' | 'auto' | 'sec'>('ov')
+  const [tab, setTab] = useState<'ov' | 'cmd' | 'auto' | 'sec' | 'cv'>('ov')
   const [phase, setPhase] = useState<'loading' | 'ready'>('loading')
   const [status, setStatus] = useState<OpencliStatus | null>(null)
   const [settings, setSettings] = useState<SettingsResult | null>(null)
@@ -693,7 +715,9 @@ function Panel(): ReturnType<typeof createElement> {
     for (const step of rec.steps) {
       const s = step.trim()
       if (s.length === 0) continue
-      if (s.startsWith('browser_')) await rpc('replay', { request: { step: s } } as unknown as Record<string, unknown>)
+      // 命名空间迁移(2026-10):步骤头 opencli_* 是正主;browser_* 旧头继续收——localStorage
+      // 里的历史录制不随迁移改写,旧步骤必须仍然可回放
+      if (s.startsWith('opencli_') || s.startsWith('browser_')) await rpc('replay', { request: { step: s } } as unknown as Record<string, unknown>)
       else await rpc('try-run', { request: { line: s } } as unknown as Record<string, unknown>)
     }
     showToast('replay ✓', true)
@@ -1021,7 +1045,7 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('span', { className: 'o4-bdg' }, s.notify === false ? t2('notifyOff') : t2('notifyOn')),
                 createElement('span', { style: { flex: '1' } }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
-                createElement(TimelineToggle, { id: s.id, lang, label: t2('timeline') }),
+                createElement(TimelineToggle, { id: s.id, lang, label: t2('timeline'), site: s.site }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void removeSchedule(s.id) } }, t2('del')),
               ),
                           )
@@ -1196,9 +1220,9 @@ function Panel(): ReturnType<typeof createElement> {
           ),
         ),
       ),
-      // Tabs
+      // Tabs(第五个 tab「画布」:全活动卡片流,任务 H+I+J)
       createElement('div', { className: 'o4-tabs' },
-        ...([['ov', t2('tabOverview')], ['cmd', t2('tabCommands')], ['auto', t2('tabAuto')], ['sec', t2('tabSec')]] as Array<[string, string]>).map(([k, label]) =>
+        ...([['ov', t2('tabOverview')], ['cmd', t2('tabCommands')], ['auto', t2('tabAuto')], ['sec', t2('tabSec')], ['cv', t2('tabCanvas')]] as Array<[string, string]>).map(([k, label]) =>
           createElement('button', { key: k, className: tab === k ? 'on' : '', onClick: () => setTab(k as typeof tab) }, label)),
       ),
       // 状态条(指示灯)
@@ -1221,7 +1245,7 @@ function Panel(): ReturnType<typeof createElement> {
       // 内容
       loading
         ? loadingBlock()
-        : tab === 'ov' ? renderOverview() : tab === 'cmd' ? renderCommands() : tab === 'auto' ? renderAutomation() : renderSecurity(),
+        : tab === 'ov' ? renderOverview() : tab === 'cmd' ? renderCommands() : tab === 'auto' ? renderAutomation() : tab === 'cv' ? createElement(CanvasPanel, { lang }) : renderSecurity(),
     ),
     toast !== null ? createElement('div', { className: 'o4-toast', style: { background: toast.ok ? '#4DDB7A' : '#FF453A' } }, toast.msg) : null,
   )
@@ -1265,12 +1289,12 @@ function fetchShot(path: string): Promise<{ data: string; mime: string } | null>
 }
 
 /**
- * 步骤截图缩略图:48px 圆角小图;失败静默占位色块(绝不占错误位——截图只是复盘增强);
- * 点击切全尺寸(height auto / maxHeight 420px)再点收起,纯前端状态不发请求。
- * onClick stopPropagation:轨迹行点击是展开输出摘录,放大缩略图不该误触。
+ * 步骤截图缩略图:默认 48px 圆角小图(画布缩放经 px 传放大/缩小的边长);失败静默占位色块
+ * (绝不占错误位——截图只是复盘增强);点击切全尺寸(height auto / maxHeight 420px)再点收起,
+ * 纯前端状态不发请求。onClick stopPropagation:轨迹行点击是展开输出摘录,放大缩略图不该误触。
  */
-function ShotThumb(props: { path: string }): ReturnType<typeof createElement> {
-  const { path } = props
+function ShotThumb(props: { path: string; px?: number }): ReturnType<typeof createElement> {
+  const { path, px = 48 } = props
   // undefined=加载中 / null=失败占位 / 对象=可渲染
   const [shot, setShot] = useState<{ data: string; mime: string } | null | undefined>(undefined)
   const [zoom, setZoom] = useState(false)
@@ -1280,10 +1304,10 @@ function ShotThumb(props: { path: string }): ReturnType<typeof createElement> {
     return () => { alive = false }
   }, [path])
   if (shot === null) {
-    return createElement('span', { title: '截图不可用', style: { width: '48px', height: '48px', borderRadius: '6px', background: 'rgba(255,255,255,.08)', flex: 'none' } })
+    return createElement('span', { title: '截图不可用', style: { width: `${px}px`, height: `${px}px`, borderRadius: '6px', background: 'rgba(255,255,255,.08)', flex: 'none' } })
   }
   if (shot === undefined) {
-    return createElement('span', { style: { width: '48px', height: '48px', borderRadius: '6px', background: 'rgba(255,255,255,.05)', flex: 'none' } })
+    return createElement('span', { style: { width: `${px}px`, height: `${px}px`, borderRadius: '6px', background: 'rgba(255,255,255,.05)', flex: 'none' } })
   }
   return createElement('img', {
     src: `data:${shot.mime};base64,${shot.data}`,
@@ -1292,7 +1316,7 @@ function ShotThumb(props: { path: string }): ReturnType<typeof createElement> {
     onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); setZoom(!zoom) },
     style: zoom
       ? { height: 'auto', maxHeight: '420px', maxWidth: '100%', borderRadius: '8px', cursor: 'zoom-out', flex: 'none', objectFit: 'contain' }
-      : { height: '48px', borderRadius: '6px', cursor: 'zoom-in', flex: 'none' },
+      : { height: `${px}px`, borderRadius: '6px', cursor: 'zoom-in', flex: 'none' },
   })
 }
 
@@ -1300,25 +1324,35 @@ function ShotThumb(props: { path: string }): ReturnType<typeof createElement> {
  *  字段但宿主从不发送——site 命令在 daemon 浏览器执行,插件侧截图只会拍到无关页面,死代码已删)。 */
 interface HistRow { at: string; ok: boolean; summary: string }
 
-/** 时间线面板:某定时任务的快照趋势(体积=采集规模的粗代理)+ 最近运行史。数据源 schedule-history。 */
+/** 时间线面板:某定时任务的快照趋势(体积=采集规模的粗代理)+ 画布卡片流(时间线融合,任务 I)。
+ *  数据源 schedule-history;卡片流来自画布页装配(fetchCanvasPage 复用)按站点过滤——
+ *  旧时间线是画布的一个"趋势视角":柱状图看规模走势,卡片流看每步现场。 */
 /** 行内时间线开关:按钮+面板自带局部状态(不依赖父组件 state,杜绝跨实例展开失效)。 */
-function TimelineToggle(props: { id: string; lang: Lang; label: string }): ReturnType<typeof createElement> {
-  const { id, lang, label } = props
+function TimelineToggle(props: { id: string; lang: Lang; label: string; site: string }): ReturnType<typeof createElement> {
+  const { id, lang, label, site } = props
   const [open, setOpen] = useState(false)
   const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
   return createElement('div', { style: { display: 'contents' } },
     createElement('button', { className: 'o4-btn ghost sm', onClick: () => setOpen(!open) }, label),
-    open ? createElement(TimelinePanel, { id, lang }) : null,
+    open ? createElement(TimelinePanel, { id, lang, site }) : null,
   )
 }
 
-function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof createElement> {
-  const { id, lang } = props
+function TimelinePanel(props: { id: string; lang: Lang; site: string }): ReturnType<typeof createElement> {
+  const { id, lang, site } = props
   // 模块级组件拿不到 Panel 内部的 t2/lang——经 props 自建同款查表
   const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
   const [snaps, setSnaps] = useState<Array<{ at: string; bytes: number; file: string }> | null>(null)
   const [hist, setHist] = useState<HistRow[]>([])
   const [err, setErr] = useState('')
+  // 画布卡片流(时间线融合):本站近 24h 活动卡。挂载取一次——卡流是历史快照,15s 轮询
+  // 刷的是运行史/趋势柱;轨迹文件在运行中追加,重开面板即见,不值得为此每 15s 重拉全量源
+  const [flow, setFlow] = useState<CanvasCard[] | null>(null)
+  useEffect(() => {
+    let alive = true
+    void fetchCanvasPage(0).then((cards) => { if (alive) setFlow(cards) })
+    return () => { alive = false }
+  }, [])
   useEffect(() => {
     let alive = true
     const load = async (): Promise<void> => {
@@ -1334,6 +1368,9 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
   if (err.length > 0) return createElement('div', { className: 'o4-card', style: { padding: '8px 12px', margin: '4px 0 8px', borderRadius: '10px', flex: '1 1 100%' } }, createElement('div', { className: 'o4-load' }, err))
   const bars = snaps ?? []
   const maxB = Math.max(1, ...bars.map((b) => b.bytes))
+  // 卡片流:有本站卡(近 24h)→ 替代纯文本历史行;无 → 保留文本史兜底(轨迹轮转/为空时
+  // 不空窗——快照可以比轨迹活得久,时间线不能因此断流)
+  const flowCards = cardsForSite(flow, site).slice(0, 6)
   // flex:'1 1 100%' 独占整行——toggle 用 display:contents 把本卡塞进 .o4-row flex 行,
   // 不占满则被挤到行右侧溢出对话框裁切(GUI 走查 2026-10-08)
   return createElement('div', { className: 'o4-card', style: { padding: '10px 12px', margin: '4px 0 8px', borderRadius: '10px', flex: '1 1 100%' } },
@@ -1349,12 +1386,28 @@ function TimelinePanel(props: { id: string; lang: Lang }): ReturnType<typeof cre
       })),
     ),
     createElement('div', { style: { fontSize: '10px', color: '#5F6873' } }, bars.length > 0 ? `${tt('tlN')(bars.length)} · ${(bars.reduce((s, b) => s + b.bytes, 0) / 1024).toFixed(0)} KB ${tt('tlTotal')}` : ''),
-    createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '8px' } },
-      hist.slice(0, 5).map((h, i) => createElement('div', { key: i, style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)', display: 'flex', gap: '6px', alignItems: 'center' } },
-        createElement('span', null, h.at.slice(5, 16).replace('T', ' ')),
-        createElement('span', { style: { color: h.ok ? '#34C759' : '#FF8D85', flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, h.summary || (h.ok ? 'ok' : 'fail')),
-      )),
-    ),
+    flowCards.length > 0
+      ? createElement('div', { style: { marginTop: '8px' } },
+          createElement('div', { style: { fontSize: '10px', color: '#5F6873', margin: '0 0 4px' } }, tt('tlFlow')),
+          createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+            ...flowCards.map((c) => {
+              const tone = canvasCardTone(c)
+              return createElement('div', { key: c.id, title: `${c.command ?? c.id}\n${c.at}`, style: { display: 'flex', gap: '6px', alignItems: 'center', background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.05)', borderRadius: '8px', padding: '4px 7px' } },
+                createElement('span', { className: `o4-dot ${tone === 'ok' ? 'g' : (tone === 'fail' ? 'r' : 'y')}`, style: { flex: 'none' } }),
+                createElement('span', { style: { flex: 'none', fontSize: '10px', color: '#5F6873', fontFamily: 'ui-monospace,Consolas,monospace' } }, canvasStamp(c.at)),
+                c.shot !== undefined && c.shot.length > 0 ? createElement(ShotThumb, { path: c.shot, px: 28 }) : null,
+                createElement('span', { style: { flex: '1', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '10.5px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.72)' } }, c.command ?? c.id),
+                c.ms > 0 ? createElement('span', { style: { flex: 'none', fontSize: '10px', color: '#5F6873' } }, `${c.ms}ms`) : null,
+              )
+            }),
+          ),
+        )
+      : createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '8px' } },
+          ...hist.slice(0, 5).map((h, i) => createElement('div', { key: i, style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)', display: 'flex', gap: '6px', alignItems: 'center' } },
+            createElement('span', null, h.at.slice(5, 16).replace('T', ' ')),
+            createElement('span', { style: { color: h.ok ? '#34C759' : '#FF8D85', flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, h.summary || (h.ok ? 'ok' : 'fail')),
+          )),
+        ),
   )
 }
 
@@ -1421,6 +1474,254 @@ function TracePanel(props: { lang: Lang }): ReturnType<typeof createElement> {
           r.outHead.length > 0 ? r.outHead : '—') : null,
       ) })
     ),
+  )
+}
+
+/* ── 画布纯函数(任务 H+I+J,导出供 tests/canvas.test.ts 直接单测;组件渲染部分留给
+       GUI 人工验收——client 侧无组件测试基建,shouldShowOnboarding 先例) ── */
+
+/** 黄档阈值:SystemOne 判定门是 0.7(低于即"内容可疑",canvas.ts 的 P 捕获只认"实测有效"
+ *  标注,故画布见到的 p 恒 ≥0.7);0.7~0.8 属"低分飘过"——面板侧黄档提示复核。
+ *  纯展示口径,不拦截任何执行(拦截权归宿主判定门)。 */
+export const CANVAS_SUSPECT_P = 0.8
+
+/** 卡片状态色档:红 fail(ok=false,任一步失败/被拒)/ 黄 warn(exit 成功但判定分低)/ 绿 ok。
+ *  fail 优先:失败卡的 P 值无意义,不许绿灯掩盖失败。 */
+export function canvasCardTone(c: CanvasCard): 'ok' | 'fail' | 'warn' {
+  if (!c.ok) return 'fail'
+  if (c.p !== null && c.p < CANVAS_SUSPECT_P) return 'warn'
+  return 'ok'
+}
+
+/** 展开回放的步骤序列:合并卡带 steps 逐字用;单步卡(数据层省字段)从卡面字段合成一步——
+ *  展开交互对两类卡一致,用户不该关心"这卡是几步合并出来的"。 */
+export function stepsOfCard(c: CanvasCard): Array<{ cmd: string; ok: boolean; ms: number; shot?: string }> {
+  if (c.steps !== undefined) return c.steps
+  return [{ cmd: c.command ?? c.id, ok: c.ok, ms: c.ms, ...(c.shot !== undefined && c.shot.length > 0 ? { shot: c.shot } : {}) }]
+}
+
+/** 时间线融合过滤:取属于某站点(定时任务行首词)的卡。schedule/evidence 卡的 site 都是
+ *  首词形态(数据层契约),browser 卡无站点天然排除;输入容忍 'site zhihu hot' 前缀与整行命令。 */
+export function cardsForSite(cards: ReadonlyArray<CanvasCard> | null | undefined, site: string): CanvasCard[] {
+  const key = site.trim().replace(/^site\s+/, '').split(/\s+/)[0] ?? ''
+  if (key.length === 0) return []
+  return (cards ?? []).filter((c) => c.site === key)
+}
+
+/** 画布渲染门槛:有卡才渲染卡片流,空走 canvasEmpty 占位(shouldShowOnboarding 同款纯函数门槛)。 */
+export function shouldRenderCanvasFlow(cards: ReadonlyArray<CanvasCard> | null | undefined): boolean {
+  return Array.isArray(cards) && cards.length > 0
+}
+
+/** 缩放步进:0.5~2.0 闭区间、step 0.1;×10 取整杀浮点漂移(0.7 连 +0.1 三次必须 =1.0,
+ *  不然按钮禁用判断(zoom>=2)会因 1.9999… 永不触发)。 */
+export function nextZoom(z: number, dir: number): number {
+  return Math.round(Math.min(2, Math.max(0.5, z + dir * 0.1)) * 10) / 10
+}
+
+/** 卡片时间戳:本地时区 MM-DD HH:MM(at 是 UTC ISO,直接 slice 与本地时钟错位——
+ *  traceClock 同款教训,画布带上日期因为卡片跨天)。非法时间原样截断兜底。 */
+const canvasStamp = (iso: string): string => {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 16).replace('T', ' ')
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/**
+ * 画布页装配:现有 RPC 拼 buildCanvasData(任务 G 纯数据层)的三源之二——
+ * trace-list(轨迹,含步骤截图路径)+ schedule-list × schedule-history(列目录 zip 出
+ * SnapshotMeta:目录项给 at/bytes/file,站点命令原文来自任务行,canvas.ts 头注约定的拼法)。
+ * 证据源缺席:evidence-list 只回文件元数据(无 command/exit/截图),臆造 ok 会给写操作卡
+ * 假染色——宁缺毋假;宿主侧 canvas RPC 接线后此处一处换成单 RPC 即全源。
+ * 全防御:rpc 永不 reject、buildCanvasData 脏输入不抛,本函数恒出数组(空页=翻页到底,非错误)。
+ */
+async function fetchCanvasPage(offset: number): Promise<CanvasCard[]> {
+  const [tr, sch] = await Promise.all([
+    rpc<TraceListResult>('trace-list', { request: { limit: 500 } }),
+    rpc<{ schedules: SchedItem[] }>('schedule-list'),
+  ])
+  const traces = tr.ok && tr.value?.ok === true && Array.isArray(tr.value.traces) ? tr.value.traces : []
+  const snaps: SnapshotMeta[] = []
+  // 快照 zip 封顶 20 个任务:每个任务一发 schedule-history,任务表失控时不让画布拖垮面板
+  const schedules = sch.ok && Array.isArray(sch.value?.schedules) ? sch.value.schedules.slice(0, 20) : []
+  if (schedules.length > 0) {
+    const hs = await Promise.all(schedules.map((s) =>
+      rpc<{ snapshots?: Array<{ at: string; bytes: number; file: string }> }>('schedule-history', { p: { id: s.id } } as unknown as Record<string, unknown>)))
+    schedules.forEach((s, i) => {
+      const siteCmd = s.site.replace(/^site\s+/, '')
+      for (const sp of hs[i]?.value?.snapshots ?? []) {
+        snaps.push({ at: sp.at, site: siteCmd, bytes: sp.bytes, file: sp.file })
+      }
+    })
+  }
+  return buildCanvasData(traces, [], snaps, undefined, { offset, limit: CANVAS_PAGE_DEFAULT })
+}
+
+/**
+ * 画布面板(第五个 tab):全活动卡片流。
+ * 平移:viewport overflow:auto,拖拽改 scrollLeft/scrollTop(不走 transform——每帧重排
+ *   全部卡片,卡片多了肉眼可见地卡);
+ * 缩放:zoom state 控卡宽/缩略图边长(0.5~2.0,step 0.1),滚轮走 native listener
+ *   ({passive:false})——React 根委托把 wheel 注册成 passive,preventDefault 无效会连滚
+ *   外层滚动区;
+ * 分页:每页 50 张由数据层管(buildCanvasData offset/limit),"加载更多"按页累加(单次
+ *   渲染批次恒 ≤50),截图缩略图复用 shotCache(ShotThumb 现成链路);
+ * 展开:点卡片展开完整步骤序列(stepsOfCard),再点收起;拖拽位移 >3px 后的 click 视为
+ *   拖拽不吃点击(movedRef 判定);展开态 zIndex 提升盖住邻卡。
+ */
+function CanvasPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
+  const { lang } = props
+  // 模块级组件拿不到 Panel 内部的 t2/lang——经 props 自建同款查表(TimelinePanel 先例)
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
+  const [cards, setCards] = useState<CanvasCard[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [offset, setOffset] = useState(0)
+  const [zoom, setZoom] = useState(1)
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [more, setMore] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  // 拖拽几何进 ref 不进 state:mousemove 每帧 setState 会把整画布重渲染一遍(恰恰是要避免的开销)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const dragRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
+  const movedRef = useRef(false)
+
+  const loadPage = async (off: number, append: boolean): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    const page = await fetchCanvasPage(off)
+    setBusy(false)
+    if (append) {
+      // 追加页按 id 去重:两次拉取间新运行落盘会让 offset 窗口右移,重卡比丢卡更扎眼
+      const seen = new Set((cards ?? []).map((c) => c.id))
+      setCards([...(cards ?? []), ...page.filter((c) => !seen.has(c.id))])
+    } else {
+      setCards(page)
+      setOpenId(null)
+    }
+    // 满页才可能有下一页(offset 作用于过滤后全集,数据层契约)
+    setMore(page.length >= CANVAS_PAGE_DEFAULT)
+  }
+
+  useEffect(() => { void loadPage(0, false) }, [])
+  useEffect(() => {
+    const el = wrapRef.current
+    if (el === null) return
+    const onWheel = (e: WheelEvent): void => {
+      if (e.deltaY === 0) return
+      e.preventDefault()
+      setZoom((z) => nextZoom(z, e.deltaY < 0 ? 1 : -1))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => { el.removeEventListener('wheel', onWheel) }
+  }, [])
+
+  // ── 拖拽平移(几何见上注;mouseleave 兜底 mouseup——拖出容器即停,不悬挂 grab 光标) ──
+  const onMouseDown = (e: { button: number; clientX: number; clientY: number; preventDefault: () => void }): void => {
+    if (e.button !== 0) return
+    const el = wrapRef.current
+    if (el === null) return
+    e.preventDefault()
+    movedRef.current = false
+    dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop }
+    setDragging(true)
+  }
+  const onMouseMove = (e: { clientX: number; clientY: number }): void => {
+    const d = dragRef.current
+    const el = wrapRef.current
+    if (d === null || el === null) return
+    const dx = e.clientX - d.x
+    const dy = e.clientY - d.y
+    // 3px 阈值:手抖不算拖拽,click 照常触发;过阈值的拖拽末尾 click 要吞掉
+    if (Math.abs(dx) + Math.abs(dy) > 3) movedRef.current = true
+    el.scrollLeft = d.sl - dx
+    el.scrollTop = d.st - dy
+  }
+  const endDrag = (): void => {
+    dragRef.current = null
+    setDragging(false)
+  }
+
+  const zw = Math.round(220 * zoom)
+  const zt = Math.max(24, Math.round(48 * zoom))
+
+  const cardEl = (c: CanvasCard): ReturnType<typeof createElement> => {
+    const tone = canvasCardTone(c)
+    const open = openId === c.id
+    return createElement('div', {
+      key: c.id,
+      className: `o4-cvcard${open ? ' open' : ''}`,
+      style: { width: `${zw}px`, borderColor: tone === 'ok' ? 'rgba(52,199,89,.5)' : (tone === 'fail' ? 'rgba(255,69,58,.55)' : 'rgba(255,159,10,.55)'), ...(open ? { zIndex: 3 } : {}) },
+      title: `${c.command ?? c.id}\n${c.at}`,
+      onClick: () => { if (movedRef.current) return; setOpenId(open ? null : c.id) },
+    },
+      // 卡头:类型徽章 + 站点(有则)+ 本地时间
+      createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '5px' } },
+        createElement('span', { className: 'o4-bdg' }, c.type === 'site' ? tt('cvTypeSite') : (c.type === 'schedule' ? tt('cvTypeSchedule') : tt('cvTypeBrowser'))),
+        c.site !== undefined ? createElement('span', { style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)' } }, c.site) : null,
+        createElement('span', { style: { marginLeft: 'auto', fontSize: '10px', color: '#5F6873', fontFamily: 'ui-monospace,Consolas,monospace', flex: 'none' } }, canvasStamp(c.at)),
+      ),
+      // 缩略图(无截图=状态着色占位块)+ 命令(三行截断,全句进 title)
+      createElement('div', { style: { display: 'flex', gap: '7px', alignItems: 'flex-start' } },
+        c.shot !== undefined && c.shot.length > 0
+          ? createElement(ShotThumb, { path: c.shot, px: zt })
+          : createElement('span', { title: tt('canvasNoShot'), style: { width: `${zt}px`, height: `${zt}px`, borderRadius: '6px', flex: 'none', background: tone === 'fail' ? 'rgba(255,69,58,.12)' : (tone === 'warn' ? 'rgba(255,159,10,.1)' : 'rgba(77,107,254,.1)') } }),
+        createElement('span', { style: { fontSize: '10.5px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.78)', wordBreak: 'break-all', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' } }, c.command ?? c.id),
+      ),
+      // 卡脚:状态点 + 耗时 + P 值(黄档附复核提示)
+      createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '10px', color: '#5F6873', flexWrap: 'wrap' } },
+        createElement('span', { className: `o4-dot ${tone === 'ok' ? 'g' : (tone === 'fail' ? 'r' : 'y')}` }),
+        c.ms > 0 ? createElement('span', null, `${c.ms}ms`) : null,
+        c.p !== null ? createElement('span', { title: tt('canvasSuspectTip') }, `P=${c.p.toFixed(2)}`) : null,
+        tone === 'warn' ? createElement('span', { title: tt('canvasSuspectTip'), style: { color: '#FFB340' } }, tt('canvasSuspect')) : null,
+      ),
+      // 展开回放:完整步骤序列(缩略图+命令+耗时+exit 状态色),再点收起
+      open ? createElement('div', { className: 'o4-cvsteps' },
+        createElement('div', { style: { fontSize: '10px', color: '#8B9AFF' } }, tt('canvasReplay')),
+        ...stepsOfCard(c).map((s, i) => createElement('div', { key: i, style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+          createElement('span', { className: `o4-dot ${s.ok ? 'g' : 'r'}`, style: { flex: 'none' } }),
+          s.shot !== undefined && s.shot.length > 0
+            ? createElement(ShotThumb, { path: s.shot, px: 36 })
+            : createElement('span', { title: tt('canvasNoShot'), style: { width: '36px', height: '36px', borderRadius: '6px', background: 'rgba(255,255,255,.05)', flex: 'none' } }),
+          createElement('span', { style: { flex: '1', minWidth: '0', fontSize: '10px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.72)', wordBreak: 'break-all' } }, s.cmd),
+          s.ms > 0 ? createElement('span', { style: { fontSize: '10px', color: '#5F6873', flex: 'none' } }, `${s.ms}ms`) : null,
+        )),
+      ) : null,
+    )
+  }
+
+  return createElement('div', { className: 'o4-card' },
+    createElement('div', { className: 'o4-h3' },
+      createElement('span', { className: 'o4-miniico' }, ic('layers', true)), tt('canvasT'),
+      createElement('span', { className: 'rt' },
+        createElement('span', { style: { fontSize: '11px', color: '#5F6873', marginRight: '4px' } }, tt('canvasCardsN')(cards?.length ?? 0)),
+        createElement('button', { className: 'o4-btn ghost sm', title: tt('canvasZoomOut'), disabled: zoom <= 0.5, onClick: () => setZoom(nextZoom(zoom, -1)) }, '-'),
+        createElement('span', { style: { fontSize: '11px', color: '#5F6873', margin: '0 2px', minWidth: '34px', textAlign: 'center' } }, `${Math.round(zoom * 100)}%`),
+        createElement('button', { className: 'o4-btn ghost sm', title: tt('canvasZoomIn'), disabled: zoom >= 2, onClick: () => setZoom(nextZoom(zoom, 1)) }, '+'),
+        createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { setOffset(0); void loadPage(0, false) } }, ic('refresh', true), busy ? tt('checking') : tt('recheck')),
+      ),
+    ),
+    createElement('div', { className: 'o4-sub' }, tt('canvasSub')),
+    createElement('div', {
+      ref: wrapRef,
+      className: `o4-cvwrap${dragging ? ' drag' : ''}`,
+      style: { height: '340px', userSelect: 'none' },
+      onMouseDown, onMouseMove, onMouseUp: endDrag, onMouseLeave: endDrag,
+    },
+      cards === null
+        ? createElement('div', { style: { padding: '12px', width: '70%' } },
+            createElement('div', { className: 'o4-load' }, tt('loading')),
+            createElement('div', { className: 'o4-skel' }), createElement('div', { className: 'o4-skel', style: { width: '70%' } }),
+          )
+        : shouldRenderCanvasFlow(cards)
+          ? createElement('div', { className: 'o4-cvflow' }, ...cards.map(cardEl))
+          : createElement('div', { className: 'o4-load', style: { padding: '14px' } }, tt('canvasEmpty')),
+    ),
+    more
+      ? createElement('div', { style: { display: 'flex', justifyContent: 'center', marginTop: '9px' } },
+          createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { const next = offset + CANVAS_PAGE_DEFAULT; setOffset(next); void loadPage(next, true) } }, busy ? tt('checking') : tt('canvasMore')),
+        )
+      : null,
   )
 }
 

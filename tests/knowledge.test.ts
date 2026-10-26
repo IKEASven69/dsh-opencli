@@ -58,10 +58,10 @@ describe('renderKnowledgeMarkdown', () => {
     const md = renderKnowledgeMarkdown(buildKnowledge('xiaohongshu', [{ site: 'xiaohongshu', name: 'search', access: 'read', description: '搜索' }])!)
     expect(md).toContain('站点健康度:注意')
     expect(md).toContain('#2562')
-    // degraded(instagram 仍 open)才渲染 browser_* 兜底提示;notice 不渲染
+    // degraded(instagram 仍 open)才渲染 opencli_* 兜底提示;notice 不渲染
     const ig = renderKnowledgeMarkdown(buildKnowledge('instagram', [{ site: 'instagram', name: 'user', access: 'read', description: 'x' }])!)
     expect(ig).toContain('站点健康度:受损')
-    expect(ig).toContain('browser_* 原语兜底')
+    expect(ig).toContain('opencli_* 原语兜底')
     expect(renderKnowledgeMarkdown(buildKnowledge('weibo', ENTRIES)!)).not.toContain('健康度')
   })
 })

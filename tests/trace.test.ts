@@ -94,7 +94,7 @@ describe('测试隔离(trace 目录不碰真实用户数据)', () => {
 
 describe('recordTrace 落盘(browser 工具单点触发)', () => {
   it('3 条 browser 命令 → trace 文件 ≥3 行 JSON 且字段齐;失败步 outHead 含 stderr', async () => {
-    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('browser_open')!
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('opencli_open')!
     expect(tool).toBeDefined()
     await tool.execute({ url: 'https://example.com/1' })
     await tool.execute({ url: 'https://example.com/2' })
@@ -194,13 +194,18 @@ describe('trace_replay 工具(最近 30 步 markdown 时间线)', () => {
 })
 
 describe('RPC 透传入口也落轨迹(评审:回放按钮曾绕过 recordTrace 单点)', () => {
-  it('replay 的 browser 步骤进轨迹;site 步骤不进(只有 browser 命令落盘)', async () => {
+  it('replay 的 opencli_/browser_ 步骤进轨迹;site 步骤不进(只有 browser 命令落盘)', async () => {
     const before = (await svc.traceList({})).traces.length
-    const rb = await svc.replay({ step: 'browser_open https://example.com/replayed' })
+    // 新名步骤头(命名空间迁移后正主)
+    const rn = await svc.replay({ step: 'opencli_open https://example.com/replayed-new' })
+    expect(rn.ok).toBe(true)
+    // 旧名步骤头继续收:localStorage 历史录制不随迁移改写
+    const rb = await svc.replay({ step: 'opencli_open https://example.com/replayed' })
     expect(rb.ok).toBe(true)
     const l1 = await svc.traceList({})
-    expect(l1.traces.length).toBe(before + 1)
+    expect(l1.traces.length).toBe(before + 2)
     expect(l1.traces[0]!.cmd).toBe('browser dsh open https://example.com/replayed')
+    expect(l1.traces[1]!.cmd).toBe('browser dsh open https://example.com/replayed-new')
     // site 分支不是 browser 命令:不落轨迹
     const rs = await svc.replay({ step: 'site arxiv recent cs.AI' })
     expect(rs.ok).toBe(true)
@@ -311,8 +316,8 @@ describe('步骤自动截图(页面变化子命令/失败命令自动补拍)', (
   })
 
   it('open/click 触发补拍:轨迹行带 shot 绝对路径,假文件已落盘且在隔离目录之下', async () => {
-    await tool('browser_open').execute({ url: 'https://example.com/shot-open' })
-    await tool('browser_click').execute({ target: '12' })
+    await tool('opencli_open').execute({ url: 'https://example.com/shot-open' })
+    await tool('opencli_click').execute({ target: '12' })
     const rows = (await svc.traceList({})).traces
     const openRow = rows.find((t) => t.cmd === 'browser dsh open https://example.com/shot-open')!
     expect(openRow).toBeDefined()
@@ -332,7 +337,7 @@ describe('步骤自动截图(页面变化子命令/失败命令自动补拍)', (
   })
 
   it('state 不触发:只读命令页面无变化,轨迹行无 shot 字段', async () => {
-    await tool('browser_state').execute({})
+    await tool('opencli_state').execute({})
     const rows = (await svc.traceList({})).traces
     // 倒序(新在前):首个 state 命中即本次执行
     const last = rows.find((t) => t.cmd === 'browser dsh state')!
@@ -342,7 +347,7 @@ describe('步骤自动截图(页面变化子命令/失败命令自动补拍)', (
 
   it('失败必触发:exitCode!==0 的 state 也补拍;命令结果原样透传不被截图阻断', async () => {
     shell.failNext = true
-    const r = await tool('browser_state').execute({})
+    const r = await tool('opencli_state').execute({})
     expect(r.text).toContain('命令失败')
     const rows = (await svc.traceList({})).traces
     const failRow = rows.find((t) => t.cmd === 'browser dsh state' && t.exitCode === 1)!
@@ -354,7 +359,7 @@ describe('步骤自动截图(页面变化子命令/失败命令自动补拍)', (
   it('shotCapture=false 实例开关整体关闭补拍', async () => {
     svc.shotCapture = false
     try {
-      await tool('browser_open').execute({ url: 'https://example.com/shot-off' })
+      await tool('opencli_open').execute({ url: 'https://example.com/shot-off' })
       const rows = (await svc.traceList({})).traces
       const row = rows.find((t) => t.cmd === 'browser dsh open https://example.com/shot-off')!
       expect(row).toBeDefined()
@@ -396,9 +401,9 @@ describe('trace-shot RPC(截图直取 + 目录穿越拒绝)', () => {
   })
 })
 
-describe('browser_do 结果携带 shot(评审:此前只进 trace 不进工具结果,卡片提示是死路径)', () => {
+describe('opencli_do 结果携带 shot(评审:此前只进 trace 不进工具结果,卡片提示是死路径)', () => {
   it("open(页面变化类)执行后工具结果带 shot 绝对路径,与轨迹行一致", async () => {
-    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string; shot?: string }> }> }).registered.get('browser_do')!
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string; shot?: string }> }> }).registered.get('opencli_do')!
     expect(tool).toBeDefined()
     const r = await tool.execute({ command: 'back', args: [] })
     expect(typeof r.shot).toBe('string')
@@ -410,7 +415,7 @@ describe('browser_do 结果携带 shot(评审:此前只进 trace 不进工具结
     expect(JSON.parse(lines[lines.length - 1]!).shot).toBe(r.shot)
   })
   it('find(非页面变化且成功)不拍——截图频率有门槛,不是每条都拍', async () => {
-    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string; shot?: string }> }> }).registered.get('browser_do')!
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string; shot?: string }> }> }).registered.get('opencli_do')!
     const r = await tool.execute({ command: 'find', args: ['button'] })
     expect(r.shot).toBeUndefined()
   })

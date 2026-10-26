@@ -85,8 +85,11 @@ describe('审批门分发链路(tools/pre-execute 集成)', () => {
   })
 
   it('非 site 工具 → allow(即使参数长得像)', async () => {
-    const d = await dispatch('browser_open', { adapter: 'zhihu', command: 'comment' })
+    const d = await dispatch('opencli_open', { adapter: 'zhihu', command: 'comment' })
     expect(d.kind).toBe('allow')
+    // 兼容层旧名同款:弃用别名不是 site,不经 site 写审批门(边界与 approval-invariant 的声明一致)
+    const legacy = await dispatch('opencli_open', { adapter: 'zhihu', command: 'comment' })
+    expect(legacy.kind).toBe('allow')
   })
 
   it('审批门关闭 → write 也放行', async () => {

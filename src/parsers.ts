@@ -43,7 +43,7 @@ export function parseDaemonStatus(text: string): DaemonStatus {
       const extConnected = d.extensionConnected === true
       // 缺字段(extensionConnected === undefined)≠ 显式断连:parseDaemonStatus 归一层若把缺字段
       // 折成 'not connected',extensionState 的 explicitDown(只认显式否定,注释白纸黑字)会把
-      // 还能跑的 browser_* 一刀切死——缺字段单独给 'unknown',由消费方各自决定语义
+      // 还能跑的 opencli_* 一刀切死——缺字段单独给 'unknown',由消费方各自决定语义
       const profilesRaw = Array.isArray(d.profiles) ? (d.profiles as Array<Record<string, unknown>>) : []
       const profiles = profilesRaw.length > 0
         ? profilesRaw.map((p) => `${String(p.contextId ?? '?')}${p.extensionVersion ? ' ' + String(p.extensionVersion) : ''}${p.extensionConnected === false ? ' (未连)' : ''}`).join(', ')
@@ -126,7 +126,7 @@ export function buildAdapterDirectory(adapters: AdapterInfo[], maxSites = 70, ma
     const more = a.commandCount > maxCmdsPerSite ? ` …(共${a.commandCount})` : ''
     return `- ${a.name} (${a.commandCount}): ${cmds}${more}`
   })
-  const tail = '未列出的站点同样可用;完整清单见设置面板「浏览器代理」。没有适配器的网站:用 browser_do(command=analyze/init/verify) 现场创作(见 SKILL.md)。'
+  const tail = '未列出的站点同样可用;完整清单见设置面板「浏览器代理」。没有适配器的网站:用 opencli_do(command=analyze/init/verify) 现场创作(见 SKILL.md)。'
   return [head, ...lines, tail].join('\n')
 }
 

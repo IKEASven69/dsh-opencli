@@ -106,7 +106,11 @@ describe('攻击表:已知高危形态逐条拦截', () => {
     { name: 'opencli_run', args: { args: ['nope', 'anything'] }, want: 'ask', note: '通用网关·未知站点 fail-closed' },
     { name: 'opencli_run', args: { args: ['browser', 'state', '--session', 'dsh'] }, want: 'allow', note: '通用网关·浏览器命名空间(对照)' },
     { name: 'opencli_run', args: { args: ['zhihu', 'hot'] }, want: 'allow', note: '通用网关·只读命令(对照)' },
-    { name: 'browser_do', args: { command: 'eval', args: ['1+1'] }, want: 'ask', note: 'eval=登录页任意JS,等价写原语' },
+    // 命名空间迁移(2026-10 opencli_*→opencli_*)后新名必须原样走门,迁移不得开洞
+    { name: 'opencli_run', args: { args: ['zhihu', 'post', 'hello'] }, want: 'ask', note: '通用网关·发帖写命令(新名走门)' },
+    { name: 'opencli_do', args: { command: 'eval', args: ['1+1'] }, want: 'ask', note: '新名 eval=登录页任意JS,等价写原语' },
+    // 兼容层旧名同拦:pre-execute 只见原始工具名,旧名 opencli_do 不设防就是 eval 绕门通道
+    { name: 'opencli_do', args: { command: 'eval', args: ['1+1'] }, want: 'ask', note: '旧名 eval 同拦(兼容层不开洞)' },
   ])('$note → $want', async ({ name, args, want }) => {
     const d = await dispatch(name, args)
     expect(d.kind).toBe(want)
@@ -180,8 +184,37 @@ describe('豁免路径白纸黑字(不变量的边界,不是漏洞)', () => {
     expect(d.kind).toBe('allow')
     ;(svc as unknown as { automationMode: string }).automationMode = 'standard'
   })
-  it('已知边界(声明,不遮掩):browser_* 原语不经审批门——与 dsh 权限体系及 BROWSER_DO_ALLOW 白名单共治', async () => {
-    const d = await dispatch('browser_click', { target: '0' })
+  it('已知边界(声明,不遮掩):opencli_* 原语不经审批门——与 dsh 权限体系及 BROWSER_DO_ALLOW 白名单共治', async () => {
+    const d = await dispatch('opencli_click', { target: '0' })
     expect(d.kind).toBe('allow') // 设计边界:导航类原语靠四档模式+白名单管,不重复设门
+  })
+})
+
+describe('兼容层:browser_* 旧名弃用别名(2026-10 命名空间迁移 browser_*→opencli_*)', () => {
+  it('15 个旧名全部注册为弃用别名,描述前置弃用标记并指向新名', () => {
+    const reg = (ctx.tools as unknown as { registered: Map<string, { description?: string }> }).registered
+    const olds = ['browser_open', 'browser_state', 'browser_click', 'browser_type', 'browser_fill', 'browser_extract',
+      'browser_screenshot', 'browser_scroll', 'browser_wait', 'browser_do', 'browser_close', 'browser_read',
+      'browser_status', 'browser_install', 'browser_crawl']
+    for (const old of olds) {
+      expect(reg.has(old), `旧名 ${old} 应注册为别名`).toBe(true)
+      const neu = old.replace('browser_', 'opencli_')
+      expect(reg.has(neu), `新名 ${neu} 应注册`).toBe(true)
+      // 描述标"已弃用,请用 opencli_*":别名描述以弃用标记开头并给出对应新名
+      const desc = String(reg.get(old)!.description ?? '')
+      expect(desc.startsWith('[已弃用]'), `${old} 描述应前置弃用标记`).toBe(true)
+      expect(desc).toContain(`请用 ${neu}`)
+    }
+  })
+
+  it('旧名 browser_open execute → 返回弃用提示且功能正常(转发到新名,shell 真收到 browser open)', async () => {
+    shell.calls = []
+    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('browser_open')!
+    const r = await tool.execute({ url: 'https://example.com/legacy-alias' })
+    // 弃用提示:点名旧名与新名,给出移除时间
+    expect(r.text).toContain('已弃用')
+    expect(r.text).toContain('browser_open 已更名 opencli_open')
+    // 功能正常:转发到新名实现,shell 实际收到 browser open 调用(桩对未知命令回 {})
+    expect(shell.calls.some((c) => c.includes('browser') && c.includes('open') && c.includes('https://example.com/legacy-alias'))).toBe(true)
   })
 })

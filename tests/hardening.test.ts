@@ -222,6 +222,8 @@ describe('F:工具重名防护(重名让位,不再整插件炸加载)', () => {
   }
 
   it('撞名工具让位:服务正常构造、名进 toolConflicts/status.conflicts、其余工具照常注册、warn 一次', async () => {
+    // opencli_open 是兼容层旧名(2026-10 迁移后别名):别的插件占了旧名,别名让位、
+    // 新名 opencli_open 照常注册——这正是命名空间迁移想要的行为
     const { c, ct } = await makeCtx(new Set(['browser_open', 'so_pick']), new Set())
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     await c.plugin(OpencliService) // dsh 0.2.1 实测:不接住这个错整个插件加载失败——这一行不抛即达标
@@ -236,9 +238,11 @@ describe('F:工具重名防护(重名让位,不再整插件炸加载)', () => {
     const conflicts = (svc2 as unknown as { toolConflicts: string[] }).toolConflicts
     expect([...conflicts].sort()).toEqual(['browser_open', 'so_pick'])
     // 其余工具照常注册(五个注册方法各抽代表;让位的两个不在表里)
-    for (const name of ['browser_state', 'site_batch', 'opencli_catalog', 'script_catalog', 'site', 'so_verify', 'opencli_doctor']) {
+    for (const name of ['opencli_state', 'site_batch', 'opencli_catalog', 'script_catalog', 'site', 'so_verify', 'opencli_doctor']) {
       expect(ct.registered.has(name)).toBe(true)
     }
+    // 让位的旧名让出去,新名不受影响(迁移目标:browser_ 撞名不再伤正主)
+    expect(ct.registered.has('opencli_open')).toBe(true)
     expect(ct.registered.has('browser_open')).toBe(false)
     expect(ct.registered.has('so_pick')).toBe(false)
     // 宿主日志:一次 warn,含让位名单与原因
@@ -246,7 +250,7 @@ describe('F:工具重名防护(重名让位,不再整插件炸加载)', () => {
     expect(warned).toContain('已让位')
     // status RPC 暴露 conflicts(面板/agent 可见)
     const st = await svc2.status()
-    expect([...(st.conflicts ?? [])].sort()).toEqual(['browser_open', 'so_pick'])
+      expect([...(st.conflicts ?? [])].sort()).toEqual(['browser_open', 'so_pick'])
     // doctor 输出 ⚠ 行
     const doc = await ct.registered.get('opencli_doctor')!.execute({})
     expect(doc.text).toContain('另一插件注册了同名工具,本插件已让位这些命令')
@@ -255,6 +259,7 @@ describe('F:工具重名防护(重名让位,不再整插件炸加载)', () => {
   })
 
   it('非重名错误仍抛:注册器的其他异常照常炸出,不被重名防护吞掉', async () => {
+    // browser_click 是兼容层旧名:别名注册同样走 registerToolSafe,非重名错误必须照常上抛
     const { c } = await makeCtx(new Set(), new Set(['browser_click']))
     await expect(c.plugin(OpencliService)).rejects.toThrow('boom: register failed for browser_click')
     await stopCtx(c)

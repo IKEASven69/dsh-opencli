@@ -111,7 +111,7 @@ describe('approvalDecision(审批门判定)', () => {
   })
   it('审批门关闭/非 site 工具/被禁用适配器/参数不完整 → allow', () => {
     expect(approvalDecision(off, noDisabled, 'site', 'zhihu', 'comment', 'write')).toBe('allow')
-    expect(approvalDecision(on, noDisabled, 'browser_open', 'zhihu', 'comment', 'write')).toBe('allow')
+    expect(approvalDecision(on, noDisabled, 'opencli_open', 'zhihu', 'comment', 'write')).toBe('allow')
     expect(approvalDecision(on, ['zhihu'], 'site', 'zhihu', 'comment', 'write')).toBe('allow')
     expect(approvalDecision(on, noDisabled, 'site', undefined, 'comment', 'write')).toBe('allow')
     expect(approvalDecision(on, noDisabled, 'site', 'zhihu', 42, 'write')).toBe('allow')

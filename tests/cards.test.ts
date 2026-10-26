@@ -1,5 +1,5 @@
 /**
- * 对话内预览卡单测:site / site_batch / browser_do 的 output.render。
+ * 对话内预览卡单测:site / site_batch / opencli_do 的 output.render。
  * render 是纯函数(text 进 → 块数组出),直接喂 execute 文本契约样例断言形状;
  * 另经 StubTools 注册表验证三工具接线(注册 def 的 output.render 即本卡),
  * 并回声断言 site_batch execute 文本契约未被 render 升级破坏。
@@ -111,7 +111,7 @@ describe('site 预览卡(命令行样式:徽章+命令+exit 状态色)', () => {
   it('失败卡末尾人工接管提示:✗ 且无登录指引才加,已含登录指引的不重复加', () => {
     // site exit N 失败(无登录指引)→ 加
     const fail = siteCardRender({ adapter: 'weibo', command: 'post' }, { text: '命令失败(退出码 1):\nError: boom' })[0]!.text
-    expect(fail).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    expect(fail).toContain('👉 状态异常:建议人工接管或改用 opencli_* 原语')
     // 空结果(⚠ 且文案自带"请先在真实 Chrome 登录")→ 不加
     const empty = siteCardRender({ adapter: 'zhihu', command: 'hot' }, { text: '适配器 zhihu 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 zhihu，或运行 `opencli zhihu login` 后用面板“巡检登录态”确认。' })[0]!.text
     expect(empty).not.toContain('👉')
@@ -120,7 +120,7 @@ describe('site 预览卡(命令行样式:徽章+命令+exit 状态色)', () => {
     expect(nav).not.toContain('👉')
     // 被拦截(✗ 无登录指引)→ 加
     const off = siteCardRender({ adapter: 'weibo', command: 'post' }, { text: '适配器 weibo 已被禁用(设置→浏览器代理 可重新启用)。' })[0]!.text
-    expect(off).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    expect(off).toContain('👉 状态异常:建议人工接管或改用 opencli_* 原语')
     // 判定标注 ⚠(疑似静默失败,非硬失败)→ 不加
     const warn = siteCardRender({ adapter: 'weibo', command: 'hot' }, { text: '(⚠ 疑似静默失败:登录/风控墙) 请先登录后再继续操作' })[0]!.text
     expect(warn).not.toContain('👉')
@@ -153,7 +153,7 @@ describe('site_batch 预览卡(汇总头 + 每站一行:站名+状态+P 值)', (
     expect(t).toContain('== weibo ✓(⚠ 疑似静默失败:P=0.08) ==')
     expect(t).toContain('热度984万')
     expect(t).toContain('Error: timeout')
-    expect(t).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    expect(t).toContain('👉 状态异常:建议人工接管或改用 opencli_* 原语')
   })
 
   it('全成功:✓ 汇总,无判定标注的站 P 列为 —;无 ✗ 失败站不加接管提示', () => {
@@ -176,17 +176,17 @@ describe('site_batch 预览卡(汇总头 + 每站一行:站名+状态+P 值)', (
     const t = siteBatchCardRender({}, { text: 'sites 至少 2 个站点。' })[0]!.text
     expect(t).toContain('▣ site_batch · ? — ✗ 被拒绝')
     expect(t).toContain('sites 至少 2 个站点。')
-    expect(t).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    expect(t).toContain('👉 状态异常:建议人工接管或改用 opencli_* 原语')
   })
 
-  it('失败兜底互斥(与 site/browser_do 同族):失败站原文已含登录指引不加;纯 ⚠ 疑似静默失败站不触发', () => {
+  it('失败兜底互斥(与 site/opencli_do 同族):失败站原文已含登录指引不加;纯 ⚠ 疑似静默失败站不触发', () => {
     // 全部失败站原文都自带登录指引(如"请先登录")→ 不重复加
     const login = siteBatchCardRender({ command: 'hot', sites: ['weibo', 'zhihu'] }, { text: '批量采集 0/2 站成功:\n\n== weibo ✗ ==\nAUTH_REQUIRED: 请先登录后重试\n\n== zhihu ✗ ==\n请先在真实 Chrome 登录 zhihu' })[0]!.text
     expect(login).toContain('— ✗ 0/2 站成功')
     expect(login).not.toContain('👉')
     // 部分 ✗ 失败站无登录指引(超时)→ 加一次
     const mixed = siteBatchCardRender({ command: 'hot', sites: ['weibo', 'zhihu'] }, { text: '批量采集 0/2 站成功:\n\n== weibo ✗ ==\nAUTH_REQUIRED: 请先登录后重试\n\n== zhihu ✗ ==\nError: timeout' })[0]!.text
-    expect(mixed).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    expect(mixed).toContain('👉 状态异常:建议人工接管或改用 opencli_* 原语')
     // 仅 ⚠ 疑似静默失败站(exit 0,ok=true)无 ✗ 失败站 → 不加
     const silentOnly = siteBatchCardRender({ command: 'hot', sites: ['weibo'] }, { text: '批量采集 1/1 站成功,其中 1 站疑似静默失败(exit 0 但内容无效):\n\n== weibo ✓(⚠ 疑似静默失败:P=0.08) ==\n请先登录' })[0]!.text
     expect(silentOnly).toContain('— ⚠ 1/1 站成功 · 1 疑似静默失败')
@@ -217,30 +217,30 @@ describe('site_batch 预览卡(汇总头 + 每站一行:站名+状态+P 值)', (
   })
 })
 
-describe('browser_do 预览卡(步骤式:命令/结果分段)', () => {
+describe('opencli_do 预览卡(步骤式:命令/结果分段)', () => {
   it('成功:命令段($ 行 console 围栏)与结果段分开,原文不丢', () => {
     const blocks = browserDoCardRender({ command: 'analyze', args: ['--json'] }, { text: '{"stack":"next","antiCrawl":false}' })
     expect(blocks).toHaveLength(1)
     expect(blocks[0]!.type).toBe('text')
     const t = blocks[0]!.text
-    expect(t).toContain('▣ browser_do · analyze — ✓ exit 0')
+    expect(t).toContain('▣ opencli_do · analyze — ✓ exit 0')
     expect(t).toContain('**命令**')
     expect(t).toContain('**结果**')
-    expect(t).toContain('$ browser_do analyze --json')
+    expect(t).toContain('$ opencli_do analyze --json')
     expect(t).toContain('"stack":"next"')
     expect(t).not.toContain('👉')
   })
 
   it('非默认会话入徽章头', () => {
     const t = browserDoCardRender({ command: 'tab', session: 'work' }, { text: '[0] example.com' })[0]!.text
-    expect(t).toContain('▣ browser_do · tab · session work — ✓ exit 0')
+    expect(t).toContain('▣ opencli_do · tab · session work — ✓ exit 0')
   })
 
   it('失败前缀与白名单拒绝:✗ exit N / ✗ 子命令被拒,末尾附人工接管提示', () => {
     const fail = browserDoCardRender({ command: 'eval' }, { text: '命令失败(退出码 2):\nSyntaxError: boom' })[0]!.text
     expect(fail).toContain('— ✗ exit 2')
     expect(fail).toContain('SyntaxError: boom')
-    expect(fail).toContain('👉 状态异常:建议人工接管或改用 browser_* 原语')
+    expect(fail).toContain('👉 状态异常:建议人工接管或改用 opencli_* 原语')
     const denied = browserDoCardRender({ command: 'rm' }, { text: '不允许的子命令:rm(白名单见工具说明)' })[0]!.text
     expect(denied).toContain('— ✗ 子命令被拒')
     expect(denied).toContain('白名单见工具说明')
@@ -325,16 +325,18 @@ describe('site execute 判定标注流转(评审修复:⚠ 分支生产可达性
 })
 
 describe('三工具接线(注册表的 output.render 即本卡)+ execute 契约回声', () => {
-  it('site / site_batch / browser_do 注册的 output.render 输出卡片形状', () => {
+  it('site / site_batch / opencli_do 注册的 output.render 输出卡片形状', () => {
     const site = ctx.tools.registered.get('site')
     expect(typeof site?.output?.render).toBe('function')
     expect(site!.output!.render!({ adapter: 'zhihu', command: 'hot' }, { text: 'ok-data' })[0]!.text).toContain('▣ site · zhihu · hot')
     const batch = ctx.tools.registered.get('site_batch')
     expect(typeof batch?.output?.render).toBe('function')
     expect(batch!.output!.render!({ command: 'hot' }, { text: '批量采集 1/1 站成功:\n\n== zhihu ✓ ==\nX' })[0]!.text).toContain('▣ site_batch · hot × 1 站')
-    const bd = ctx.tools.registered.get('browser_do')
+    // 命名空间迁移(2026-10):注册名已是 opencli_do;卡片徽章头仍是 cards.ts 渲染的
+    // "opencli_do"字样——卡片文案属 cards.ts(不在迁移文件锁内),此处按其真实输出断言
+    const bd = ctx.tools.registered.get('opencli_do')
     expect(typeof bd?.output?.render).toBe('function')
-    expect(bd!.output!.render!({ command: 'find' }, { text: 'found 3' })[0]!.text).toContain('▣ browser_do · find')
+    expect(bd!.output!.render!({ command: 'find' }, { text: 'found 3' })[0]!.text).toContain('▣ opencli_do · find')
   })
 
   it('site_batch execute 文本契约未被 render 升级破坏(桩 shell 全成功路径)', async () => {

@@ -1,6 +1,8 @@
 /**
  * dsh-opencli host 半:登录态浏览器代理。
- * - browser_* 工具族:包装 `opencli browser <session> …` 原语(open/state/click/type/fill/extract/screenshot/scroll/wait + browser_do 透传)
+ * - opencli_* 工具族:包装 `opencli browser <session> …` 原语(open/state/click/type/fill/extract/screenshot/scroll/wait + do 透传)。
+ *   2026-10 命名空间迁移:browser_* → opencli_*(wqty123 #28 / Tencent #444 两次撞名后主动让出
+ *   browser_ 前缀),旧名经 registerToolWithLegacyAlias 挂弃用别名,2027-04 移除。
  * - site 工具:`opencli <adapter> <command> …` 适配器桥
  * - systemPrompt:适配器目录(缓存 + TTL)与使用要点
  * - TypertRemoteService RPC:status / adapters / refresh(面板用)
@@ -30,8 +32,10 @@ import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
 import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } from './evidence.ts'
+import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
+import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 
-// 对话内预览卡(site/site_batch/browser_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
+// 对话内预览卡(site/site_batch/opencli_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
 export { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 // 基准纯函数层再导出(与 cards 同款约定):tests/benchmark.test.ts 直测,免走服务装配
 export { BENCH_KEEP, DEFAULT_BENCH, buildBenchmarkReport, renderBenchmarkTable } from './benchmark.ts'
@@ -44,7 +48,7 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** browser_do 允许透传的子命令白名单(其余高危命令不允许盲调)。 */
+/** opencli_do 允许透传的 browser 子命令白名单(其余高危命令不允许盲调)。 */
 const BROWSER_DO_ALLOW = new Set([
   'analyze', 'back', 'bind', 'check', 'close', 'console', 'dblclick', 'dialog',
   'drag', 'eval', 'find', 'focus', 'frames', 'get', 'hover', 'init', 'keys',
@@ -67,9 +71,9 @@ const CHROME_METHODS_ALLOW = new Set([
 ])
 
 /** ④⑤ 无扩展短路统一文案(docs/DESIGN-zero-config-fallback.md §5 三件套:缺什么/装什么/装完会发生什么)。
- *  browser_* 与 chrome_* 两族是 CLI→daemon→扩展硬链路(上游架构事实),无扩展不做伪造降级,只给确切出路。 */
+ *  opencli_* 与 chrome_* 两族是 CLI→daemon→扩展硬链路(上游架构事实),无扩展不做伪造降级,只给确切出路。 */
 const NO_EXT_GUIDANCE =
-  '需要 OpenCLI 扩展(当前未检测到):browser_*/chrome_* 走 CLI→daemon→扩展链路,无扩展无法工作,也不伪造降级。' +
+  '需要 OpenCLI 扩展(当前未检测到):opencli_*/chrome_* 走 CLI→daemon→扩展链路,无扩展无法工作,也不伪造降级。' +
   '装法:https://github.com/jackwener/OpenCLI/releases 下载 opencli-extension-*.zip 解压 → Chrome/Edge 扩展页开"开发者模式"→"加载解压缩的扩展";装好自动重连,本工具立即可用,无需重启 dsh。' +
   '无扩展期间:site 的纯 HTTP 只读命令(如 site juejin hot)不受影响。'
 
@@ -92,6 +96,10 @@ interface PluginState {
   runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string }>>
   /** 审批门拦截审计(最近 50 条) */
   audit: Array<{ at: string; command: string; reason: string; mode: string }>
+  /** 通知通道配置(任务 E):放 state 里跟着 saveState 走——saveState 是整文件重写,
+   *  notifyConfig 不进 this.state 就会在下一次任意调度落盘时被丢键(notify.ts 的
+   *  saveNotifyConfig 单独写该段保不住这条路径)。 */
+  notifyConfig?: NotifyConfig
 }
 
 /** 0.2.0 ctx.subprocess 服务的最小形状(dsh-subprocess 的 spawn seam;只取用到的成员)。 */
@@ -138,6 +146,30 @@ export function scanOpencliAcrossNodeVersions(roots: string[]): string | null {
     }
   }
   return best?.main ?? null
+}
+
+/**
+ * mise 版本管理器 opencli 探测(纯函数可单测,仓库 #1 issue):mise 把各 node 版本隔离在
+ * installs/node/<ver>/,npm -g 装出的入口是 bin/ 下的 shim——不是上面认的 dist/src/main.js
+ * 形态,scanOpencliAcrossNodeVersions 扫不到。多版本并存取最高版(与 vfox/nvm 扫描同策略);
+ * win32 认 .cmd shim(无扩展名 sh 脚本无法直接执行),其余平台认无扩展名形态。
+ * 返回 bin 入口绝对路径;root 不存在或无命中返回 null。
+ */
+export function scanMiseOpencli(root: string): string | null {
+  let dirs: string[] = []
+  try { dirs = readdirSync(root).map((d) => join(root, d)) } catch { return null }
+  const names = process.platform === 'win32' ? ['opencli.cmd', 'opencli'] : ['opencli']
+  let best: { ver: number[]; bin: string } | null = null
+  for (const dir of dirs) {
+    const ver = (dir.match(/(\d+)\.(\d+)\.(\d+)/)?.slice(1) ?? ['0', '0', '0']).map(Number)
+    for (const name of names) {
+      if (!existsSync(join(dir, 'bin', name))) continue
+      // 该版本目录已定名:命中首选名不再看次选(否则 win32 会跳过 .cmd 误选 sh 脚本)
+      if (best === null || ver > best.ver) best = { ver, bin: join(dir, 'bin', name) }
+      break
+    }
+  }
+  return best?.bin ?? null
 }
 
 interface ToolArgs {
@@ -235,6 +267,10 @@ export class OpencliService extends TypertRemoteService {
       join(homedir(), '.nvm'),
     ])
     if (scanned !== null) return `node "${scanned}"`
+    // mise 版本管理器(仓库 #1 issue):bin shim 形态上面的 dist 扫描认不出,单独探测;
+    // 整路径加引号返回——shell 串形态按空白+引号切词,subprocess seam 的 tokenizer 同款处理
+    const mise = scanMiseOpencli(join(homedir(), '.local', 'share', 'mise', 'installs', 'node'))
+    if (mise !== null) return `"${mise}"`
     return 'opencli'
   }
 
@@ -245,6 +281,7 @@ export class OpencliService extends TypertRemoteService {
     this.registerBrowserTools()
     this.registerChromeTools()
     this.registerAdvancedTools()
+    this.registerVomTools()
     this.registerSiteTool()
     this.registerDecisionTools()
     this.registerDoctorTool()
@@ -310,6 +347,30 @@ export class OpencliService extends TypertRemoteService {
     }
   }
 
+  /**
+   * 命名空间迁移兼容层(2026-10,wqty123 #28 / Tencent #444 两次撞名后主动让出 browser_ 前缀):
+   * 新名 opencli_* 是正主,旧名 browser_* 同步注册为弃用别名——描述前置「已弃用」引导模型改口,
+   * execute 原样转发新名实现,结果首行附弃用提示(功能不断)。旧名只是别名:systemPrompt 目录、
+   * doctor 等正主位只写新名;别名同样走 registerToolSafe,被其他插件占了旧名正合迁移本意,让位即可。
+   * 计划 2027-04(6 个月)移除兼容层,届时本方法退化为直通注册。
+   */
+  private registerToolWithLegacyAlias<S extends ParameterSchemaSpec, O extends ValueSchemaSpec>(def: DefineToolOptions<S, O>): void {
+    this.registerToolSafe(def)
+    const legacy = def.name.replace(/^opencli_/, 'browser_')
+    if (legacy === def.name) return
+    // 泛型 S/O 只在调用方字面量处落地,函数体内拿不到具体 InferValue——别名 def 整体 as 收口。
+    // 运行时契约:本族工具 execute 恒返 { text, shot? },转发结果仅前置一行弃用提示,形状不变。
+    this.registerToolSafe({
+      ...def,
+      name: legacy,
+      description: `[已弃用] 请用 ${def.name}:${def.description}`,
+      execute: async (a: unknown, exec: unknown) => {
+        const r = (await def.execute(a as never, exec as never)) as unknown as { text: string }
+        return { ...r, text: `[已弃用] ${legacy} 已更名 ${def.name}(兼容层 2027-04 移除,请改用新名)\n${r.text}` }
+      },
+    } as unknown as DefineToolOptions<S, O>)
+  }
+
   /** SystemOne 决策层:key 从环境变量或 ~/.dsh/typesafe-key;provider 可换(laya 本地 ONNX 同接口)。 */
   private so: SystemOne = new SystemOne()
 
@@ -328,13 +389,18 @@ export class OpencliService extends TypertRemoteService {
         const next: string[] = []
         let cliOk = false
         let vraw = ''
+        let cliErr = ''
         try {
           const v = await this.runOpencli(['--version'], 15000)
           vraw = (v.stdout.trim() || v.stderr.trim()).split('\n')[0]?.trim() ?? ''
           cliOk = v.exitCode === 0 && vraw.length > 0
-        } catch { /* 走 ✗ 分支 */ }
-        lines.push(`${cliOk ? '✓' : '✗'} CLI:${cliOk ? vraw : `opencli 不可用(${this.bin})`}`)
-        if (!cliOk) next.push('安装 CLI:npm i -g @jackwener/opencli,然后 opencli daemon restart(或装 OpenCLIApp https://opencli.info/download)')
+          if (!cliOk) cliErr = v.stderr.slice(0, 200) || v.stdout.slice(0, 200)
+        } catch (e) { cliErr = (e instanceof Error ? e.message : String(e)).slice(0, 200) }
+        // 文案区分两种失败(与 status RPC 同源):找不到二进制 → 装;找到了但 --version 失败 → 查执行层
+        lines.push(`${cliOk ? '✓' : '✗'} CLI:${cliOk ? vraw : this.cliUnavailableText(cliErr)}`)
+        if (!cliOk) next.push(this.bin === 'opencli'
+          ? '安装 CLI:npm i -g @jackwener/opencli,然后 opencli daemon restart(或装 OpenCLIApp https://opencli.info/download)'
+          : 'CLI 已定位但 --version 失败:按上方详情排障;node 版本切换后路径悬空,可 npm i -g @jackwener/opencli 重装修复')
         if (cliOk) {
           const ds = await this.daemonStatus()
           const daemonRunning = ds?.running === true
@@ -457,15 +523,16 @@ export class OpencliService extends TypertRemoteService {
 
   private registerBrowserTools(): void {
     const run = async (session: string | undefined, argv: string[]): Promise<{ text: string; shot?: string }> => {
-      // 轨迹回放(BrowserSkill #79 同款需求):browser_* 全族与 replay/crawl 等 RPC 透传
+      // 轨迹回放(BrowserSkill #79 同款需求):opencli_* 全族与 replay/crawl 等 RPC 透传
       // 统一走 runBrowserTraced 单点,每步 trace 落盘;shot(若有)随结果带给卡片渲染
       const out = await this.runBrowserTraced(session, argv)
       return out.shot !== undefined ? { text: this.renderOut(out), shot: out.shot } : { text: this.renderOut(out) }
     }
     const s = '浏览器会话名(默认 dsh;bind 过的会话复用登录态)'
 
-    this.registerToolSafe({
-      name: 'browser_open',
+    // 命名空间迁移:browser_* → opencli_*,注册统一走 registerToolWithLegacyAlias(旧名弃用别名)
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_open',
       description: '在用户已登录的真实 Chrome 中打开 URL(daemon+扩展桥接,登录态天然可用)',
       parameters: {
         url: { type: 'string', description: '要打开的完整 URL' },
@@ -474,8 +541,8 @@ export class OpencliService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['open', String(a.url)]),
     })
-    this.registerToolSafe({
-      name: 'browser_state',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_state',
       description: '获取当前页状态快照:URL、标题、带 [N] 索引的交互元素清单——后续 click/type/fill 的 target 直接用 [N] 索引或文本',
       parameters: {
         session: { type: 'string', description: s },
@@ -484,9 +551,9 @@ export class OpencliService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['state', ...(a.source !== undefined ? ['--source', a.source] : [])]),
     })
-    this.registerToolSafe({
-      name: 'browser_click',
-      description: '点击元素。target 用 browser_state 里的 [N] 索引(如 "12")或可见文本/CSS',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_click',
+      description: '点击元素。target 用 opencli_state 里的 [N] 索引(如 "12")或可见文本/CSS',
       parameters: {
         target: { type: 'string', description: '[N] 索引 / 文本 / CSS 选择器' },
         session: { type: 'string', description: s },
@@ -494,8 +561,8 @@ export class OpencliService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['click', String(a.target)]),
     })
-    this.registerToolSafe({
-      name: 'browser_type',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_type',
       description: '点击元素并输入文本(适合搜索框等)',
       parameters: {
         target: { type: 'string', description: '[N] 索引 / 文本 / CSS' },
@@ -505,8 +572,8 @@ export class OpencliService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['type', String(a.target), String(a.text)]),
     })
-    this.registerToolSafe({
-      name: 'browser_fill',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_fill',
       description: '精确设置输入框内容并校验(不清除其他字段)',
       parameters: {
         target: { type: 'string', description: '[N] 索引 / 文本 / CSS' },
@@ -516,16 +583,16 @@ export class OpencliService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['fill', String(a.target), String(a.text)]),
     })
-    this.registerToolSafe({
-      name: 'browser_extract',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_extract',
       description: '把当前页正文提取为 Markdown(长页自动分段),适合读文章/帖子/文档',
       parameters: { session: { type: 'string', description: s } },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['extract']),
     })
-    this.registerToolSafe({
-      name: 'browser_screenshot',
-      description: '对当前页截图保存到本地路径(仅在确需视觉信息时使用,优先 browser_state/extract;长页/整页内容用 fullPage)',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_screenshot',
+      description: '对当前页截图保存到本地路径(仅在确需视觉信息时使用,优先 opencli_state/opencli_extract;长页/整页内容用 fullPage)',
       parameters: {
         path: { type: 'string', description: '保存路径(绝对路径)' },
         fullPage: { type: 'boolean', description: '截整个可滚动页面而非视口(上游 2.0 --full-page;1.x 忽略此参数)' },
@@ -534,8 +601,8 @@ export class OpencliService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['screenshot', ...(a.path !== undefined ? [a.path] : []), ...(a.fullPage === true ? ['--full-page'] : [])]),
     })
-    this.registerToolSafe({
-      name: 'browser_scroll',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_scroll',
       description: '滚动页面(up/down/left/right)',
       parameters: {
         direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: '滚动方向,默认 down' },
@@ -544,8 +611,8 @@ export class OpencliService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['scroll', a.direction ?? 'down']),
     })
-    this.registerToolSafe({
-      name: 'browser_wait',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_wait',
       description: '等待条件成立:selector(如 ".loaded") / text / time(秒) / xhr(如 "/api/search") / download(文件名)',
       parameters: {
         type: { type: 'string', enum: ['selector', 'text', 'time', 'xhr', 'download'], description: '等待类型' },
@@ -555,8 +622,8 @@ export class OpencliService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['wait', String(a.type), ...(a.value !== undefined ? [a.value] : [])]),
     })
-    this.registerToolSafe({
-      name: 'browser_do',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_do',
       description: `opencli browser 通用子命令透传(白名单:${[...BROWSER_DO_ALLOW].join(' ')})。常用:analyze(侦察站点反爬/API)、init(生成适配器脚手架)、verify(验证适配器)、tab/find/network/keys/select/hover 等`,
       parameters: {
         command: { type: 'string', description: `子命令,允许值:${[...BROWSER_DO_ALLOW].join('|')}` },
@@ -570,32 +637,34 @@ export class OpencliService extends TypertRemoteService {
         return run(a.session, [cmd, ...(a.args ?? [])])
       },
     })
-    this.registerToolSafe({
-      name: 'browser_close',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_close',
       description: '释放当前浏览器会话的 tab 租约（对应 opencli browser <session> close）',
       parameters: { session: { type: 'string', description: s } },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['close']),
     })
-    this.registerToolSafe({
-      name: 'browser_read',
-      description: '读当前页 URL/标题/正文（browser_extract 别名，适合公开网页快速读取）',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_read',
+      description: '读当前页 URL/标题/正文（opencli_extract 别名，适合公开网页快速读取）',
       parameters: { session: { type: 'string', description: s } },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => run(a.session, ['extract']),
     })
-    this.registerToolSafe({
-      name: 'browser_status',
-      description: '运行时状态：daemon/扩展/适配器数/限流与审批策略（先调它再选工具）',
-      parameters: { session: { type: 'string', description: s } },
+    // 命名空间迁移的合并点:browser_status 与原 opencli_status 的 execute 本就同源(都 dump
+    // this.status()),新名重名即合并为一个 opencli_status,旧 browser_status 由兼容层挂别名转发
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_status',
+      description: '运行时状态：daemon/扩展/适配器数/限流与审批策略；连接检查同源（原 browser_status 已并入，先调它再选工具）',
+      parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async () => {
         const st = await this.status()
         return { text: JSON.stringify(st, null, 2).slice(0, 4000) }
       },
     })
-    this.registerToolSafe({
-      name: 'browser_install',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_install',
       description: '环境自检：daemon/扩展/opencli 三件套缺谁补谁（daemon 未跑给 restart 命令，扩展未连给安装指引）',
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
@@ -603,16 +672,6 @@ export class OpencliService extends TypertRemoteService {
         const st = await this.status()
         if (st.ok && st.daemon?.running === true) return { text: '环境就绪：daemon 运行中，扩展已连接，无需安装。' }
         return { text: `环境缺失：${st.error ?? 'daemon 未运行'}。请先 npm i -g @jackwener/opencli，再 opencli daemon restart，并到 https://github.com/jackwener/opencli/releases 装 BrowserBridge 扩展。` }
-      },
-    })
-    this.registerToolSafe({
-      name: 'opencli_status',
-      description: 'OpenCLI 连接检查：实际跑 doctor，报告 daemon/extension/profile 连通性（不要只看开关，看这个）',
-      parameters: {},
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
-      execute: async () => {
-        const st = await this.status()
-        return { text: JSON.stringify(st, null, 2).slice(0, 4000) }
       },
     })
     this.registerToolSafe({
@@ -722,7 +781,7 @@ export class OpencliService extends TypertRemoteService {
         if (list === null) return { text: `目录不可用 | ${this.lastShellError ?? '未知'}` }
         const raw = (this.adapterCache as { json?: unknown } | null)?.json
         const k = buildKnowledge(site, Array.isArray(raw) ? raw as RawEntry[] : [])
-        if (k === null) return { text: `目录里没有 ${site}(用 opencli_catalog 确认拼写)。不在目录的通用需求直接用 browser_* 原语自由浏览` }
+        if (k === null) return { text: `目录里没有 ${site}(用 opencli_catalog 确认拼写)。不在目录的通用需求直接用 opencli_* 原语自由浏览` }
         return { text: renderKnowledgeMarkdown(k).slice(0, 6000) }
       },
     })
@@ -747,7 +806,7 @@ export class OpencliService extends TypertRemoteService {
     })
     this.registerToolSafe({
       name: 'opencli_run',
-      description: '通用 OpenCLI argv 网关（站点命令经写审批门:write/未知权限弹审批,只读放行;浏览器/系统子命令按 browser_* 同款边界;常规搜索优先 site 直调）',
+      description: '通用 OpenCLI argv 网关（站点命令经写审批门:write/未知权限弹审批,只读放行;浏览器/系统子命令按 opencli_* 同款边界;常规搜索优先 site 直调）',
       parameters: {
         args: { type: 'array', items: { type: 'string' }, description: 'argv 数组（如 ["reddit","search","DeepSeek Harness"]），不拼 shell' },
       },
@@ -765,7 +824,7 @@ export class OpencliService extends TypertRemoteService {
 
   /**
    * opencli 2.0 `browser chrome call <method> <args>` 免页面会话桥:原生 Chrome ID 管理标签/分组/窗口,
-   * 不占 tab 租约、不建 browser session,与 browser_*(页面会话原语)互补。刻意不走 runBrowserTraced——
+   * 不占 tab 租约、不建 browser session,与 opencli_*(页面会话原语)互补。刻意不走 runBrowserTraced——
    * 那会强加 --session 并触发步骤补拍,chrome 通道两者都不该有;轨迹仍进「运行轨迹」,
    * 故单点 runChromeCall 手写 runOpencli + recordTrace(cmd 以 chrome 前缀区分 browser 步骤)。
    */
@@ -780,7 +839,7 @@ export class OpencliService extends TypertRemoteService {
       description: '原生 Chrome 标签管理(免页面会话,opencli 2.0):tabs.query 列出标签拿 tabId / tabs.create 新建 / tabs.remove 关闭 / tabs.update 激活选中;get/duplicate/move/group/ungroup 亦可。args 为该方法位置参数的 JSON 数组字符串,如 tabs.update 传 [123, {"active": true}]',
       parameters: {
         // 不用 enum:dsh-tools 会在 wrapper 层校验拦截,模型只能看到通用报错;走 execute 内
-        // 白名单才能给出"改用 chrome_raw"的确切指引(browser_do 同款约定)
+        // 白名单才能给出"改用 chrome_raw"的确切指引(opencli_do 同款约定)
         method: { type: 'string', description: `tabs.* 管理方法,允许值:${tabsAllow.join('|')}(列出=tabs.query / 新建=tabs.create / 关闭=tabs.remove / 选中激活=tabs.update)` },
         args: { type: 'string', description: '位置参数 JSON 数组字符串,缺省 []' },
       },
@@ -948,8 +1007,8 @@ export class OpencliService extends TypertRemoteService {
         return out(r.ok ? '执行成功' : (r.error ?? '失败'))
       },
     })
-    this.registerToolSafe({
-      name: 'browser_crawl',
+    this.registerToolWithLegacyAlias({
+      name: 'opencli_crawl',
       description: '有限广度遍历（同源默认，maxPages 20 / maxDepth 2 硬限，usagePolicy 限流）',
       parameters: {
         url: { type: 'string', description: '起始 URL' },
@@ -967,6 +1026,69 @@ export class OpencliService extends TypertRemoteService {
       parameters: {},
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async () => out(await this.renderTraceTimeline(30)),
+    })
+  }
+
+  // ── canvas VOM 工具族(任务 N):eval 桥────────────────────
+  // 前提(DESIGN-canvas-vom.md §1.1 实测):上游 browser 交互族 selector-first、无坐标
+  // 参数,canvas 位图内部无 DOM/AX 目标——唯一能触及 canvas 数据面的通道是 browser eval。
+  // 这里把 src/vom.ts 编译出的页面 JS 经 runBrowserTraced 单点下发(eval 子命令自动进
+  // 「运行轨迹」,与 opencli_* 全族同一复盘链路)。审批归类按同文档 §3:坐标点击在登录态
+  // 页面产生真实副作用,按写原语走审批门(registerApprovalGate 的 canvas_click 分支);
+  // discover/read 只读自动放行——生成物是本插件固定的探测脚本,不是任意代码。
+
+  /** canvas VOM 三件套:发现(discover)→ 读像素(read)→ 坐标点击(click,需审批)。 */
+  private registerVomTools(): void {
+    const s = '浏览器会话名(默认 dsh;bind 过的会话复用登录态)'
+    this.registerToolSafe({
+      name: 'canvas_discover',
+      description: '发现当前页所有 canvas 元素(eval 桥,只读):返回每块画布的索引/视口坐标(x,y)/尺寸(w,h)/id。HTML5 游戏/图表/画板类页面定位画布入口先调它,结果里的 index 给 canvas_read 用,坐标给 canvas_click 用',
+      parameters: { session: { type: 'string', description: s } },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: ToolArgs) => {
+        const out = await this.runBrowserTraced(a.session, ['eval', buildCanvasDiscoveryJs()])
+        return { text: this.renderOut(out) }
+      },
+    })
+    this.registerToolSafe({
+      name: 'canvas_read',
+      description: '读取指定 canvas 内容为 PNG base64(eval 桥 toDataURL,只读):index 用 canvas_discover 返回的索引(默认 0)。注意:大画布的 base64 会被输出上限截断(完整图请配 opencli_screenshot);跨域污染的画布会报 SecurityError。w/h 是画布缓冲分辨率,非显示尺寸',
+      parameters: {
+        index: { type: 'string', description: 'canvas 索引(canvas_discover 返回的 index,默认 0)' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: { index?: unknown; session?: unknown }): Promise<{ text: string }> => {
+        const idx = Math.floor(Number(a.index ?? '0'))
+        // 本地先校验再发往返:脏索引在插件层就挡下,不浪费一次注定失败的 eval 调用
+        if (!Number.isFinite(idx) || idx < 0) return { text: `index 非法:${String(a.index ?? '')}(应为 canvas_discover 返回的非负索引)` }
+        const out = await this.runBrowserTraced(
+          typeof a.session === 'string' && a.session.length > 0 ? a.session : undefined,
+          ['eval', buildCanvasReadJs(idx)],
+        )
+        return { text: this.renderOut(out) }
+      },
+    })
+    this.registerToolSafe({
+      name: 'canvas_click',
+      description: `坐标点击(eval 桥,写原语,每次执行需人工审批):在视口坐标 (x,y) 对 elementFromPoint 命中的元素合成 click——canvas 内部无 DOM 目标时的点选通路,坐标来自 canvas_discover 或截图目测。${CANVAS_CLICK_UNTRUSTED_NOTE}。页面滚动后旧坐标失效,先重新 discover`,
+      parameters: {
+        x: { type: 'string', description: '视口横坐标(px)' },
+        y: { type: 'string', description: '视口纵坐标(px)' },
+        session: { type: 'string', description: s },
+      },
+      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      execute: async (a: { x?: unknown; y?: unknown; session?: unknown }): Promise<{ text: string }> => {
+        const x = Number(a.x)
+        const y = Number(a.y)
+        // 本地校验同 canvas_read:脏坐标不下发注定点错的代码
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return { text: `坐标非法:x=${String(a.x ?? '')} y=${String(a.y ?? '')}(应为数字,px)` }
+        const out = await this.runBrowserTraced(
+          typeof a.session === 'string' && a.session.length > 0 ? a.session : undefined,
+          ['eval', buildCoordClickJs(x, y)],
+        )
+        return { text: this.renderOut(out) }
+      },
     })
   }
 
@@ -1127,26 +1249,26 @@ export class OpencliService extends TypertRemoteService {
   private async updateDirectory(): Promise<void> {
     const list = await this.adapterList()
     if (list === null) {
-      this.directoryText = '浏览器代理(dsh-opencli):未检测到可用的 opencli(browser_*/site 工具会失败)。请用户在设置→浏览器代理 运行诊断,或安装 OpenCLI(OpenCLIApp / npm i -g @jackwener/opencli)。'
+      this.directoryText = '浏览器代理(dsh-opencli):未检测到可用的 opencli(opencli_*/site 工具会失败)。请用户在设置→浏览器代理 运行诊断,或安装 OpenCLI(OpenCLIApp / npm i -g @jackwener/opencli)。'
       return
     }
     const active = list.filter((a) => !this.state.disabled.includes(a.name))
     const daemon = await this.daemonStatus()
     const state = daemon !== null && daemon.running
       ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
-      : 'daemon 未运行——browser_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
+      : 'daemon 未运行——opencli_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
     const gate = this.state.approval === 'on' ? 'site 的 write 命令会先请求用户审批。' : '审批门已关闭(write 命令直接执行)。'
     // 无扩展的诚实可用面(设计 §2.2-3):目录是模型可见的动态能力声明——工具 description 是一次性
     // 注册的静态文案改不了,动态能力只能走目录文本与错误文案两个通道。判据与 doctor 同源
     // (daemon 未运行/扩展非正向连接都算无扩展),与 ④⑤ 短路的"显式未连"刻意不同档(那是动作门,这是声明)
     const extLine = (daemon?.extension ?? '').trim()
     const extOk = daemon !== null && daemon.running === true && (/^connected/.test(extLine) || /profiles connected/.test(extLine))
-    const zeroCfg = extOk ? '' : `\n当前无扩展:site 的纯 HTTP 只读命令(如 juejin hot / hackernews best)可直接跑;需浏览器的只读命令暂不可降级执行(CDP 匿名通道默认关闭,评估中);browser_*/chrome_* 与登录态(COOKIE)命令不可用。装扩展后全部恢复:https://github.com/jackwener/OpenCLI/releases`
+    const zeroCfg = extOk ? '' : `\n当前无扩展:site 的纯 HTTP 只读命令(如 juejin hot / hackernews best)可直接跑;需浏览器的只读命令暂不可降级执行(CDP 匿名通道默认关闭,评估中);opencli_*/chrome_* 与登录态(COOKIE)命令不可用。装扩展后全部恢复:https://github.com/jackwener/OpenCLI/releases`
     this.directoryText = `浏览器代理(dsh-opencli):你在 Chrome 里登录的网站,dsh 都能用。170+ 站点适配器(知乎/B站/微博/arxiv/github/...),用 site <适配器> <命令>。
 
 按用户原话选:
 - "知乎热榜前10" / "B站搜热榜" / "微博热搜"   → site zhihu hot / site bilibili search
-- "打开这个网页"     → browser_open url → browser_state(拿 [N] 索引)
+- "打开这个网页"     → opencli_open url → opencli_state(拿 [N] 索引)
 - "GitHub 找 X" / "arxiv 找 agent"  → site github search X / site arxiv search agent
 - "在微博发..."     → site weibo post...(写命令会弹审批,用户点允许才发)
 - "录一段:抓 arxiv 每天 AI 论文"   → 引导用户点"开始录" → 真实 Chrome 操作
@@ -1168,7 +1290,7 @@ export class OpencliService extends TypertRemoteService {
     if (version.exitCode !== 0) {
       return {
         ok: false, bin: null, version: null, daemon: null, adapterSites: null,
-        error: `opencli 不可用(${this.bin}):${version.stderr.slice(0, 300) || version.stdout.slice(0, 300)}`,
+        error: this.cliUnavailableText(version.stderr.slice(0, 300) || version.stdout.slice(0, 300)),
         ...(this.toolConflicts.length > 0 ? { conflicts: [...this.toolConflicts] } : {}),
       }
     }
@@ -1530,8 +1652,8 @@ export class OpencliService extends TypertRemoteService {
    * - connected(false=宽档"非正向连接"):daemon 未运行/字段缺失/显式未连都算——给 ②③ 的 site 路由用,
    *   降级是加路不是拆路,判宽些只影响"要不要尝试匿名通道",不会拦掉任何现状路径;
    * - explicitDown(仅显式未连):daemon 明确报告扩展未连(2.0 extensionConnected:false → 归一
-   *   'not connected';1.x `Extension: not*`)——给 ④⑤ 的 browser_* 与 chrome_* 短路用。
-   *   只认显式否定:daemon 运行但不上报 Extension 字段的旧形态下 browser_* 仍可能工作,
+   *   'not connected';1.x `Extension: not*`)——给 ④⑤ 的 opencli_* 与 chrome_* 短路用。
+   *   只认显式否定:daemon 运行但不上报 Extension 字段的旧形态下 opencli_* 仍可能工作,
    *   缺字段≠否定,短路会把还能跑的路径一刀切死,不做。
    * null=探测失败(状态未知):一切按现状路径,不降级也不短路。
    */
@@ -1665,9 +1787,32 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, history: this.runHistory[id] ?? [], ...(snapshots !== undefined ? { snapshots } : {}) }
   }
 
-  /** 报告导出:定时任务的近期快照 → 带出处 markdown(每节=一次运行,出处=命令+时间+快照路径)。 */
+  /**
+   * 通知通道配置读写(任务 E,面板「自动化」页后续接):不带 channels=读当前配置;
+   * 带 channels=白名单归一后写盘。归一用 notify.ts 口径(未知 type/非字符串字段整条
+   * 丢弃),但 channels 本身不是数组直接拒绝而不是清空——手滑的 POST 不许把用户已配好
+   * 的通道抹掉。写盘走 saveNotifyConfig(失败往外抛,与 saveState 尽力而为不同口径:
+   * 配置是用户显式动作,存不上必须让面板知道),同时回填 this.state——否则下一次
+   * saveState 整文件重写会丢掉 notifyConfig 键(见 PluginState.notifyConfig 注释)。
+   */
+  @Remote('notify-config')
+  async notifyConfig(request?: { channels?: unknown }): Promise<{ ok: boolean; config?: NotifyConfig; error?: string }> {
+    // 网关对空 args 会传 undefined(真机复现,schedule-history 同款):request 可选链
+    if (request === undefined || request.channels === undefined) {
+      return { ok: true, config: this.state.notifyConfig ?? { channels: [] } }
+    }
+    if (!Array.isArray(request.channels)) return { ok: false, error: 'channels 需为数组(通道条目列表)' }
+    const config = normalizeNotifyConfig(request)
+    this.state.notifyConfig = config
+    // 评审 MEDIUM:此前 saveNotifyConfig 独立读-改-写 state.json,与 saveState 的全量重写竞态。
+    // 改为:先回填 this.state(上面的赋值),再走 saveState()统一写——单一写者,零竞态
+    await this.saveState()
+    return { ok: true, config }
+  }
+
+  /** 报告导出:定时任务的近期快照 → 带出处 markdown(每节=一次运行,出处=命令+时间+快照路径)。summary=true 出摘要版(≤500 字,任务 E)。 */
   @Remote('report-build')
-  async reportBuild(request?: { id: string }): Promise<{ ok: boolean; path?: string; error?: string }> {
+  async reportBuild(request?: { id: string; summary?: boolean }): Promise<{ ok: boolean; path?: string; error?: string }> {
     const id = String(request?.id ?? '')
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     const sch = this.schedules.find((s) => s.id === id)
@@ -1689,7 +1834,7 @@ export class OpencliService extends TypertRemoteService {
       } catch { /* 单份损坏跳过 */ }
     }
     if (sources.length === 0) return { ok: false, error: '快照全部损坏' }
-    const md = buildReport(`定时采集报告 · ${sch?.site ?? id}`, sources, new Date().toISOString())
+    const md = buildReport(`定时采集报告 · ${sch?.site ?? id}`, sources, new Date().toISOString(), { summary: request?.summary === true })
     const rdir = process.env.DSH_OPENCLI_REPORTS_DIR ?? join(homedir(), '.dsh', 'opencli-reports')
     await mkdir(rdir, { recursive: true })
     const path = join(rdir, `sched-${id}-${Date.now()}.md`)
@@ -1889,7 +2034,7 @@ export class OpencliService extends TypertRemoteService {
   async replay(request: { step: string }): Promise<{ ok: boolean; error?: string }> {
     const step = typeof request.step === 'string' ? request.step.trim() : ''
     if (step.length === 0) return { ok: false, error: 'step 为空' }
-    // MVP：仅回显步骤，真实回放走 site/browser_* 透传（与 client 的 localStorage 录制互补）
+    // MVP：仅回显步骤，真实回放走 site/opencli_* 透传（与 client 的 localStorage 录制互补）
     const [head, ...rest] = step.split(' ')
     if (head === 'site' && rest.length >= 2) {
       const [adapter, command, ...args] = rest
@@ -1898,8 +2043,11 @@ export class OpencliService extends TypertRemoteService {
         return { ok: out.exitCode === 0, error: out.exitCode !== 0 ? this.renderOut(out) : undefined }
       }
     }
-    if (head.startsWith('browser_')) {
-      const out = await this.runBrowserTraced('dsh', [head.replace('browser_', ''), ...rest])
+    // 命名空间迁移(2026-10):步骤头 opencli_* 是正主;browser_* 旧头继续收——localStorage
+    // 里的历史录制不会随迁移改写,旧步骤必须仍然可回放
+    const ns = head.startsWith('opencli_') ? 'opencli_' : head.startsWith('browser_') ? 'browser_' : null
+    if (ns !== null) {
+      const out = await this.runBrowserTraced('dsh', [head.slice(ns.length), ...rest])
       return { ok: out.exitCode === 0, error: out.exitCode !== 0 ? this.renderOut(out) : undefined }
     }
     return { ok: false, error: `未知步骤:${step}` }
@@ -1928,7 +2076,7 @@ export class OpencliService extends TypertRemoteService {
     const url = String(request.url ?? '').trim()
     if (url.length === 0) return { ok: false, error: 'url 为空' }
     const maxPages = Math.min(Number(request.maxPages ?? 20), this.usagePolicy.maxPagesPerRun ?? 20)
-    // MVP：单页提取，真实广度遍历后续接 browser_crawl(经 runBrowserTraced 落轨迹)
+    // MVP：单页提取，真实广度遍历后续接 opencli_crawl(经 runBrowserTraced 落轨迹)
     const out = await this.runBrowserTraced('dsh', ['open', url])
     if (out.exitCode !== 0) return { ok: false, error: this.renderOut(out) }
     return { ok: true }
@@ -1957,7 +2105,7 @@ export class OpencliService extends TypertRemoteService {
     for (const s of steps) {
       const t = String((s as Record<string,unknown>).type ?? '')
       if (!['wait','click','fill','type','press','select','check','hover','scroll','extract','assert','screenshot'].includes(t)) return { ok: false, error: `未知步骤:${t}` }
-      // MVP：逐条透传为 browser_*（抽取/点击等）
+      // MVP：逐条透传为 opencli_*（抽取/点击等）
       const sel = (s as Record<string,unknown>).selector !== undefined ? String((s as Record<string,unknown>).selector) : undefined
       const val = (s as Record<string,unknown>).value !== undefined ? String((s as Record<string,unknown>).value) : undefined
       const argv = [t, ...(sel !== undefined ? [sel] : []), ...(val !== undefined ? [val] : [])]
@@ -2064,10 +2212,18 @@ export class OpencliService extends TypertRemoteService {
         if (this.automationMode === 'unrestricted') return await next()
         // 通用 argv 网关的写审批(安全审查 HIGH:描述宣称走审批,实际 execute 直通,
         // `opencli_run {args:["weibo","publish"]}` 可绕门直执行写命令):站点形态两段 argv
-        // 按目录查权限,write/未知一律 ask(fail-closed);浏览器/系统命名空间按 browser_* 同款边界放行
+        // 按目录查权限,write/未知一律 ask(fail-closed);浏览器/系统命名空间按 opencli_* 同款边界放行
         if (exec.name === 'opencli_run') {
           const arr = Array.isArray(((exec.arguments ?? {}) as { args?: unknown }).args) ? (((exec.arguments ?? {}) as { args?: unknown }).args as unknown[]).map(String) : []
           const [a0, a1] = arr
+          // 评审 HIGH(第三入口):opencli_run {args:["browser","eval",...]} 经 RESERVED_NAMESPACES 跳过站点检查
+          // → eval 规则只匹配 opencli_do/browser_do 工具名 → approvalDecision 对非 site 恒 allow = 零审批执行任意 JS。
+          // 修法:browser 命名空间下遇 eval 子命令同样 ask(eval=写原语,不因入口不同而降级)
+          if (a0 === 'browser' && a1 === 'eval') {
+            const reason = 'opencli_run browser eval 在登录态页面执行任意 JavaScript,等价于写原语,需人工确认。'
+            this.recordAudit('opencli_run browser eval', reason)
+            return { kind: 'ask', reason }
+          }
           if (a0 !== undefined && a1 !== undefined && !RESERVED_NAMESPACES.has(a0) && a0 !== 'list' && a0 !== 'help' && !a0.startsWith('--')) {
             const acc = await this.lookupAccess(a0, a1)
             if (acc !== 'read') {
@@ -2077,11 +2233,12 @@ export class OpencliService extends TypertRemoteService {
             }
           }
         }
-        // browser_do eval 在登录态页面执行任意 JS,等价写原语——与 userscript-run 的门对齐,
-        // 不再裸放(安全审查 MEDIUM:同能力双标)
-        if (exec.name === 'browser_do' && String(((exec.arguments ?? {}) as { command?: unknown }).command ?? '') === 'eval') {
-          const reason = 'browser_do eval 在登录态页面执行任意 JavaScript,等价于写原语(可发帖/点赞/改数据),需人工确认。'
-          this.recordAudit('browser_do eval', reason)
+        // opencli_do eval 在登录态页面执行任意 JS,等价写原语——与 userscript-run 的门对齐,
+        // 不再裸放(安全审查 MEDIUM:同能力双标)。新旧两名都拦:兼容层的转发发生在 execute 层,
+        // pre-execute 只见原始工具名,旧名 browser_do 不设防就是 eval 的绕门通道
+        if ((exec.name === 'opencli_do' || exec.name === 'browser_do') && String(((exec.arguments ?? {}) as { command?: unknown }).command ?? '') === 'eval') {
+          const reason = `${exec.name} eval 在登录态页面执行任意 JavaScript,等价于写原语(可发帖/点赞/改数据),需人工确认。`
+          this.recordAudit(`${exec.name} eval`, reason)
           return { kind: 'ask', reason }
         }
         // chrome_raw 是高危逃生口:无条件走人工审批,兑现描述里"人工确认"的承诺
@@ -2090,6 +2247,17 @@ export class OpencliService extends TypertRemoteService {
           const m = String(((exec.arguments ?? {}) as { method?: unknown }).method ?? '?')
           const reason = `chrome_raw ${m} 直调 Chrome 原生 API——可能改动真实浏览器的窗口/标签布局,需人工确认。`
           this.recordAudit(`chrome_raw ${m}`, reason)
+          return { kind: 'ask', reason }
+        }
+        // canvas_click 坐标点击按写原语审批(DESIGN-canvas-vom.md §3 审批归类:在用户
+        // 登录态浏览器里产生真实副作用);且点击目标由坐标在页面运行时动态命中,不像
+        // selector 目标那样可静态审计——与 opencli_do eval 同款门,不裸放
+        if (exec.name === 'canvas_click') {
+          const c = (exec.arguments ?? {}) as { x?: unknown; y?: unknown }
+          const cx = String(c.x ?? '?')
+          const cy = String(c.y ?? '?')
+          const reason = `canvas_click (${cx},${cy}) 坐标点击会在登录态页面真实执行(等价写原语,目标不可静态审计),需人工确认。`
+          this.recordAudit(`canvas_click ${cx} ${cy}`, reason)
           return { kind: 'ask', reason }
         }
         const a = (exec.arguments ?? {}) as { adapter?: unknown; command?: unknown }
@@ -2388,16 +2556,34 @@ export class OpencliService extends TypertRemoteService {
     return { ...out, exitCode: typeof e.exitCode === 'number' ? e.exitCode : 1, stdout: '', stderr: parts.join('\n') }
   }
 
-  /** CLI 大版本(1/2),进程内缓存。决定 browser 会话语法与 adapter 命令族路由。 */
+  /** CLI 大版本(1/2),仅成功探测才缓存。决定 browser 会话语法与 adapter 命令族路由。 */
   private cliMajorCache: number | null = null
   private async cliMajor(): Promise<number> {
     if (this.cliMajorCache !== null) return this.cliMajorCache
+    // 探测失败(抛错/非零退出/认不出版本号)只回落默认 1,绝不落缓存(仓库 #1 issue:
+    // daemon 冷启动或二进制一时不可用时失败值被永久缓存,此后 2.x 宿主的站目录与
+    // 命令族路由恒按 1.x 判且无法自愈)。保持 null 让下次调用重试,环境恢复即拿到真实大版本。
+    // 探测走 runOpencliUngoverned:--version 是本机探针不是站点命令,不吃 750ms 级礼貌限流
+    // (与 extensionState 的 daemon status 探测同款约定)——否则失败不缓存后每次 cliMajor 都
+    // 多付一跳限流间隔,写命令证据链(前后各一次 captureEvidenceShot)把它翻倍,实测把
+    // cards.test.ts 的 site execute 端到端用例拖过 5s 超时。
     try {
-      const r = await this.runOpencliRaw(['--version'], 15000)
-      const m = `${r.stdout}\n${r.stderr}`.match(/(\d+)\.\d+/)
-      this.cliMajorCache = m ? Number(m[1]) : 1
-    } catch { this.cliMajorCache = 1 }
-    return this.cliMajorCache
+      const r = await this.runOpencliUngoverned(['--version'], 15000)
+      const m = r.exitCode === 0 ? `${r.stdout}\n${r.stderr}`.match(/(\d+)\.\d+/) : null
+      if (m !== null) this.cliMajorCache = Number(m[1])
+    } catch { /* 探测失败同样不缓存,下次调用重试 */ }
+    return this.cliMajorCache ?? 1
+  }
+
+  /** CLI 不可用文案(#1 issue):区分「找不到二进制」(resolveBin 各路径未命中、回落裸名
+   *  仍失败)与「找到了但 --version 失败」(bin 已定位到具体路径,是执行层问题)——两种
+   *  结局的下一步动作不同(装 CLI vs 查执行环境),混写一句会误导排障:mise/版本管理器
+   *  用户被指去 npm i -g,装完照样失败,真实原因是路径悬空或 daemon 残留。 */
+  private cliUnavailableText(detail: string): string {
+    const d = detail.trim().length > 0 ? ` | 详情:${detail.trim()}` : ''
+    return this.bin === 'opencli'
+      ? `未找到 opencli 二进制:本地依赖/npm 全局/nvm/vfox/mise 探测与 PATH 裸名均失败。安装:npm i -g @jackwener/opencli${d}`
+      : `opencli 已定位(${this.bin})但 --version 执行失败,不是"未安装"——常见:node 版本切换后路径悬空/daemon 残留${d}`
   }
 
   private async runOpencliRaw(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576, env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
@@ -2517,13 +2703,13 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * browser 透传统一入口:runOpencli + recordTrace。browser_* 工具族(registerBrowserTools 的 run())
+   * browser 透传统一入口:runOpencli + recordTrace。opencli_* 工具族(registerBrowserTools 的 run())
    * 与 replay / script-run-builtin / crawl / userscript-run / recipe-run 五个 RPC 透传都经此——
    * 任何入口执行的 browser 命令都进「运行轨迹」,复盘链路不断(评审:面板回放按钮曾绕过单点)。
    */
   private async runBrowserTraced(session: string | undefined, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string; shot?: string }> {
     const started = Date.now()
-    // ④ 无扩展短路(设计 §3-④):browser_* 是 CLI→daemon→扩展硬链路(上游 daemon.js 头注释,
+    // ④ 无扩展短路(设计 §3-④):opencli_* 是 CLI→daemon→扩展硬链路(上游 daemon.js 头注释,
     // 无 CDP 分支),daemon 明确报告扩展未连时注定失败——把注定失败的往返(默认 60s 超时)换成
     // 一次性"缺什么/装什么/装完会怎样"。只认显式未连(extensionState.explicitDown):
     // daemon 运行但不上报 Extension 字段的旧形态仍按现状放行,缺字段≠否定
@@ -2552,7 +2738,7 @@ export class OpencliService extends TypertRemoteService {
     // 内部补拍走 runOpencli 直连,不经 runBrowserTraced——否则会自递归且把补拍当成用户步骤污染轨迹
     const shot = await this.captureStepShot(session, argv, out, major)
     this.recordTrace(`browser ${session ?? 'dsh'} ${argv.join(' ')}`, out, Date.now() - started, shot)
-    // shot 随结果带出(独立评审发现:此前只进 trace 不进工具结果,browser_do 卡的
+    // shot 随结果带出(独立评审发现:此前只进 trace 不进工具结果,opencli_do 卡的
     // (shot: 文件名) 提示是死路径)——undefined 不落字段,老消费者零影响
     return shot !== undefined ? { ...out, shot } : out
   }
@@ -2648,7 +2834,7 @@ export class OpencliService extends TypertRemoteService {
   /** trace_replay 的 markdown 时间线(新→旧):时间/命令/exit/耗时,失败步附输出摘录。 */
   private async renderTraceTimeline(limit: number): Promise<string> {
     const r = await this.traceList({ limit })
-    if (!r.ok || r.traces.length === 0) return '暂无运行轨迹(还没有 browser 命令执行记录)。跑一条 browser_* 后再来看。'
+    if (!r.ok || r.traces.length === 0) return '暂无运行轨迹(还没有 browser 命令执行记录)。跑一条 opencli_* 后再来看。'
     // 单元格净化:换行折为可见 \n 标记(userscript eval 等多行 cmd 会把表格行拆断),
     // 空白折叠为单格,竖线转义;命令不再用反引号包裹——载荷内嵌 ` 也不会截断 code span。
     const esc = (s: string): string => s.replace(/\r?\n/g, '\\n').replace(/\s+/g, ' ').replace(/\|/g, '\\|')
@@ -2686,6 +2872,9 @@ export class OpencliService extends TypertRemoteService {
         if (k.includes(':')) delete this.runHistory[k]
       }
       if (Array.isArray(parsed.audit)) this.state.audit = parsed.audit.filter((a) => a !== null && typeof a === 'object' && typeof (a as { at?: unknown }).at === 'string')
+      // notifyConfig 走 notify.ts 白名单归一:state.json 是用户可手改的文件,坏条目
+      // 丢弃而不是抛错(与 schedules/audit 同款容错口径,通知是旁路不能废加载)
+      this.state.notifyConfig = normalizeNotifyConfig(parsed.notifyConfig)
     } catch { /* 无文件或损坏:用默认值 */ }
   }
 
@@ -2816,14 +3005,16 @@ export class OpencliService extends TypertRemoteService {
         if (olds.length > 50) for (const f of olds.slice(0, olds.length - 50)) { try { unlinkSync(join(dir, f)) } catch { /* ignore */ } }
       } catch { /* 快照失败不阻断主流程 */ }
     }
-    // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)
+    // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)。
+    // 命中词带出到下方 dispatchScheduleNotify:面板时间线与外部通知通道同一份命中事实
+    let watchHits: string[] = []
     if (lastOk && sch?.watch !== undefined && sch.watch.length > 0) {
       const kws = sch.watch.split(/[,，\s]+/).filter((k) => k.length > 0)
       // 大小写不敏感(真机走查发现 A:'agent,diffusion' 撞 'Agentic/Diffusion' 全 miss)
       const low = lastOut.toLowerCase()
-      const matched = kws.filter((k) => low.includes(k.toLowerCase()))
-      if (matched.length > 0) {
-        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'watch-hit', text: `🔔 Watch 命中:${siteCmd} 出现 [${matched.join(', ')}]` })
+      watchHits = kws.filter((k) => low.includes(k.toLowerCase()))
+      if (watchHits.length > 0) {
+        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'watch-hit', text: `🔔 Watch 命中:${siteCmd} 出现 [${watchHits.join(', ')}]` })
         this.ingestEventList = this.ingestEventList.slice(0, 30)
       }
     }
@@ -2832,6 +3023,40 @@ export class OpencliService extends TypertRemoteService {
       this.ingestEventList = this.ingestEventList.slice(0, 30)
     }
     await this.saveState()
+    // 任务 E:结果外送通知——重试链走完、状态落盘后一次群发。放在 saveState 之后:
+    // 通知发送(webhook/email 各有 10s 收端超时)不挡状态持久化;await 保证测试可确定性断言。
+    // 评审 MEDIUM:sch.notify===false 时任务级关闸(面板"通知 关"徽章与实际行为一致);
+    // 成功且无 watch 命中只发"安静成功"通道配置里标记了 wantRoutine=true 的(默认不发例行)
+    if (sch?.notify !== false) {
+      await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits)
+    }
+  }
+
+  /** dsh 面板通知通道的事件入口:与调度失败/watch 命中共用同一条 ingest 时间线(最近 30 条)。 */
+  private emitNotifyEvent(ev: IngestEvent): void {
+    this.ingestEventList.unshift(ev)
+    this.ingestEventList = this.ingestEventList.slice(0, 30)
+  }
+
+  /**
+   * 定时结果外送(notify.ts 通道层的接线点):notifyConfig 有启用通道才发;标题/正文由
+   * buildNotifyBody 统一组装(本机路径/凭据的出口清洗在那边内置,这里没有"忘了洗"的口子)。
+   * watch 命中的正文加「🔔 Watch 命中」前缀行——收端(群机器人/邮箱)免读全文即可分拣
+   * 例行结果与关键词命中。sendViaChannels 并发群发且单通道失败不抛;这里再兜一层:
+   * 装配阶段的意外(坏配置形状等)也绝不反噬调度主链,通知永远是旁路。
+   */
+  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[]): Promise<void> {
+    try {
+      const config = this.state.notifyConfig
+      if (config === undefined) return
+      const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
+      if (channels.length === 0) return
+      const { title, body } = buildNotifyBody(
+        { site: siteCmd, ...(watch !== undefined && watch.length > 0 ? { watch } : {}) },
+        { ok, ...(summary.length > 0 ? { summary } : {}), ...(watchHits.length > 0 ? { watchHits } : {}) },
+      )
+      await sendViaChannels(channels, title, watchHits.length > 0 ? `🔔 Watch 命中\n${body}` : body)
+    } catch { /* 通知旁路:全静默降级 */ }
   }
 
   /** 简单并发池(登录巡检限流用)。 */
@@ -2853,6 +3078,12 @@ export class OpencliService extends TypertRemoteService {
     if (this.adapterCache !== null && Date.now() - this.adapterCache.at < ADAPTER_TTL_MS) {
       return normalizeAdapterList(this.adapterCache.json)
     }
+    // 写入守卫的基准时刻:本探测开跑后若有并发写(面板 refresh 期间的另一路结果、
+    // 测试对 adapterCache 的直改),完成时不得盲写覆盖——init 期 fire-and-forget 的
+    // updateDirectory 探测在途窗口原本 ~800ms(cliMajor 吃限流),探测改走不限流
+    // 本机通道后缩到 ~10ms,该窗口与并发写从"必不撞"变"常撞",在途的旧探测结果
+    // (常为空目录)会吃掉更新条目,在此收口。
+    const probeStart = Date.now()
     // 2.0:JSON 信封 + 分页(上限 100/页)——翻页取全;1.x:单次平铺数组
     const major = await this.cliMajor()
     if (major >= 2) {
@@ -2884,7 +3115,13 @@ export class OpencliService extends TypertRemoteService {
         this.lastShellError = 'list(2.0)|翻页后 0 命令'
         return null
       }
-      this.adapterCache = { at: Date.now(), json: collected }
+      // 探测期间出现更新条目则让位(见方法头 probeStart 注释);比较取严格小于——
+      // probeStart→并发写常是微任务级间隔,落在同一毫秒内是常态(Windows 时钟粒度 ~15ms),
+      // at==probeStart 的条目必是刚写入的新鲜值,让位而非覆盖(实测:等号让在途探测吃掉
+      // mcp-resources 的 mockCache,~1/12 概率 3 用例红)
+      if (this.adapterCache === null || this.adapterCache.at < probeStart) {
+        this.adapterCache = { at: Date.now(), json: collected }
+      }
       return normalizeAdapterList(collected)
     }
     const r = await this.runOpencliRaw(['list', '--format', 'json'], 30000, 8 * 1024 * 1024)
@@ -2897,7 +3134,10 @@ export class OpencliService extends TypertRemoteService {
       // opencli 可能把"Update available"横幅等杂物混进输出,从首个 [ 或 { 起截取
       const start = Math.min(...['[', '{'].map((c) => { const i = r.stdout.indexOf(c); return i === -1 ? Infinity : i }))
       const json: unknown = JSON.parse(Number.isFinite(start) ? r.stdout.slice(start) : r.stdout)
-      this.adapterCache = { at: Date.now(), json }
+      // 探测期间出现更新条目则让位,严格小于(同毫秒让位,理由见 2.0 路径同款注释)
+      if (this.adapterCache === null || this.adapterCache.at < probeStart) {
+        this.adapterCache = { at: Date.now(), json }
+      }
       return normalizeAdapterList(json)
     } catch (e) {
       this.lastShellError = `json(${e instanceof Error ? e.message.slice(0, 120) : 'parse'})|head:${r.stdout.slice(0, 200)}`

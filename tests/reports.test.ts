@@ -74,6 +74,41 @@ describe('buildReport 纯函数', () => {
   })
 })
 
+describe('buildReport 摘要模式(任务 E:{ summary: true })', () => {
+  const src: ReportSource[] = [
+    { site: 'zhihu', command: 'site zhihu hot', at: '2026-10-05T09:00:00Z', text: '\n1 热点A 热度100\n2 热点B', status: 'ok', source: 'C:\\Users\\u\\.dsh\\opencli-snapshots\\s1\\2026-10-05.json' },
+    { site: 'weibo', command: 'site weibo hot', at: '2026-10-05T09:00:01Z', text: 'EMPTY_RESULT', status: 'silent' },
+    { site: 'tieba', command: 'site tieba hot', at: '2026-10-05T09:00:02Z', text: '命令失败:网络超时', status: 'fail' },
+  ]
+
+  it('每源一行:top 变化(首个非空行)+ 异常标注 + 出处文件名;全文结构不出现', () => {
+    const md = buildReport('日报', src, '2026-10-05T10:00:00Z', { summary: true })
+    expect(md).toContain('# 日报 · 摘要')
+    expect(md).toContain('- zhihu:1 热点A 热度100(出处:2026-10-05.json)')
+    expect(md).toContain('- weibo[疑似静默失败]:EMPTY_RESULT')
+    expect(md).toContain('- tieba[失败]:命令失败:网络超时')
+    // 全文版结构缺席:没有围栏节、没有缺口声明长版
+    expect(md).not.toContain('```')
+    expect(md).not.toContain('数据源与缺口声明')
+    // 出处只留文件名:目录(本机信息)不进摘要
+    expect(md).not.toContain('Users')
+    expect(md).not.toContain('.dsh')
+  })
+  it('摘要 ≤500 字:超长源列表整段截断带 …', () => {
+    const many: ReportSource[] = Array.from({ length: 40 }, (_, i) => ({
+      site: `site${i}`, command: `c${i}`, at: 't', text: `头条内容比较长的一些采集文本第${i}条`, status: 'ok' as const,
+    }))
+    const md = buildReport('超长', many, 'g', { summary: true })
+    expect(md.length).toBeLessThanOrEqual(500)
+    expect(md.endsWith('…')).toBe(true)
+  })
+  it('缺省 opts 走全文版(向后兼容:旧调用点不变形)', () => {
+    expect(buildReport('x', src, 'g')).toContain('```')
+    expect(buildReport('x', src, 'g', {})).toContain('```')
+    expect(buildReport('x', src, 'g', { summary: false })).toContain('```')
+  })
+})
+
 describe('site_batch 报告落盘(集成)', () => {
   it('批量执行后生成报告文件且工具输出附路径', async () => {
     ;(svc as unknown as { adapterCache: { at: number; json: unknown } | null }).adapterCache = {
@@ -114,5 +149,23 @@ describe('report-build RPC(定时快照→报告)', () => {
     expect(md).toContain('快照:')
     fs.rmSync(dir, { recursive: true, force: true })
     await svc.scheduleRemove({ id: sch!.id })
+  })
+
+  it('summary:true 出摘要版文件(≤500 字,任务 E:面板通知/转发用)', async () => {
+    const R = svc as unknown as { reportBuild: (r?: { id: string; summary?: boolean }) => Promise<{ ok: boolean; path?: string; error?: string }> }
+    const add = await svc.scheduleAdd({ site: 'site zhihu hot', cron: '0 3 31 2 *' })
+    expect(add.ok).toBe(true)
+    const dir = path.join(os.homedir(), '.dsh', 'opencli-snapshots', add.id!)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, '2026-10-06T09-00-00-000.json'), JSON.stringify({ at: '2026-10-06T09:00:00Z', site: 'site zhihu hot', bytes: 20, stdout: '1 热点甲 热度100' }), 'utf8')
+    const r = await R.reportBuild({ id: add.id!, summary: true })
+    expect(r.ok).toBe(true)
+    const md = fs.readFileSync(r.path!, 'utf8')
+    expect(md).toContain('· 摘要')
+    expect(md).toContain('1 热点甲 热度100')
+    expect(md.length).toBeLessThanOrEqual(500)
+    expect(md).not.toContain('```')
+    fs.rmSync(dir, { recursive: true, force: true })
+    await svc.scheduleRemove({ id: add.id! })
   })
 })
