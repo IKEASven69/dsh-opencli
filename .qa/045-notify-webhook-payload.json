@@ -1,0 +1,9 @@
+[
+  {
+    "at": "2026-10-28T01:35:49.562Z",
+    "method": "POST",
+    "url": "/test-hook",
+    "contentType": "application/json",
+    "body": "{\"title\":\"[dsh-opencli] juejin hot 2026-10-28 09:35\",\"body\":\"🔔 Watch 命中\\n结果:成功\\nWatch 命中:的\\n摘要:[\\n  {\\n    \\\"rank\\\": 1,\\n    \\\"article_id\\\": \\\"7698947426489663528\\\",\\n    \\\"title\\\": \\\"报表总在扫大表，列存储应该放在哪一层\\\",\\n    \\\"brief\\\": \\\"\\\",\\n    \\\"v\",\"at\":\"2026-10-28T01:35:49.451Z\"}"
+  }
+]

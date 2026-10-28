@@ -3026,7 +3026,8 @@ export class OpencliService extends TypertRemoteService {
     // 任务 E:结果外送通知——重试链走完、状态落盘后一次群发。放在 saveState 之后:
     // 通知发送(webhook/email 各有 10s 收端超时)不挡状态持久化;await 保证测试可确定性断言。
     // 评审 MEDIUM:sch.notify===false 时任务级关闸(面板"通知 关"徽章与实际行为一致);
-    // 成功且无 watch 命中只发"安静成功"通道配置里标记了 wantRoutine=true 的(默认不发例行)
+    // 例行结果默认即发(成功=例行通知,失败=schedule-failed,watch 命中=正文加 🔔 前缀)——
+    // 没有按通道的"安静成功"开关(早期注释曾宣称 wantRoutine 门,该字段从未实现,勿再引用)
     if (sch?.notify !== false) {
       await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits)
     }
