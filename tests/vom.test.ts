@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import * as zlib from 'node:zlib'
 
 // ── 纯函数层 ────────────────────────────────────────────────
 
@@ -148,6 +149,9 @@ const ok = (text: string): { exitCode: number; stdout: { text: string }; stderr:
 class VomShell extends Service {
   /** 全部 shell 调用的命令行(拼接形态,与 zerocfg 桩同款) */
   readonly calls: string[] = []
+  /** canvas_read 的 eval 出口形态:测试可换裸文/2.0 信封/脏数据(默认短 b64=截断形态,不落盘) */
+  readOut = '{"index":0,"w":800,"h":600,"b64":"QUJD"}'
+  readEnvelope = false
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
   resolve(req: unknown): unknown { return req }
   async run(spec: { command: unknown }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
@@ -161,7 +165,7 @@ class VomShell extends Service {
     if (cmd.includes(' list')) return ok(JSON.stringify({ ok: true, data: { commands: [], total: 0, nextOffset: 0 } }))
     // eval 桥回声:按生成物特征区分三个工具的页面 JS。toDataURL 必须先于
     // querySelectorAll 判——read 脚本里同样有 querySelectorAll('canvas'),顺序反了会张冠李戴
-    if (cmd.includes('toDataURL')) return ok('{"index":0,"w":800,"h":600,"b64":"QUJD"}')
+    if (cmd.includes('toDataURL')) return ok(this.readEnvelope ? JSON.stringify({ ok: true, data: this.readOut }) : this.readOut)
     if (cmd.includes("querySelectorAll('canvas')")) {
       return ok('{"count":1,"canvases":[{"index":0,"x":8,"y":8,"w":640,"h":480,"id":"game"}]}')
     }
@@ -184,6 +188,7 @@ class VomSystemPrompt extends Service {
 let ctx: InstanceType<typeof Context>
 let shell: VomShell
 let traceDir = ''
+let shotsDir = ''
 
 const tool = (name: string): { execute: (a: unknown) => Promise<{ text: string }> } =>
   (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get(name)!
@@ -201,7 +206,8 @@ beforeAll(async () => {
   process.env.DSH_OPENCLI_BIN = 'opencli'
   traceDir = path.join(os.tmpdir(), 'dsh-opencli-test-traces-f-vom-' + uniq)
   process.env.DSH_OPENCLI_TRACE_DIR = traceDir
-  process.env.DSH_OPENCLI_SHOTS_DIR = path.join(os.tmpdir(), 'dsh-opencli-test-shots-f-vom-' + uniq)
+  shotsDir = path.join(os.tmpdir(), 'dsh-opencli-test-shots-f-vom-' + uniq)
+  process.env.DSH_OPENCLI_SHOTS_DIR = shotsDir
   process.env.DSH_OPENCLI_EVIDENCE_DIR = path.join(os.tmpdir(), 'dsh-opencli-test-evidence-f-vom-' + uniq)
   process.env.DSH_OPENCLI_STATE = path.join(os.tmpdir(), 'dsh-opencli-test-state-f-vom-' + uniq)
   ctx = new Context()
@@ -285,5 +291,91 @@ describe('canvas VOM 工具接线(eval 桥主路径)', () => {
   it('审批门:canvas_discover / canvas_read → allow(只读自动放行)', async () => {
     expect((await dispatchPre('canvas_discover', {})).kind).toBe('allow')
     expect((await dispatchPre('canvas_read', { index: '0' })).kind).toBe('allow')
+  })
+})
+
+// ── canvas_read 位图落盘(消除断点:产出 → 轨迹 shot → 画布卡片图片步骤) ──
+
+/** 测试内造真 PNG(8bit RGB 无 alpha,行 filter=0):不依赖仓库二进制资产,字节可控可断言。 */
+const crc32 = (buf: Buffer): number => {
+  let c = ~0
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i]
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1))
+  }
+  return ~c >>> 0
+}
+const pngChunk = (type: string, data: Buffer): Buffer => {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length)
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, 'ascii'), data])))
+  return Buffer.concat([len, Buffer.from(type, 'ascii'), data, crc])
+}
+const makePng = (w: number, h: number): Buffer => {
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2
+  const raw = Buffer.concat(Array.from({ length: h }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 3, 0x80)])))
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk('IHDR', ihdr), pngChunk('IDAT', zlib.deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))])
+}
+
+describe('canvas_read 位图落盘:轨迹 shot 字段(画布卡片的图片步骤来源)', () => {
+  // 24x24:base64 ~150 字符,稳过落盘门槛的 ≥100 下限(8x8 只有 96 字符会被当截断形态拒掉)
+  const pngB64 = makePng(24, 24).toString('base64')
+  /** 今天的轨迹文件里最后一条 canvas_read 的 eval 行(任意 session) */
+  const lastReadRow = (): { cmd: string; shot?: string } => {
+    const d = new Date()
+    const dateKey = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    const rows = readFileSync(join(traceDir, `trace-${dateKey}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { cmd: string; shot?: string })
+    const reads = rows.filter((r) => r.cmd.startsWith('browser ') && r.cmd.includes(' eval ') && r.cmd.includes('toDataURL'))
+    return reads[reads.length - 1]!
+  }
+
+  it('2.0 信封形态:PNG 落盘 + 轨迹行带 shot + 工具文本点名路径与去向', async () => {
+    shell.readEnvelope = true
+    shell.readOut = JSON.stringify({ index: 0, w: 8, h: 8, b64: pngB64 })
+    const r = await tool('canvas_read').execute({ index: '0' })
+    expect(r.text).toContain('"b64"')
+    expect(r.text).toContain('画布位图已存')
+    expect(r.text).toContain('画布」页卡片')
+    const row = lastReadRow()
+    expect(row.shot).toMatch(/[\\/]canvas-\d{6}-\d+-i0\.png$/)
+    // 落盘点位:独立 SHOTS 目录之下(trace-shot 面板取图的同一棵树)
+    expect(row.shot!.startsWith(shotsDir)).toBe(true)
+    // 落盘字节逐字等于 decode 后的 PNG(魔数 + 全量比对)
+    const buf = readFileSync(row.shot!)
+    expect(buf.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))).toBe(true)
+    expect(buf.equals(Buffer.from(pngB64, 'base64'))).toBe(true)
+    shell.readEnvelope = false
+  })
+
+  it('1.x 裸文形态:同样解包落盘(双版本兼容)', async () => {
+    shell.readOut = JSON.stringify({ index: 0, w: 8, h: 8, b64: pngB64 })
+    await tool('canvas_read').execute({ index: '0' })
+    const row = lastReadRow()
+    expect(row.shot).toMatch(/[\\/]canvas-\d{6}-\d+-i0\.png$/)
+    expect(readFileSync(row.shot!).equals(Buffer.from(pngB64, 'base64'))).toBe(true)
+  })
+
+  it('session 参数净化后进目录段(会话名带路径字符不成为穿越载体)', async () => {
+    shell.readOut = JSON.stringify({ index: 1, w: 8, h: 8, b64: pngB64 })
+    const r = await tool('canvas_read').execute({ index: '1', session: 'my#sess' })
+    expect(r.text).toContain('画布位图已存')
+    const row = lastReadRow()
+    expect(row.shot).toMatch(/[\\/]my_sess[\\/]canvas-\d{6}-\d+-i1\.png$/)
+  })
+
+  it('短 b64(输出截断形态):不落盘,轨迹行无 shot,文本无提示', async () => {
+    shell.readOut = '{"index":0,"w":800,"h":600,"b64":"QUJD"}'
+    const r = await tool('canvas_read').execute({ index: '0' })
+    expect(r.text).not.toContain('画布位图已存')
+    expect(lastReadRow().shot).toBeUndefined()
+  })
+
+  it('长但非 PNG(魔数不符):不落盘', async () => {
+    // 100+ 字符的合法 base64,解码后不是 PNG——魔法门挡下,不让脏字节冒充画布位图
+    const junk = Buffer.from('x'.repeat(120)).toString('base64')
+    shell.readOut = JSON.stringify({ index: 0, w: 8, h: 8, b64: junk })
+    await tool('canvas_read').execute({ index: '0' })
+    expect(lastReadRow().shot).toBeUndefined()
+    shell.readOut = '{"index":0,"w":800,"h":600,"b64":"QUJD"}'
   })
 })

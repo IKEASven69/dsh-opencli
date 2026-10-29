@@ -14,11 +14,12 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { defineTool, type DefineToolOptions, type ParameterSchemaSpec, type ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
+import { Buffer } from 'node:buffer'
 import { homedir } from 'node:os'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type {
   AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
@@ -1042,7 +1043,7 @@ export class OpencliService extends TypertRemoteService {
     const s = '浏览器会话名(默认 dsh;bind 过的会话复用登录态)'
     this.registerToolSafe({
       name: 'canvas_discover',
-      description: '发现当前页所有 canvas 元素(eval 桥,只读):返回每块画布的索引/视口坐标(x,y)/尺寸(w,h)/id。HTML5 游戏/图表/画板类页面定位画布入口先调它,结果里的 index 给 canvas_read 用,坐标给 canvas_click 用',
+      description: '发现当前页所有 canvas 元素(eval 桥,只读):返回每块画布的索引/视口坐标(x,y)/尺寸(w,h)/id。HTML5 游戏/图表/画板类页面定位画布入口先调它,结果里的 index 给 canvas_read 用,坐标给 canvas_click 用。注意:本族作用于网页内的 canvas 元素,与面板「画布」标签页(你的活动复盘视图)同名不同层',
       parameters: { session: { type: 'string', description: s } },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => {
@@ -1052,7 +1053,7 @@ export class OpencliService extends TypertRemoteService {
     })
     this.registerToolSafe({
       name: 'canvas_read',
-      description: '读取指定 canvas 内容为 PNG base64(eval 桥 toDataURL,只读):index 用 canvas_discover 返回的索引(默认 0)。注意:大画布的 base64 会被输出上限截断(完整图请配 opencli_screenshot);跨域污染的画布会报 SecurityError。w/h 是画布缓冲分辨率,非显示尺寸',
+      description: '读取指定 canvas 内容为 PNG base64(eval 桥 toDataURL,只读):index 用 canvas_discover 返回的索引(默认 0)。注意:大画布的 base64 会被输出上限截断(完整图请配 opencli_screenshot);跨域污染的画布会报 SecurityError。w/h 是画布缓冲分辨率,非显示尺寸。读到的位图自动落盘并进面板「画布」页卡片供人事后复核(网页 canvas 层与面板画布复盘层的接通点)',
       parameters: {
         index: { type: 'string', description: 'canvas 索引(canvas_discover 返回的 index,默认 0)' },
         session: { type: 'string', description: s },
@@ -1062,11 +1063,16 @@ export class OpencliService extends TypertRemoteService {
         const idx = Math.floor(Number(a.index ?? '0'))
         // 本地先校验再发往返:脏索引在插件层就挡下,不浪费一次注定失败的 eval 调用
         if (!Number.isFinite(idx) || idx < 0) return { text: `index 非法:${String(a.index ?? '')}(应为 canvas_discover 返回的非负索引)` }
+        const sess = typeof a.session === 'string' && a.session.length > 0 ? a.session : undefined
         const out = await this.runBrowserTraced(
-          typeof a.session === 'string' && a.session.length > 0 ? a.session : undefined,
+          sess,
           ['eval', buildCanvasReadJs(idx)],
+          // 消除断点:读到的画布位图经 saveCanvasReadShot 落盘挂进轨迹 shot → 画布卡片图片回放
+          { deriveShot: (raw) => this.saveCanvasReadShot(sess, idx, raw) },
         )
-        return { text: this.renderOut(out) }
+        const note = out.shot !== undefined && basename(out.shot).startsWith('canvas-')
+          ? `\n(画布位图已存 ${out.shot} — 已进面板「画布」页卡片,可回放复核)` : ''
+        return { text: this.renderOut(out) + note }
       },
     })
     this.registerToolSafe({
@@ -2707,7 +2713,7 @@ export class OpencliService extends TypertRemoteService {
    * 与 replay / script-run-builtin / crawl / userscript-run / recipe-run 五个 RPC 透传都经此——
    * 任何入口执行的 browser 命令都进「运行轨迹」,复盘链路不断(评审:面板回放按钮曾绕过单点)。
    */
-  private async runBrowserTraced(session: string | undefined, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string; shot?: string }> {
+  private async runBrowserTraced(session: string | undefined, argv: string[], opts?: { deriveShot?: (out: { exitCode: number; stdout: string; stderr: string }) => Promise<string | undefined> }): Promise<{ exitCode: number; stdout: string; stderr: string; shot?: string }> {
     const started = Date.now()
     // ④ 无扩展短路(设计 §3-④):opencli_* 是 CLI→daemon→扩展硬链路(上游 daemon.js 头注释,
     // 无 CDP 分支),daemon 明确报告扩展未连时注定失败——把注定失败的往返(默认 60s 超时)换成
@@ -2734,9 +2740,11 @@ export class OpencliService extends TypertRemoteService {
     } else {
       out = await this.runOpencli(['browser', session ?? 'dsh', ...argv])
     }
-    // 页面变化/失败命令自动补拍一张截图(复盘证据链),路径写进同一轨迹行的 shot 字段;
-    // 内部补拍走 runOpencli 直连,不经 runBrowserTraced——否则会自递归且把补拍当成用户步骤污染轨迹
-    const shot = await this.captureStepShot(session, argv, out, major)
+    // 派生截图优先(canvas_read 的画布位图):输出本身就是证据时不必再拍整页——agent 看到
+    // 的位图正是复盘素材;派生不适用/失败(undefined)回落 captureStepShot(页面变化/失败
+    // 补拍,走 runOpencli 直连不经本函数——否则自递归且把补拍当用户步骤污染轨迹),两链路互不挡道
+    const derived = opts?.deriveShot !== undefined ? await opts.deriveShot(out) : undefined
+    const shot = derived ?? await this.captureStepShot(session, argv, out, major)
     this.recordTrace(`browser ${session ?? 'dsh'} ${argv.join(' ')}`, out, Date.now() - started, shot)
     // shot 随结果带出(独立评审发现:此前只进 trace 不进工具结果,opencli_do 卡的
     // (shot: 文件名) 提示是死路径)——undefined 不落字段,老消费者零影响
@@ -2779,6 +2787,39 @@ export class OpencliService extends TypertRemoteService {
         : ['browser', session ?? 'dsh', 'screenshot', file]
       const r = await this.runOpencli(shotArgv, 30_000)
       return r.exitCode === 0 && existsSync(file) ? file : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * canvas_read 产出落盘(消除断点):eval 出口(2.0 双层信封或 1.x 裸文)里的 {index,w,h,b64}
+   * 解码成 PNG 写进当日截图目录,路径回传挂进轨迹行 shot 字段——画布卡片即自动以图片步骤
+   * 回放"agent 在画布里看到了什么"(此前 b64 只以截断文本躺在轨迹行里,人无法复核)。
+   * 只读旁路:任何失败(exit≠0/无 b64/PNG 魔数不符/超 8MB/写盘错)静默 undefined,
+   * 回落 captureStepShot 常规链路;上限与 trace-shot 的 8MB 同口径,画布读取不许变成
+   * RPC 通道炸弹。命名 canvas-<hhmmss>-<seq>-i<idx>.png 与 step-*.png 同目录同防碰撞。
+   */
+  private async saveCanvasReadShot(session: string | undefined, idx: number, out: { exitCode: number; stdout: string }): Promise<string | undefined> {
+    if (out.exitCode !== 0) return undefined
+    const outer = extractJsonObject(out.stdout) as { data?: unknown } | null
+    // 2.0 信封 {"ok":true,"data":"<内层 JSON 字符串>"} 再剥一层;1.x 裸文 outer 即结果
+    const parsed = (outer !== null && typeof outer.data === 'string' ? extractJsonObject(outer.data) : outer) as { b64?: unknown } | null
+    if (parsed === null || typeof parsed.b64 !== 'string' || parsed.b64.length < 100) return undefined
+    try {
+      const buf = Buffer.from(parsed.b64, 'base64')
+      // PNG 魔数 89 50 4E 47:脏 base64/错误页返回不落盘(长度下限同护 "太短必不是图")
+      if (buf.length < 8 || buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) return undefined
+      if (buf.length > 8 * 1024 * 1024) return undefined
+      const sid = (session ?? 'dsh').replace(/[^\w.-]/g, '_')
+      const now = new Date()
+      const dir = join(this.shotsDir, OpencliService.traceDateKey(now), sid)
+      await mkdir(dir, { recursive: true })
+      const clock = OpencliService.shotClock(now)
+      let file = ''
+      do { file = join(dir, `canvas-${clock}-${++this.shotSeq}-i${idx}.png`) } while (existsSync(file))
+      await writeFile(file, buf)
+      return file
     } catch {
       return undefined
     }

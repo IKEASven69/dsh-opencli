@@ -59,7 +59,7 @@ const STR = {
     knowExp: '导出知识卡', knowExpDo: '导出中…',
     timeline: '时间线', reportBtn: '生成报告', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=内容规模)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计', tlFlow: '画布卡片流(本站近 24h,替代运行史文本)',
     // 画布(任务 H+I+J):全活动卡片流;文案与色调口径见 canvasCardTone/CANVAS_SUSPECT_P
-    canvasT: '活动画布', canvasSub: '轨迹 / 写操作 / 定时采集聚合为卡片 · 点卡片展开步骤回放 · 拖拽平移,滚轮缩放',
+    canvasT: '活动画布', canvasSub: '轨迹 / 写操作 / 定时采集聚合为卡片 · 点卡片展开步骤回放 · 拖拽平移,滚轮缩放 · canvas_read 读到的网页画布位图会以图片步骤出现在卡片里',
     canvasEmpty: '暂无活动——跑一条命令或到点采集后,这里会长出卡片',
     canvasZoomIn: '放大', canvasZoomOut: '缩小', canvasReplay: '步骤回放', canvasMore: '加载更多',
     canvasCardsN: (n: number) => `${n} 张卡`, canvasNoShot: '无截图', canvasSuspect: '低分通过',
@@ -138,7 +138,7 @@ const STR = {
     cmdFmt: 'Click a command row → copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)',
     knowExp: 'Export knowledge cards', knowExpDo: 'Exporting…',
     timeline: 'Timeline', reportBtn: 'Build report', tlT: 'Collection snapshot trend', tlSub: 'Each bar = one successful collection (size = content scale)', tlEmpty: 'No snapshots yet — they grow after scheduled runs', tlN: (n: number) => `${n} snapshots`, tlTotal: 'total', tlFlow: 'Canvas card flow (this site, last 24h — replaces text history)',
-    canvasT: 'Activity canvas', canvasSub: 'Traces, write evidence and scheduled runs as cards · click a card to replay its steps · drag to pan, wheel to zoom',
+    canvasT: 'Activity canvas', canvasSub: 'Traces, write evidence and scheduled runs as cards · click a card to replay its steps · drag to pan, wheel to zoom · canvas_read bitmaps show up as image steps',
     canvasEmpty: 'No activity yet — cards appear after your first command or scheduled run',
     canvasZoomIn: 'Zoom in', canvasZoomOut: 'Zoom out', canvasReplay: 'Step replay', canvasMore: 'Load more',
     canvasCardsN: (n: number) => `${n} cards`, canvasNoShot: 'no screenshot', canvasSuspect: 'weak pass',
