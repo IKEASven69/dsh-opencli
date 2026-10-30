@@ -194,6 +194,12 @@ dsh plugin add IKEASven69/dsh-opencli
 
 完整版本历史见 [CHANGELOG.md](CHANGELOG.md) 与 [Releases](https://github.com/IKEASven69/dsh-opencli/releases)。
 
+## 常见问题
+
+**在 dsh 面板(Web UI)的聊天里让 agent 用 `site`/`canvas_read` 等工具,agent 说不存在?**
+
+这是 dsh 0.2.x 的既定行为,不是插件没装好:面板聊天会话的工具目录由其"预设"决定,目前只含 dsh 框架自带工具;插件注册的 agent 工具仅在 CLI agent 会话(如经 ZCode/dsh CLI 的会话)中可用。插件在面板里的部分是**设置页**(浏览器代理五 tab:诊断/定时/画布/安全与设置/命令)与全部 RPC 能力。详见 [docs/RESEARCH-20261030-dsh-preset-and-env.md](docs/RESEARCH-20261030-dsh-preset-and-env.md)。
+
 ## 定位(不做什么)
 
 - 不替代 OpenCLIApp/daemon/扩展——那是引擎与管家,本插件是 **dsh 里的数据驾驶舱**;
