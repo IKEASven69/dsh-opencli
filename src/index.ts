@@ -37,6 +37,7 @@ import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyC
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
 import { drainInbox, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
+import { diffSnapshots, renderDiffText } from './diffsnap.ts'
 import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
 // 对话内预览卡(site/site_batch/opencli_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
@@ -3247,6 +3248,25 @@ export class OpencliService extends TypertRemoteService {
         if (olds.length > 50) for (const f of olds.slice(0, olds.length - 50)) { try { unlinkSync(join(dir, f)) } catch { /* ignore */ } }
       } catch { /* 快照失败不阻断主流程 */ }
     }
+    // 快照 diff(0.4.6 C):成功采集时与上一份快照比对(文件即真相,字典序取次新份)。
+    // 三形态(新增/消失/位移)进 ingest 事件与推送正文;非 JSON 输出折成规模摘要。宁缺毋假。
+    let diffText = ''
+    if (lastOk && lastOut.length > 0) {
+      try {
+        const sdir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+        const olds = readdirSync(sdir).filter((f) => f.endsWith('.json')).sort()
+        const prevFile = olds.length >= 2 ? olds[olds.length - 2] : undefined  // 刚写入的当前份是最后一份
+        if (prevFile !== undefined) {
+          const prev = JSON.parse(readFileSync(join(sdir, prevFile), 'utf8')) as { stdout?: string }
+          const d = diffSnapshots(String(prev.stdout ?? ''), lastOut)
+          diffText = renderDiffText(d)
+          if (d.structured && d.added + d.removed + d.moved > 0) {
+            this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'snap-diff', text: `📊 ${siteCmd} 变化:新增 ${d.added}/消失 ${d.removed}/位移 ${d.moved}` })
+            this.ingestEventList = this.ingestEventList.slice(0, 30)
+          }
+        }
+      } catch { /* diff 旁路:失败不影响主流程 */ }
+    }
     // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)。
     // 命中词带出到下方 dispatchScheduleNotify:面板时间线与外部通知通道同一份命中事实
     let watchHits: string[] = []
@@ -3271,7 +3291,7 @@ export class OpencliService extends TypertRemoteService {
     // 例行结果默认即发(成功=例行通知,失败=schedule-failed,watch 命中=正文加 🔔 前缀)——
     // 没有按通道的"安静成功"开关(早期注释曾宣称 wantRoutine 门,该字段从未实现,勿再引用)
     if (sch?.notify !== false) {
-      await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits)
+      await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText)
     }
   }
 
@@ -3288,7 +3308,7 @@ export class OpencliService extends TypertRemoteService {
    * 例行结果与关键词命中。sendViaChannels 并发群发且单通道失败不抛;这里再兜一层:
    * 装配阶段的意外(坏配置形状等)也绝不反噬调度主链,通知永远是旁路。
    */
-  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[]): Promise<void> {
+  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string): Promise<void> {
     try {
       const config = this.state.notifyConfig
       if (config === undefined) return
@@ -3298,7 +3318,9 @@ export class OpencliService extends TypertRemoteService {
         { site: siteCmd, ...(watch !== undefined && watch.length > 0 ? { watch } : {}) },
         { ok, ...(summary.length > 0 ? { summary } : {}), ...(watchHits.length > 0 ? { watchHits } : {}) },
       )
-      await sendViaChannels(channels, title, watchHits.length > 0 ? `🔔 Watch 命中\n${body}` : body)
+      const head = watchHits.length > 0 ? `🔔 Watch 命中\n` : diffText.length > 0 ? `📊 变化\n` : ''
+const diffSeg = diffText.length > 0 ? `\n📊 与上次相比:${diffText}` : ''
+await sendViaChannels(channels, title, head + body + diffSeg)
     } catch { /* 通知旁路:全静默降级 */ }
   }
 
