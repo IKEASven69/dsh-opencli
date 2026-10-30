@@ -10,6 +10,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { connect as netConnect } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 import { dirname } from 'node:path'
+import { buildPayload, platformOk, platformOf, type PlatformId } from './channels.ts'
 import type { IngestEvent } from './types.ts'
 
 /** 通知通道统一接口:send 永不抛异常,失败以 { ok: false, error } 返回——通知是旁路,不能拖死调度主链。 */
@@ -36,23 +37,25 @@ export class WebhookChannel implements NotifyChannel {
   constructor(
     private readonly url: string,
     private readonly fetchImpl: typeof globalThis.fetch = globalThis.fetch.bind(globalThis),
+    private readonly platform: PlatformId = 'generic',
   ) {
     // name 带主机名:多 webhook 通道时结果日志能区分;URL 非法不在构造期炸(send 里兜)
     let host = ''
     try { host = new URL(url).host } catch { host = '' }
-    this.name = host.length > 0 ? `webhook:${host}` : 'webhook'
+    this.name = platform === 'generic'
+      ? (host.length > 0 ? `webhook:${host}` : 'webhook')
+      : (host.length > 0 ? `${platform}:${host}` : platform)
   }
 
   async send(title: string, body: string): Promise<{ ok: boolean; error?: string }> {
     try {
-      const res = await this.fetchImpl(this.url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title, body, at: new Date().toISOString() }),
-        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
-      })
-      if (res.status !== 200) return { ok: false, error: `HTTP ${res.status}` }
-      return { ok: true }
+      const at = new Date().toISOString()
+      const { url, init } = buildPayload(this.platform, this.url, title, body, at)
+      const res = await this.fetchImpl(url, { ...init, signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS) })
+      // 兼容旧测试桩:Response 形简单对象(无 text())时按空体处理——generic 平台 200 即成不受影响
+      const respText = typeof (res as { text?: unknown }).text === 'function' ? await res.text() : ''
+      const verdict = platformOk(this.platform, res.status, respText)
+      return verdict.ok ? { ok: true } : { ok: false, error: verdict.error ?? `HTTP ${res.status}` }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : 'webhook 发送失败' }
     }
@@ -407,6 +410,8 @@ export function buildNotifyBody(
 /** 单条通道配置。type 决定必填字段:webhook 要 url;email 要 url(SMTP)+ to;dsh 无参。 */
 export interface NotifyChannelConfig {
   type: 'webhook' | 'email' | 'dsh'
+  /** webhook 的平台预设(0.4.6 D):不填按 URL 推断,推断不出走 generic */
+  platform?: 'generic' | 'feishu' | 'dingtalk' | 'wecom' | 'telegram'
   /** webhook 收端地址 / email 的 SMTP URL(smtp:// 或 smtps://)。 */
   url?: string
   /** email 收件人。 */
@@ -436,6 +441,7 @@ export function normalizeNotifyConfig(raw: unknown): NotifyConfig {
       url: typeof o.url === 'string' && o.url.length > 0 ? o.url : undefined,
       to: typeof o.to === 'string' && o.to.length > 0 ? o.to : undefined,
       enabled: o.enabled === true,
+      ...(o.platform === 'feishu' || o.platform === 'dingtalk' || o.platform === 'wecom' || o.platform === 'telegram' || o.platform === 'generic' ? { platform: o.platform } : {}),
     })
   }
   return { channels }
@@ -478,7 +484,7 @@ export function buildNotifyChannels(config: NotifyConfig, opts: { emit: (ev: Ing
   const out: NotifyChannel[] = []
   for (const c of config.channels) {
     if (!c.enabled) continue
-    if (c.type === 'webhook' && c.url !== undefined) out.push(new WebhookChannel(c.url))
+    if (c.type === 'webhook' && c.url !== undefined) out.push(new WebhookChannel(c.url, globalThis.fetch.bind(globalThis), platformOf(c.url, c.platform)))
     else if (c.type === 'email' && c.url !== undefined && c.to !== undefined) out.push(new EmailChannel(c.url, c.to))
     else if (c.type === 'dsh') out.push(new DshNotifyChannel(opts.emit))
   }

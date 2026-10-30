@@ -39,7 +39,7 @@ const STR = {
     tryT: '试试看', trySub: '在对话里直接说,或先在这里跑一条 · 点右侧快捷/命令徽章 → 填入输入框',
     nlT: '自然语言指挥台', nlSub: '一句话描述你想做的事,确认后由插件执行(用你当前的模型,一次调用)',
     nlPh: '例:每天早9点把掘金热榜存档,AI 相关的推送给我', nlGo: '映射', nlMapping: '映射中…',
-    nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行',
+    nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行', nfUrlPh: 'webhook URL(钉钉加签可带 &secret=…)', nfSave: '保存通道', nfTest: '测试', nfSaved: '✓ 通道已保存', nfTestOk: '✓ 测试消息已送达', nfTestFail: '✗ 测试失败',
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑',
     loginT: '登录态巡检', loginSub: '绿=已登 黄=超时 红=未登 · 状态条只亮灯,操作在这里',
@@ -122,7 +122,7 @@ const STR = {
     tryT: 'Try it', trySub: 'Say it in chat, or run one here · click a quick pick/command badge to fill the input',
     nlT: 'Natural-language console', nlSub: 'Describe what you want in one line, review the mapped intent, then apply (uses your current model, one call)',
     nlPh: 'e.g. archive juejin hot every day at 9am and ping me on AI news', nlGo: 'Map', nlMapping: 'Mapping…',
-    nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied',
+    nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied', nfUrlPh: 'webhook URL (dingtalk secret via &secret=…)', nfSave: 'Save', nfTest: 'Test', nfSaved: '✓ channel saved', nfTestOk: '✓ test delivered', nfTestFail: '✗ test failed',
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run',
     loginT: 'Login check', loginSub: 'green=logged-in yellow=timeout red=expired · status bar shows dots, actions live here',
@@ -576,6 +576,10 @@ function Panel(): ReturnType<typeof createElement> {
   const [details, setDetails] = useState<Record<string, AdapterDetailResult>>({})
   const [copied, setCopied] = useState<string | null>(null)
   // 自动化
+  // 通知通道(D):平台下拉+URL+测试按钮(ctl notify set/test 的面板同款)
+  const [nfPlatform, setNfPlatform] = useState('feishu')
+  const [nfUrl, setNfUrl] = useState('')
+  const [nfBusy, setNfBusy] = useState(false)
   const [schedSite, setSchedSite] = useState('')
   const [schedCron, setSchedCron] = useState('0 9 * * *')
   const [schedWatch, setSchedWatch] = useState('')
@@ -770,6 +774,25 @@ function Panel(): ReturnType<typeof createElement> {
     const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, ...(watch.length > 0 ? { watch } : {}) } } as unknown as Record<string, unknown>)
     setSchedBusy(false)
     if (r.ok) { setSchedSite(''); setSchedWatch(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
+  }
+  // 通知通道(D):保存当前所选平台通道;测试按钮发一条真实测试消息(用户配置的通道)。
+  // dingtalk secret 支持钉在 URL query(secret=...)——保存原样,发送时由适配层处理。
+  const saveNotify = async (): Promise<void> => {
+    if (nfBusy || nfUrl.trim().length === 0) return
+    setNfBusy(true)
+    const cfg = await rpc<{ config?: { channels: Array<Record<string, unknown>> } }>('notify-config')
+    const channels = (cfg.value?.config?.channels ?? []).filter((c) => c.type !== 'webhook')
+    channels.push({ type: 'webhook', url: nfUrl.trim(), enabled: true, platform: nfPlatform })
+    const r = await rpc<{ ok: boolean; error?: string }>('notify-config', { request: { channels } } as unknown as Record<string, unknown>)
+    setNfBusy(false)
+    showToast(r.ok && (r.value?.ok !== false) ? t2('nfSaved') : (r.value?.error ?? t2('errReq')), r.ok)
+  }
+  const testNotify = async (): Promise<void> => {
+    if (nfBusy) return
+    setNfBusy(true)
+    const r = await rpc<{ ok: boolean; error?: string }>('notify-test')
+    setNfBusy(false)
+    showToast(r.ok && (r.value?.ok !== false) ? t2('nfTestOk') : (r.value?.error ?? t2('nfTestFail')), r.ok && (r.value?.ok !== false))
   }
   const toggleSchedule = async (id: string, enabled: boolean): Promise<void> => {
     const r = await rpc('schedule-toggle', { request: { id, enabled } } as unknown as Record<string, unknown>)
@@ -1138,6 +1161,14 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('input', { className: 'o4-in mono', style: { maxWidth: '110px' }, placeholder: 'cron', value: schedCron, onChange: (e: { target: { value: string } }) => setSchedCron(e.target.value) }),
           createElement('input', { className: 'o4-in', style: { maxWidth: '172px' }, placeholder: '🔔 watch 关键词', title: '逗号分隔,命中即通知', value: schedWatch, onChange: (e: { target: { value: string } }) => setSchedWatch(e.target.value) }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
+        ),
+        // 通知通道节(D):平台下拉+URL+保存+测试(与 ctl notify set/test 同链)
+        createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' } },
+          createElement('select', { className: 'o4-in', style: { maxWidth: '108px' }, value: nfPlatform, onChange: (e: { target: { value: string } }) => setNfPlatform(e.target.value) },
+            ...([['feishu', '飞书'], ['dingtalk', '钉钉'], ['wecom', '企业微信'], ['telegram', 'Telegram'], ['generic', '通用']] as Array<[string, string]>).map(([v, label]) => createElement('option', { key: v, value: v }, label))),
+          createElement('input', { className: 'o4-in mono', style: { flex: '1', minWidth: '160px' }, placeholder: t2('nfUrlPh'), value: nfUrl, onChange: (e: { target: { value: string } }) => setNfUrl(e.target.value) }),
+          createElement('button', { className: 'o4-btn sm', disabled: nfBusy || nfUrl.trim().length === 0, onClick: () => { void saveNotify() } }, t2('nfSave')),
+          createElement('button', { className: 'o4-btn ghost sm', disabled: nfBusy, onClick: () => { void testNotify() } }, t2('nfTest')),
         ),
         createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
           schedules.length === 0 ? createElement('div', { className: 'o4-load' }, '—') : null,
