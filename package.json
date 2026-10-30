@@ -23,7 +23,8 @@
     "SKILL.md",
     "README.md",
     "CHANGELOG.md",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "bin"
   ],
   "license": "MIT",
   "repository": {
@@ -79,5 +80,8 @@
     "data-product",
     "scheduled-collection",
     "provenance-report"
-  ]
+  ],
+  "bin": {
+    "dsh-opencli-ctl": "bin/dsh-opencli-ctl.cjs"
+  }
 }

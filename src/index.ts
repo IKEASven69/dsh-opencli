@@ -36,6 +36,7 @@ import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } 
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
+import { drainInbox, type IntentExecutor } from './inbox.ts'
 
 // 对话内预览卡(site/site_batch/opencli_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
 export { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
@@ -59,6 +60,8 @@ const BROWSER_DO_ALLOW = new Set([
 
 /** 步骤自动截图的触发子命令:产生页面变化的动作族;state/extract 等只读命令不拍(页面没变,拍了也是重复证据)。
  *  此外任何 exitCode!==0 的命令无论子命令一律补拍——失败现场是复盘最需要的证据。 */
+const PKG_VERSION = (() => { try { return JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8') as { version: string }).version } catch { return 'unknown' } })()
+
 const SHOT_TRIGGER_SUBS = new Set(['open', 'back', 'click', 'dblclick', 'type', 'fill', 'select', 'keys', 'hover', 'drag'])
 
 /** chrome_* 工具族的 method 白名单:opencli 2.0 原生管理通道 `browser chrome call` 的合法方法集。
@@ -227,6 +230,8 @@ export class OpencliService extends TypertRemoteService {
   benchGapMs = 800
   /** 截图序号(进程内单调,同秒多步防碰撞;跨进程/重启撞名由 existsSync 续拨兜底)。 */
   private shotSeq = 0
+  /** 收件箱轮询计时器(F1;同 schedTimer 的停机清除纪律)。 */
+  private inboxTimer: ReturnType<typeof setInterval> | undefined
   private loginCache: { at: number; results: LoginCheckResult } | null = null
   // usagePolicy：与 anweat 对齐的限流（并发/突发/冷却），默认与 anweat 一致
   private usagePolicy = { minDelayMs: 750, maxConcurrency: 2, burst: 3, cooldownMs: 30000, retryLimit: 2, maxPagesPerRun: 20, maxDepth: 2 }
@@ -303,6 +308,15 @@ export class OpencliService extends TypertRemoteService {
     void this.extensionState().catch(() => {})
     void this.injectSystemPrompt()
     if (this.schedules.some((s) => s.enabled)) this.startScheduler()
+    // 命令收件箱(0.4.6 F1):ctl 助手写意图 → 本消费者执行并回写结果。面板/ZCode/任意
+    // dsh 会话的 agent 都能用 shell 驱动插件(预设门绕开的生态面)。vitest 里只由专项
+    // 用例手动 drain(自动轮询会与隔离目录用例互相踩);单测环境外 3s 一拍。
+    if (process.env.VITEST === undefined) {
+      this.inboxTimer = setInterval(() => { void this.drainInboxSafe() }, 3000)
+      ;(this.ctx as unknown as { effect?: (f: () => () => void) => unknown }).effect?.(() => () => {
+        if (this.inboxTimer !== undefined) { clearInterval(this.inboxTimer); this.inboxTimer = undefined }
+      })
+    }
     // 调度计时器随服务停机清除:cordis stop 不自动收走裸 setInterval,vitest 复用 worker 跑
     // 多个测试文件与插件热重载都会留下僵尸调度器——它在服务"死后"继续触发
     // runSiteCommand/saveState,是并发写状态文件竞态的来源之一(effect 先例见
@@ -2994,6 +3008,41 @@ export class OpencliService extends TypertRemoteService {
       // 逗号列表语义=some(任一字段命中即匹配)
       return spec.split(',').some((tok) => { const n = Number(tok); return Number.isFinite(n) && n >= mins[i] && n <= maxs[i] && n === vals[i] })
     })
+  }
+
+  /**
+   * 收件箱消费(F1):意图 → 既有服务方法(RPC 同源,一套逻辑两个入口)。轮询循环与专项
+   * 测试都走这里;任何异常吞掉记事件——收件箱是旁路面,绝不反噬宿主进程。
+   * notify-test 走 buildNotifyChannels 真发一次(与调度通知同链),发到的是用户已配通道。
+   */
+  private async drainInboxSafe(): Promise<void> {
+    try {
+      const ex: IntentExecutor = {
+        scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}) }),
+        scheduleRemove: async (id) => this.scheduleRemove({ id }),
+        scheduleRun: async (id) => this.scheduleRunNow({ id }),
+        scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
+        notifySet: async (channels) => { const r = await this.notifyConfig({ channels }); return { ok: r.ok, error: r.error } },
+        reportBuild: async (id) => this.reportBuild({ id }),
+        notifyTest: async () => {
+          const config = this.state.notifyConfig ?? { channels: [] }
+          const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
+          if (channels.length === 0) return { ok: false, error: '尚未配置通知通道:先 notify set' }
+          const rs = await sendViaChannels(channels, 'dsh-openctl 测试通知', '如果你收到这条,通知通道配置成功。')
+          const bad = rs.filter((x) => !x.ok)
+          return { ok: bad.length === 0, error: bad.length === 0 ? undefined : bad.map((x) => `${x.name}:${x.error ?? ''}`).join('; ') }
+        },
+        status: async () => ({
+          plugin: 'dsh-opencli', version: PKG_VERSION, schedules: this.schedules.length,
+          ...(this.state.notifyConfig !== undefined ? { notifyChannels: this.state.notifyConfig.channels.length } : {}),
+        }),
+        event: (text) => {
+          this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'inbox', text })
+          this.ingestEventList = this.ingestEventList.slice(0, 30)
+        },
+      }
+      await drainInbox(ex)
+    } catch { /* 收件箱旁路:静默 */ }
   }
 
   private startScheduler(): void {
