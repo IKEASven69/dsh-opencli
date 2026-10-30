@@ -1,3 +1,42 @@
+## 0.4.6 — 2026-10-30
+
+> 人机协同与引擎大版本:自然语言指挥台 + daemon 直连传输 + 生态接入(任何 dsh 会话一句话驱动插件)。
+> 450 测试全绿;GUI 真机走查通过;直连延迟真机实证(同命令 87ms vs CLI 1040ms,12×)。
+
+### 自然语言指挥台(B1+B3,总览主行动)
+- **nl-intent**:一句话 → 闭集意图(经宿主 ctx.llm;路由候选=默认选择+已注册 provider 轮试,每条先解析适配器默认模型);模型输出必须过 parseIntent 闭集门,**不合法绝不猜测补全**;失败分诊三种(llm 出错/空输出/闭集拒绝+原文头),各带可行动指引
+- **预览卡**:映射结果逐字段可改,确认执行走 inbox-intent(与 ctl 同一条 applyIntent 白名单/审计链,改什么都过不了门);命令模式(试试看)完整保留,双模式并存
+- 模型额度诚实:映射是显式按钮触发,一次调用;不做后台自动映射
+
+### 生态接入层(F1+F2,预设门的正解)
+- **dsh-opencli-ctl**(npm bin):schedule add/list/run/remove · notify set/test · report build · status;写白名单意图 JSON 到 `~/.dsh/opencli-inbox/`,插件消费者(3s 轮询+停机清除)执行并回写结果,ctl 默认同步等待拿 JSON——**面板聊天等任何有 shell 的 dsh 会话**一句话即可驱动插件全能力
+- 意图安全:闭集校验(八 kind,多余字段拒绝,绝不 eval)/单文件 16KB+队列 200 条上限/claim 占位防并发/processed 轮转 100;每次消费落 ingest 事件(面板时间线可见)
+- **SKILL.md 全面重写**:场景路由手册(一句话→动作表/ctl 命令面/工具速查/适配器创作/边界如实),面板与 CLI 会话通吃
+
+### daemon 直连传输(A1+A2+A4)
+- **direct.ts**:`POST /command` + X-OpenCLI 头,动作族 exec/navigate/tabs/screenshot;能力探测三态(unknown/ready/off),协议形状不认识整层禁用;**永不抛错,任何失败静默回落 CLI**(旁路加速不成为单点)
+- eval 族接入 runBrowserTraced:归一 CLI 2.0 信封下游零改动;页面身份缓存(响应 page 持续刷新,stale 类错误清缓存无 page 重试一次)
+- **传输对照进基准报告**(A4):CLI 冷启动 vs 直连往返双实测,加速比随每份报告落盘
+- 真机:direct-real-test 8/8(导航→discover→像素级 read→click 全走直连);延迟对照 87ms vs 1040ms
+
+### 快照差异推送(C,盯变化独占区深化)
+- diffsnap 纯函数:JSON 数组逐条比对(新增/消失/位移≥3 位),包装 {data/items/list/results} 认得,非 JSON 折规模摘要**绝不臆造**;条目身份 id/title/url 优先退化归一文本
+- 调度链接入:成功采集自动 diff 上一份快照,📊 snap-diff 事件+推送正文尾接"与上次相比"段;与 watch 🔔 并存
+
+### 通知渠道平台预设(D)
+- channels.ts 五平台载荷:飞书/钉钉(加签=timestamp+secret HMAC-SHA256,secret 可钉 URL 发送时拼且不落日志)/企微/Telegram(chat_id 从 query 提取)/generic(0.4.5 信封不变);platformOk 细判 200 体内平台错误码
+- WebhookChannel 平台化(URL 推断兜底);面板自动化 tab 通知通道节:平台下拉+URL+保存+**测试按钮**(与 ctl notify test 同链,诚实回报成败)
+
+### 面板设计系统与动效(B3)
+- 设计 token 层:色板/圆角/阴影/动效时长缓动收进 CSS 变量(此前 97 处散落色值);卡片 hover 浮起/入场 stagger/骨架屏呼吸/运行态呼吸灯,全 transform+opacity 不触重排;**prefers-reduced-motion 全关**(可访问性)
+
+### 工程加固(E)
+- 工具输出 schema 真调用一致性测试:全注册表 38 工具逐一登记(只读 OUTPUT_KEYS/写类 EXEMPT),新工具漏登记 CI 直接红——宿主 additionalProperties:false 只在真调用时校验,直调 execute 测不出(竞品踩坑实录),机器化排雷
+
+### 兼容与验收
+- OpenCLI 2.0 双版本兼容延续;22 项套件 dsh 0.2.1-rc.5 全过
+- dsh 面板聊天会话不装载插件 agent 工具属 dsh 预设作用域架构(RESEARCH-20261030),0.4.6 的 ctl/inbox 生态层即其正解
+
 ## 0.4.5 — 2026-10-30
 
 > 数据产品大版本:定时采集 → 真实性判定 → 快照落盘 → 推送通知 → 带出处报告 → 画布回放,闭环全线贯通。
