@@ -79,3 +79,37 @@ IPv6/localhost 两issue(有源码级证据,信誉建设);④dsh 0.2.2-alpha 跟�
 - opencli 2.0.0-2.0.2 变更与 site auth:github.com/jackwener/opencli/blob/main/CHANGELOG.md
 - dsh rc.3-rc.5:github.com/deepseek-ai/deepseek-harness/releases
 - 我方条目状态(10-30 现场核实):awesome-dsh-plugin.com/zh/p/IKEASven69/dsh-opencli 与 dshmarket.com/zh/browse 均在列,装浮动 URL;npm 源 index(dsh-plugin-catalog,3993 条全 npm)不含我方——该 index 是 npm 子集不是全目录(初版据此误判,教训:查目录要查站点实况,不能只查 npm 导出)
+
+## 补充调研 · 同名竞品 d342784178/dsh-opencli 功能差距(2026-10-30 晚)
+
+> 源:npm README 全文(0.1.0)+ daemon 源码(/command 端点)现场核对。定位:低延迟浏览器原语,5 工具。
+
+### 它有而我们没有的(按含金量排序)
+
+1. **直连 daemon 传输(架构级差距,最高含金量)**:`POST http://127.0.0.1:19825/command`+`X-OpenCLI` 头,
+   绕开 CLI 进程。实测口径:CLI 路径 ~1400-1800ms/命令(node 解 318 模块),直连 10-20ms,**~100×**。
+   交叉印证:我方 22 项套件里 site 命令实测 1138ms/条——CLI 冷启动税我方每条浏览器/站点命令都在缴。
+   daemon 源码核对:/command 收 {id, action, ...} 原样转发扩展执行(X-OpenCLI 头=CSRF 门),CLI 本身
+   就是它的客户端——直连=说母语。**站点适配器命令不在其列**(适配器逻辑在 CLI 侧),直连只覆盖浏览器原语。
+2. **批量求值**:oc_exec 一次往返跑至多 40 条 JS 表达式(async 可 await)。我方 eval 类每命令一次往返,
+   多步操作往返数线性放大——与 100× 延迟复合。
+3. **紧凑快照原语**:页面压成 title/links/buttons/inputs+disabled 的结构,比 outerHTML 便宜一个量级。
+   我方 opencli_state/chrome_* 有近邻能力但走 CLI 慢路径。
+4. **结构化错误+hint**:失败必返 {ok:false, errorCode, error, hint},hint 点名下一步动作。设计意见:
+   daemon 死了**故意不自动重启**(真实故障不藏在静默重试后面)。
+5. schema 一致性 npm test(宿主 additionalProperties:false 严格校验,直调 execute 不触发)——我方 399
+   测试更强,但"真调用才验 schema"这个坑它先写了文档。
+
+### 我们有而它没有的(护城河未动)
+
+站点适配器层(170+ 站结构化命令/systemPrompt 蒸馏)、定时→判定→快照→推送→报告→画布回放整条数据
+产品闭环、canvas VOM 三件套+位图落盘进画布、审批门+攻击表+fuzz、canary/benchmark、五 tab 面板、
+登录态巡检、命名空间迁移。它是纯原语层,5 个工具。
+
+### 行动结论
+
+- **唯一值得抄的是直连传输**。混合方案:eval 类高频原语先探 /command 能力(动作形状嗅探,同 CLI 信封
+  双版本思路),形状不符即回退 CLI 路径——把每条浏览器命令从 ~1.4s 砍到 ~20ms,是"完善到顶级"单项
+  杠杆最大的一件事。风险:/command 是上游未文档化内部协议,1.x/2.0 已变形过,daemon 版本战争环境下
+  必须带 CLI 兜底。批量求值(一次往返多表达式)可同车带走。
+- 其余(快照/hint/不自动重启)为风格差异,按需取用;产品面(数据闭环)保持碾压,不需跟进其路线。
