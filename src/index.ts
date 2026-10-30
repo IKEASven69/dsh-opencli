@@ -35,6 +35,7 @@ import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBench
 import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } from './evidence.ts'
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
+import { directCapability, directProbe, directExec } from './direct.ts'
 
 // 对话内预览卡(site/site_batch/opencli_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
 export { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
@@ -2713,6 +2714,35 @@ export class OpencliService extends TypertRemoteService {
    * 与 replay / script-run-builtin / crawl / userscript-run / recipe-run 五个 RPC 透传都经此——
    * 任何入口执行的 browser 命令都进「运行轨迹」,复盘链路不断(评审:面板回放按钮曾绕过单点)。
    */
+  /** 直连页面身份缓存:session → targetId。响应顶层 page 持续刷新;stale 类错误清缓存。 */
+  private directPages = new Map<string, string>()
+
+  /**
+   * eval 族直连执行(0.4.6 A2):走 daemon /command 母语(direct.ts),成功/结构化失败都归一成
+   * CLI 2.0 信封形状({ok,data}/{ok:false,error:{code,message,hint}})返回给 runBrowserTraced——
+   * 下游解析零改动;返回 undefined=本次不可用(未探测/网络失败/协议禁用),调用方回落 CLI。
+   * 页面身份:优先回传缓存 targetId;响应刷新缓存;page_not_found/stale 类错误清缓存后**不带
+   * page 重试一次**(让 daemon 重新解析会话绑定的活页),仍失败则交回落。
+   */
+  private async evalDirect(session: string | undefined, code: string): Promise<{ exitCode: number; stdout: string; stderr: string } | undefined> {
+    const sess = session ?? 'dsh'
+    try {
+      if (directCapability() === 'off') return undefined
+      if (directCapability() === 'unknown' && !(await directProbe())) return undefined
+      let r = await directExec(sess, code, this.directPages.get(sess))
+      if (!r.ok && r.unreachable !== true && /page|stale|not.?found/i.test(String(r.errorCode ?? ''))) {
+        this.directPages.delete(sess)
+        r = await directExec(sess, code)
+      }
+      if (!r.ok) return undefined
+      if (r.page !== undefined) this.directPages.set(sess, r.page)
+      // 归一 CLI 2.0 信封:eval 的 data 是页面求值原文(string),下游信封解包路径原样可用
+      return { exitCode: 0, stdout: JSON.stringify({ ok: true, data: r.data }), stderr: '' }
+    } catch {
+      return undefined
+    }
+  }
+
   private async runBrowserTraced(session: string | undefined, argv: string[], opts?: { deriveShot?: (out: { exitCode: number; stdout: string; stderr: string }) => Promise<string | undefined> }): Promise<{ exitCode: number; stdout: string; stderr: string; shot?: string }> {
     const started = Date.now()
     // ④ 无扩展短路(设计 §3-④):opencli_* 是 CLI→daemon→扩展硬链路(上游 daemon.js 头注释,
@@ -2726,7 +2756,15 @@ export class OpencliService extends TypertRemoteService {
     }
     const major = await this.cliMajor()
     let out: { exitCode: number; stdout: string; stderr: string }
-    if (major >= 2) {
+    // 0.4.6 A2:eval 族直连优先(daemon /command 母语,~135ms 级 vs CLI ~1.1s)——成功/失败都
+    // 归一成 CLI 2.0 信封形状,下游(renderOut/saveCanvasReadShot/轨迹)零改动;任何直连失败
+    // 静默回落既有 CLI 路径(旁路加速纪律:直连永不成为单点故障)
+    if (argv[0] === 'eval') {
+      const direct = await this.evalDirect(session, argv[1] ?? '')
+      if (direct !== undefined) out = direct
+    }
+    if (out === undefined) {
+      if (major >= 2) {
       // 2.0:会话从位置参数改为 --session 选项;创作命令搬去 adapter 族(analyze 工作流整体移除)
       const [head] = argv
       if (head === 'init' || head === 'verify') {
@@ -2739,6 +2777,7 @@ export class OpencliService extends TypertRemoteService {
       }
     } else {
       out = await this.runOpencli(['browser', session ?? 'dsh', ...argv])
+    }
     }
     // 派生截图优先(canvas_read 的画布位图):输出本身就是证据时不必再拍整页——agent 看到
     // 的位图正是复盘素材;派生不适用/失败(undefined)回落 captureStepShot(页面变化/失败

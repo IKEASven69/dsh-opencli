@@ -11,7 +11,7 @@
  * 桩 daemon 恒报 extensionConnected:true——runBrowserTraced 的 ④ 无扩展短路会拦掉
  * 全部 eval 往返,测不到桥本身(zerocfg 已专测短路,这里测有扩展主路径)。
  */
-import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import { describe, expect, it, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis'
 import { OpencliService } from '../lib/index.js'
@@ -19,6 +19,7 @@ import {
   buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs, buildRegionCropJs,
   type RegionCropResult,
 } from '../src/vom.ts'
+import { __directResetForTest } from '../src/direct.ts'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as os from 'node:os'
@@ -210,6 +211,10 @@ beforeAll(async () => {
   process.env.DSH_OPENCLI_SHOTS_DIR = shotsDir
   process.env.DSH_OPENCLI_EVIDENCE_DIR = path.join(os.tmpdir(), 'dsh-opencli-test-evidence-f-vom-' + uniq)
   process.env.DSH_OPENCLI_STATE = path.join(os.tmpdir(), 'dsh-opencli-test-state-f-vom-' + uniq)
+  // 0.4.6 A2 直连路径零网络纪律:默认把 fetch 桩成不可达(daemon 离线),eval 走 CLI 桩路径;
+  // 直连专项用例临时换桩(见「直连优先」describe)。不桩会打到本机真 daemon(开发机在跑着)。
+  __directResetForTest()
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network unreachable (test default)') }))
   ctx = new Context()
   await ctx.plugin(VomShell)
   await ctx.plugin(VomTools)
@@ -223,7 +228,14 @@ beforeAll(async () => {
   svc.automationMode = 'standard'
 })
 
+afterEach(() => {
+  // 每用例后恢复默认「网络不可达」fetch(直连专项用例会临时覆盖)
+  __directResetForTest()
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network unreachable (test default)') }))
+})
+
 afterAll(async () => {
+  vi.unstubAllGlobals()
   delete process.env.DSH_OPENCLI_BIN
   const c = ctx as unknown as { stop?: () => Promise<void>; dispose?: () => Promise<void> }
   await (c.stop ?? c.dispose ?? (async () => {}))()
@@ -377,5 +389,78 @@ describe('canvas_read 位图落盘:轨迹 shot 字段(画布卡片的图片步�
     await tool('canvas_read').execute({ index: '0' })
     expect(lastReadRow().shot).toBeUndefined()
     shell.readOut = '{"index":0,"w":800,"h":600,"b64":"QUJD"}'
+  })
+})
+
+// ── 直连优先路径(0.4.6 A2):fetch 桩成 daemon /command,eval 不经 shell ──
+
+describe('直连优先:eval 族走 /command,失败回落 CLI', () => {
+  const pngB6424 = (() => {
+    const zlib = require('node:zlib') as typeof import('node:zlib')
+    const crc32 = (buf: Buffer): number => { let c = ~0; for (let i = 0; i < buf.length; i++) { c ^= buf[i]; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1)) } return ~c >>> 0 }
+    const chunk = (t: string, d: Buffer) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const c = Buffer.alloc(4); c.writeUInt32BE(crc32(Buffer.concat([Buffer.from(t, 'ascii'), d]))); return Buffer.concat([l, Buffer.from(t, 'ascii'), d, c]) }
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(24, 0); ihdr.writeUInt32BE(24, 4); ihdr[8] = 8; ihdr[9] = 2
+    const raw = Buffer.concat(Array.from({ length: 24 }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(24 * 3, 0x80)])))
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]).toString('base64')
+  })()
+
+  const directFetchOk = (data: unknown, page?: string) =>
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 't', ok: true, data, ...(page !== undefined ? { page } : {}) }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+
+  it('直连成功:eval 不发 shell 命令,返回归一 CLI 2.0 信封,轨迹照落', async () => {
+    directFetchOk('{"count":1,"canvases":[]}', 'tgt-a')
+    const before = shell.calls.length
+    const r = await tool('canvas_discover').execute({})
+    // 归一成 CLI 2.0 信封形态(与真实 CLI 输出一致;renderOut 只裁不拆)
+    const parsed = JSON.parse(r.text) as { ok: boolean; data: string }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.data).toContain('count')
+    expect(shell.calls.length).toBe(before) // 零 shell 往返——这就是直连
+    const d = new Date()
+    const dateKey = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    const rows = readFileSync(join(traceDir, `trace-${dateKey}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { cmd: string })
+    expect(rows.some((x) => x.cmd.startsWith('browser dsh eval'))).toBe(true)
+  })
+
+  it('页面身份缓存:第二次 eval 回传 page 字段;响应刷新缓存', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn(async (_u: unknown, init?: RequestInit) => {
+      calls++
+      const body = JSON.parse(String(init!.body)) as { code?: string }
+      const page = (init!.body as string).includes('"page"') ? 'was-passed' : undefined
+      return new Response(JSON.stringify({ id: 't', ok: true, data: body.code === '1' ? 1 : 2, ...(page !== undefined ? { page: 'was-passed' } : { page: 'tgt-b' }) }), { status: 200 })
+    }))
+    await tool('canvas_read').execute({ index: '0' }).catch(() => {})
+    // 直接用服务内部方法验缓存:经 canvas_read 走一遍后,下一次 eval 请求体应带 page
+    let seen: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_u: unknown, init?: RequestInit) => {
+      seen.push(String(init!.body))
+      return new Response(JSON.stringify({ id: 't', ok: true, data: 3, page: 'tgt-c' }), { status: 200 })
+    }))
+    const svc = ctx.opencli as unknown as { evalDirect: (s: string | undefined, c: string) => Promise<{ stdout: string } | undefined> }
+    const r1 = await svc.evalDirect('dsh', '9')
+    expect(r1!.stdout).toBe(JSON.stringify({ ok: true, data: 3 }))
+    expect(seen[0]).toContain('"page"') // 缓存命中回传
+    expect(seen[0]).toContain('"page":"was-passed"') // 回传的是上一响应刷新进缓存的身份(回声值)
+  })
+
+  it('直连结构化失败(eval 非页面类)→ 回落 CLI 桩路径,shell 收到命令', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 't', ok: false, errorCode: 'extension_disconnected', error: 'ext down' }), { status: 200 })))
+    const before = shell.calls.length
+    const r = await tool('canvas_discover').execute({})
+    expect(r.text).toContain('"count":1') // VomShell 桩的回声——CLI 路径接住了
+    expect(shell.calls.length).toBeGreaterThan(before)
+  })
+
+  it('直连 canvas_read 成功:位图照样落盘进轨迹 shot(直连+deriveShot 全链)', async () => {
+    directFetchOk(JSON.stringify({ index: 0, w: 24, h: 24, b64: pngB6424 }), 'tgt-d')
+    const r = await tool('canvas_read').execute({ index: '0' })
+    expect(r.text).toContain('画布位图已存')
+    const d = new Date()
+    const dateKey = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    const rows = readFileSync(join(traceDir, `trace-${dateKey}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { cmd: string; shot?: string })
+    const reads = rows.filter((x) => x.cmd.startsWith('browser dsh eval') && x.cmd.includes('toDataURL'))
+    expect(reads[reads.length - 1]!.shot).toMatch(/canvas-\d{6}-\d+-i0\.png$/)
+    expect(readFileSync(reads[reads.length - 1]!.shot!).equals(Buffer.from(pngB6424, 'base64'))).toBe(true)
   })
 })

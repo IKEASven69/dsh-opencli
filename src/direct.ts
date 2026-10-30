@@ -20,9 +20,9 @@
 
 const daemonBase = (): string => `http://127.0.0.1:${Number(process.env.OPENCLI_DAEMON_PORT ?? 19825)}`
 
-/** 直连命令结果:成功/结构化失败/不可达(回落 CLI 的信号)。 */
+/** 直连命令结果:成功(可带 page 身份)/结构化失败/不可达(回落 CLI 的信号)。 */
 export type DirectResult =
-  | { ok: true; data: unknown }
+  | { ok: true; data: unknown; page?: string }
   | { ok: false; unreachable: true }
   | { ok: false; unreachable?: false; errorCode?: string; error?: string; hint?: string }
 
@@ -50,7 +50,8 @@ async function post(action: string, params: Record<string, unknown>, timeoutMs: 
       capability = 'off'
       return { ok: false, unreachable: true }
     }
-    if (j.ok) return { ok: true, data: j.data }
+    // 响应顶层可带 page(页面身份):每条命令都可能刷新,调用方缓存它防 stale(上游同款契约)
+    if (j.ok) return { ok: true, data: j.data, ...(typeof (j as { page?: unknown }).page === 'string' ? { page: (j as { page: string }).page } : {}) }
     return {
       ok: false,
       unreachable: false,

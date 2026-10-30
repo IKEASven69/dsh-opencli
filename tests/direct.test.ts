@@ -52,10 +52,14 @@ describe('线协议形状(请求侧)', () => {
 })
 
 describe('响应解包与能力位三态', () => {
-  it('成功信封 {ok:true,data} 透传 data', async () => {
-    stubFetch(async () => jsonResponse({ ok: true, data: { v: 42 } }))
+  it('成功信封 {ok:true,data} 透传 data;顶层 page 身份随响应捕获', async () => {
+    stubFetch(async () => jsonResponse({ ok: true, data: { v: 42 }, page: 'tgt-9' }))
     const r = await directExec('dsh', '1')
-    expect(r).toEqual({ ok: true, data: { v: 42 } })
+    expect(r).toEqual({ ok: true, data: { v: 42 }, page: 'tgt-9' })
+    stubFetch(async () => jsonResponse({ ok: true, data: 7 }))
+    const r2 = await directExec('dsh', '1')
+    expect(r2).toEqual({ ok: true, data: 7 })
+    expect('page' in (r2 as { page?: string })).toBe(false)
   })
 
   it('结构化失败 {ok:false,errorCode,error,hint} 全字段保留(协议在,不关能力位)', async () => {
