@@ -369,3 +369,16 @@ describe('canary 防御性只读门(安全审查 MEDIUM 回归)', () => {
     expect(md).toContain('fakehot hot')
   })
 })
+
+describe('renderTransportBenchmark(A4 传输对照)', () => {
+  it('双值:加速比行;directMs null:如实标注未测', async () => {
+    const { renderTransportBenchmark } = await import('../src/benchmark.ts')
+    const withBoth = renderTransportBenchmark({ cliMs: 1040, directMs: 87 })
+    expect(withBoth).toContain('1040 ms')
+    expect(withBoth).toContain('87 ms')
+    expect(withBoth).toContain('12.0x')
+    const noDirect = renderTransportBenchmark({ cliMs: 1040, directMs: null })
+    expect(noDirect).toContain('未测(daemon 未运行)')
+    expect(noDirect).not.toContain('x(')
+  })
+})

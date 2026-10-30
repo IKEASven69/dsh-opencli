@@ -31,7 +31,7 @@ import { SystemOne, noulYes } from './systemone.ts'
 import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, SITE_HEALTH, type RawEntry } from './knowledge.ts'
 import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
-import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
+import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, renderTransportBenchmark, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
 import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } from './evidence.ts'
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
@@ -1920,13 +1920,28 @@ export class OpencliService extends TypertRemoteService {
       // 站间间隔(最后一站后不等):串行基准的限流礼貌
       if (i < lines.length - 1 && this.benchGapMs > 0) await new Promise((res) => setTimeout(res, this.benchGapMs))
     }
+    // A4 传输对照:CLI 冷启动(opencli --version 全进程)vs daemon 直连探针往返——
+    // 浏览器原语类命令直连收益的量级证据,随每份基准报告落盘(基准是数字的出处)
+    let cliMs = -1
+    let directMs: number | null = null
+    try {
+      const t0 = Date.now()
+      await this.runOpencli(['--version'], 15_000)
+      cliMs = Date.now() - t0
+      if (directCapability() === 'ready' || (await directProbe())) {
+        const t1 = Date.now()
+        await directExec('dsh', '1')
+        directMs = Date.now() - t1
+      }
+    } catch { /* 对照失败不挡基准主报告 */ }
     const md = buildBenchmarkReport(results, new Date().toISOString())
+    const mdFinal = cliMs >= 0 ? md.replace('\n\n## ', `\n\n${renderTransportBenchmark({ cliMs, directMs })}## `) : md
     const dir = process.env.DSH_OPENCLI_BENCHMARKS_DIR ?? join(homedir(), '.dsh', 'opencli-benchmarks')
     try {
       await mkdir(dir, { recursive: true })
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
       const file = join(dir, `bench-${stamp}.md`)
-      await writeFile(file, md, 'utf8')
+      await writeFile(file, mdFinal, 'utf8')
       // 轮转:bench-<ISO> 字典序=时间序,超出保留数删最旧(与快照 50 份轮转同一思路)
       const olds = readdirSync(dir).filter((f) => /^bench-.+\.md$/.test(f)).sort()
       if (olds.length > BENCH_KEEP) for (const f of olds.slice(0, olds.length - BENCH_KEEP)) { try { unlinkSync(join(dir, f)) } catch { /* 并发已删 */ } }

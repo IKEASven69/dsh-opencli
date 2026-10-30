@@ -32,6 +32,21 @@ function cell(text: string, max = 80): string {
   return text.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim().slice(0, max)
 }
 
+export interface TransportBenchmark { /** CLI 冷启动毫秒(opencli --version 全进程) */ cliMs: number; /** daemon /command 直连往返毫秒(同探针) */ directMs: number | null }
+
+/** 传输对照段:CLI 冷启动税 vs 直连母语(A4)。directMs null=daemon 未起,如实标注。 */
+export function renderTransportBenchmark(tb: TransportBenchmark): string {
+  const ratio = tb.directMs !== null && tb.directMs > 0 ? (tb.cliMs / tb.directMs).toFixed(1) : null
+  const lines = [
+    '## 传输对照',
+    '',
+    '- CLI 路径(opencli --version,含 Node 冷启动): ' + tb.cliMs + ' ms',
+    '- daemon 直连(/command 往返): ' + (tb.directMs !== null ? tb.directMs + ' ms' : '未测(daemon 未运行)'),
+    ratio !== null ? '- 加速比: ' + ratio + 'x(浏览器原语类命令走直连的收益量级)' : '',
+    '',
+  ].filter((l) => l !== '')
+  return lines.join('\n')
+}
 export function buildBenchmarkReport(items: BenchItem[], genAt: string): string {
   const okN = items.filter((x) => x.ok).length
   const lines: string[] = []
