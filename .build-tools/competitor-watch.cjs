@@ -29,4 +29,4 @@ for (const t of TARGETS) {
   const j = gh(`repos/${t.repo}`) ?? { s: '?', p: '?' }
   console.log(`| ${t.repo} | ${j.s} | ${j.p} | ${rel(t.repo)} | ${t.note} |`)
 }
-console.log('\n(我们的注册表条目版本仍是 v0.3.4——PR 待批准;对比上周数字写回 docs/PM-RESEARCH)')
+console.log('\n(我方条目:awesome-dsh-plugin.com/zh/p/IKEASven69/dsh-opencli 与 dshmarket.com 均在,装的是浮动 URL releases/latest/download/dsh-opencli.tgz——发 GitHub release 即自动更新市场安装;npm 名 dsh-opencli 2026-10-25 被 hahaee 占注,发 npm 需作用域名)')
