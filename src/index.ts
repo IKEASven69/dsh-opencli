@@ -36,7 +36,7 @@ import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } 
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
-import { drainInbox, parseIntent, type IntentExecutor, type Intent } from './inbox.ts'
+import { drainInbox, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
 import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
 // 对话内预览卡(site/site_batch/opencli_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
@@ -3109,37 +3109,52 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
+   * 单条意图直接执行(0.4.6 B1,NL 指挥台确认按钮):与收件箱 drain 同一条 applyIntent 路径
+   * (同一道闭集校验/同一个执行器桥)——预览卡再怎么改,过不了白名单就执行不了。
+   */
+  @Remote('inbox-intent')
+  async inboxIntent(request: { intent: unknown }): Promise<IntentResult> {
+    const intent = parseIntent(request?.intent)
+    if (intent === null) return { ok: false, at: new Date().toISOString(), kind: '(invalid)', error: '意图不合法(白名单闭集校验未过)' }
+    return await applyIntent(intent, this.inboxExecutor())
+  }
+
+  /** 执行器桥(inbox-intent 与收件箱轮询共用;意图 → 既有 RPC 同源方法,一套逻辑两个入口)。 */
+  private inboxExecutor(): IntentExecutor {
+    return {
+      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}) }),
+      scheduleRemove: async (id) => this.scheduleRemove({ id }),
+      scheduleRun: async (id) => this.scheduleRunNow({ id }),
+      scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
+      notifySet: async (channels) => { const r = await this.notifyConfig({ channels }); return { ok: r.ok, error: r.error } },
+      notifyTest: async () => {
+        const config = this.state.notifyConfig ?? { channels: [] }
+        const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
+        if (channels.length === 0) return { ok: false, error: '尚未配置通知通道:先 notify set' }
+        const rs = await sendViaChannels(channels, 'dsh-openctl 测试通知', '如果你收到这条,通知通道配置成功。')
+        const bad = rs.filter((x) => !x.ok)
+        return { ok: bad.length === 0, error: bad.length === 0 ? undefined : bad.map((x) => `${x.name}:${x.error ?? ''}`).join('; ') }
+      },
+      reportBuild: async (id) => this.reportBuild({ id }),
+      status: async () => ({
+        plugin: 'dsh-opencli', version: PKG_VERSION, schedules: this.schedules.length,
+        ...(this.state.notifyConfig !== undefined ? { notifyChannels: this.state.notifyConfig.channels.length } : {}),
+      }),
+      event: (text) => {
+        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'inbox', text })
+        this.ingestEventList = this.ingestEventList.slice(0, 30)
+      },
+    }
+  }
+
+  /**
    * 收件箱消费(F1):意图 → 既有服务方法(RPC 同源,一套逻辑两个入口)。轮询循环与专项
    * 测试都走这里;任何异常吞掉记事件——收件箱是旁路面,绝不反噬宿主进程。
    * notify-test 走 buildNotifyChannels 真发一次(与调度通知同链),发到的是用户已配通道。
    */
   private async drainInboxSafe(): Promise<void> {
     try {
-      const ex: IntentExecutor = {
-        scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}) }),
-        scheduleRemove: async (id) => this.scheduleRemove({ id }),
-        scheduleRun: async (id) => this.scheduleRunNow({ id }),
-        scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
-        notifySet: async (channels) => { const r = await this.notifyConfig({ channels }); return { ok: r.ok, error: r.error } },
-        reportBuild: async (id) => this.reportBuild({ id }),
-        notifyTest: async () => {
-          const config = this.state.notifyConfig ?? { channels: [] }
-          const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
-          if (channels.length === 0) return { ok: false, error: '尚未配置通知通道:先 notify set' }
-          const rs = await sendViaChannels(channels, 'dsh-openctl 测试通知', '如果你收到这条,通知通道配置成功。')
-          const bad = rs.filter((x) => !x.ok)
-          return { ok: bad.length === 0, error: bad.length === 0 ? undefined : bad.map((x) => `${x.name}:${x.error ?? ''}`).join('; ') }
-        },
-        status: async () => ({
-          plugin: 'dsh-opencli', version: PKG_VERSION, schedules: this.schedules.length,
-          ...(this.state.notifyConfig !== undefined ? { notifyChannels: this.state.notifyConfig.channels.length } : {}),
-        }),
-        event: (text) => {
-          this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'inbox', text })
-          this.ingestEventList = this.ingestEventList.slice(0, 30)
-        },
-      }
-      await drainInbox(ex)
+      await drainInbox(this.inboxExecutor())
     } catch { /* 收件箱旁路:静默 */ }
   }
 

@@ -37,6 +37,9 @@ const STR = {
     daemonRunning: '运行中', daemonDown: '未运行', daemonStale: '失联', bridgeOn: '已连接', bridgeOff: '未连接',
     recheck: '重新巡检', checking: '巡检中…', diagAll: '一切正常', detail: '详情',
     tryT: '试试看', trySub: '在对话里直接说,或先在这里跑一条 · 点右侧快捷/命令徽章 → 填入输入框',
+    nlT: '自然语言指挥台', nlSub: '一句话描述你想做的事,确认后由插件执行(用你当前的模型,一次调用)',
+    nlPh: '例:每天早9点把掘金热榜存档,AI 相关的推送给我', nlGo: '映射', nlMapping: '映射中…',
+    nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行',
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑',
     loginT: '登录态巡检', loginSub: '绿=已登 黄=超时 红=未登 · 状态条只亮灯,操作在这里',
@@ -117,6 +120,9 @@ const STR = {
     daemonRunning: 'running', daemonDown: 'not running', daemonStale: 'stale', bridgeOn: 'connected', bridgeOff: 'not connected',
     recheck: 'Re-check', checking: 'checking…', diagAll: 'All good', detail: 'detail',
     tryT: 'Try it', trySub: 'Say it in chat, or run one here · click a quick pick/command badge to fill the input',
+    nlT: 'Natural-language console', nlSub: 'Describe what you want in one line, review the mapped intent, then apply (uses your current model, one call)',
+    nlPh: 'e.g. archive juejin hot every day at 9am and ping me on AI news', nlGo: 'Map', nlMapping: 'Mapping…',
+    nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied',
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run',
     loginT: 'Login check', loginSub: 'green=logged-in yellow=timeout red=expired · status bar shows dots, actions live here',
@@ -239,6 +245,7 @@ async function copyText(text: string): Promise<boolean> {
 /* ── 统一线性图标 sprite(1.8 描边圆角)+ 品牌鲸标 ── */
 const SPRITE = `<svg width="0" height="0" style="position:absolute">
 <symbol id="i4-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3" /></symbol>
+<symbol id="i4-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></symbol>
 <symbol id="i4-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" /></symbol>
 <symbol id="i4-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></symbol>
 <symbol id="i4-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
@@ -288,7 +295,7 @@ const SPRITE = `<svg width="0" height="0" style="position:absolute">
 <symbol id="i4-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></symbol>
 </svg>`
 
-type IconName = 'play' | 'zap' | 'activity' | 'clock' | 'rec' | 'layers' | 'shield' | 'sliders' | 'plus' | 'refresh' | 'search' | 'chev-r' | 'chev-d' | 'alert' | 'check-c' | 'ext' | 'info' | 'monitor' | 'copy' | 'brand' | 'book'
+type IconName = 'play' | 'zap' | 'activity' | 'clock' | 'rec' | 'layers' | 'shield' | 'sliders' | 'plus' | 'refresh' | 'search' | 'chev-r' | 'chev-d' | 'alert' | 'check-c' | 'ext' | 'info' | 'monitor' | 'copy' | 'brand' | 'book' | 'sparkles'
 
 
 const ava = (site: string, px = 26): ReturnType<typeof createElement> => {
@@ -305,7 +312,47 @@ const ic = (name: IconName, sm = false): ReturnType<typeof createElement> =>
 
 /* ── v0.4 样式:基宽 800 自适应;冷灰深色 + #4A9EFF ── */
 const CSS = `
-.o4 { width:100%; max-width:640px; margin:0 auto; display:flex; flex-direction:column; gap:11px; font-family:-apple-system,'Segoe UI','Microsoft YaHei',system-ui,sans-serif; color:#F9FAFB; position:relative; }
+/* ── 设计 token 层(0.4.6 B3):色板/字阶/间距/圆角/阴影/动效时长,全面板唯一出处 ── */
+.o4 {
+  --c-bg: rgba(255,255,255,.03);
+  --c-bg-2: rgba(255,255,255,.055);
+  --c-line: rgba(255,255,255,.07);
+  --c-line-2: rgba(255,255,255,.13);
+  --c-fg: #F9FAFB;
+  --c-fg-dim: rgba(249,250,251,.62);
+  --c-fg-faint: rgba(249,250,251,.38);
+  --c-accent: #5B8DEF;
+  --c-accent-soft: rgba(91,141,239,.14);
+  --c-ok: #34C77B;
+  --c-ok-soft: rgba(52,199,123,.13);
+  --c-warn: #E8A13C;
+  --c-warn-soft: rgba(232,161,60,.14);
+  --c-err: #E5534B;
+  --c-err-soft: rgba(229,83,75,.14);
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+  --sh-1: 0 1px 2px rgba(0,0,0,.4);
+  --sh-2: 0 4px 16px rgba(0,0,0,.35);
+  --sh-pop: 0 12px 40px rgba(0,0,0,.5);
+  --t-fast: 120ms; --t-med: 220ms; --t-slow: 420ms;
+  --ease: cubic-bezier(.32,.72,.28,1);
+  --ease-spring: cubic-bezier(.34,1.4,.5,1);
+}
+/* 动效基建:入场 stagger(卡片依次浮起)/浮起反馈/骨架屏呼吸;reduced-motion 全关 */
+@keyframes o4-rise { from { opacity:0; transform:translateY(10px) scale(.985) } to { opacity:1; transform:none } }
+@keyframes o4-skeleton { 0%,100% { opacity:.35 } 50% { opacity:.75 } }
+@keyframes o4-breath { 0%,100% { box-shadow:0 0 0 0 var(--c-accent-soft) } 50% { box-shadow:0 0 0 6px transparent } }
+.o4 [data-anim] { animation:o4-rise var(--t-slow) var(--ease) both; }
+.o4 [data-anim] > * { animation:inherit; }
+.o4 .o4-skel { background:var(--c-bg-2); border-radius:var(--r-sm); animation:o4-skeleton 1.4s ease-in-out infinite; }
+.o4 .o4-running { animation:o4-breath 2s var(--ease) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .o4 [data-anim], .o4 [data-anim] > *, .o4 .o4-skel, .o4 .o4-running { animation:none !important; }
+  .o4 * { transition-duration:0ms !important; }
+}
+.o4-nlprev { margin-top:9px; background:var(--c-accent-soft); border:1px solid var(--c-accent); border-radius:var(--r-md); padding:12px 14px; display:flex; flex-direction:column; gap:8px; box-shadow:var(--sh-2); }
+.o4-card { transition:transform var(--t-fast) var(--ease), box-shadow var(--t-med) var(--ease), border-color var(--t-med) var(--ease); }
+.o4-card:hover { transform:translateY(-1px); box-shadow:var(--sh-2); border-color:var(--c-line-2); }
+.o4 { width:100%; max-width:640px; margin:0 auto; display:flex; flex-direction:column; gap:11px; font-family:-apple-system,'Segoe UI','Microsoft YaHei',system-ui,sans-serif; color:var(--c-fg); position:relative; }
 .o4 ::-webkit-scrollbar { width:7px; height:7px; }
 .o4 ::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); border-radius:4px; }
 .o4 ::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.2); }
@@ -518,6 +565,12 @@ function Panel(): ReturnType<typeof createElement> {
   const [runInput, setRunInput] = useState('site zhihu hot')
   const [running, setRunning] = useState(false)
   const [runOut, setRunOut] = useState<{ cmd: string; text: string; ok: boolean } | null>(null)
+  // NL 指挥台(B1):输入→nl-intent→预览卡(逐字段可改)→确认投递 inbox 消费
+  const [nlInput, setNlInput] = useState('')
+  const [nlBusy, setNlBusy] = useState(false)
+  const [nlErr, setNlErr] = useState('')
+  const [nlPreview, setNlPreview] = useState<{ explanation: string; intent: Record<string, unknown> } | null>(null)
+  const [nlDone, setNlDone] = useState('')
   // 命令
   const [query, setQuery] = useState('')
   const [details, setDetails] = useState<Record<string, AdapterDetailResult>>({})
@@ -647,6 +700,46 @@ function Panel(): ReturnType<typeof createElement> {
   }
 
   const fillInput = (cmd: string): void => { setRunInput(cmd); setTab('ov') }
+  // NL 指挥台(B1):映射→预览→确认(投递 inbox 消费——与 ctl 完全同一条可信/审计链)
+  const INT_FIELDS: Array<[string, string]> = [
+    ['kind', '类型'], ['site', '站点命令'], ['cron', '频率(cron)'], ['watch', '盯的关键词'],
+    ['notify', '通知'], ['retry', '重试'], ['id', '任务 id'], ['channels', '通道'],
+  ]
+  const nlFieldRows = (intent: Record<string, unknown>, set: (k: string, v: unknown) => void): ReturnType<typeof createElement>[] =>
+    INT_FIELDS.filter(([k]) => intent[k] !== undefined).map(([k, label]) => {
+      const v = intent[k]
+      const text = typeof v === 'object' ? JSON.stringify(v) : String(v)
+      return createElement('div', { key: k, style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+        createElement('span', { style: { flex: 'none', width: '86px', fontSize: '11.5px', color: 'var(--c-fg-dim)' } }, label),
+        typeof v === 'object' || text.length > 42
+          ? createElement('textarea', { className: 'o4-in mono', style: { flex: '1', minHeight: '30px', fontSize: '11.5px' }, value: text, onChange: (e: { target: { value: string } }) => { if (k === 'channels') { try { set(k, JSON.parse(e.target.value)) } catch { /* JSON 未写完,不更新 */ } } else set(k, e.target.value) } })
+          : createElement('input', { className: 'o4-in mono', style: { flex: '1' }, value: text, onChange: (e: { target: { value: string } }) => set(k, e.target.value) }),
+      )
+    })
+  const runNl = async (): Promise<void> => {
+    const text = nlInput.trim()
+    if (text.length === 0 || nlBusy) return
+    setNlBusy(true); setNlErr(''); setNlPreview(null); setNlDone('')
+    const r = await rpc<{ ok: boolean; explanation?: string; intent?: Record<string, unknown>; error?: string }>('nl-intent', { request: { text } } as unknown as Record<string, unknown>)
+    setNlBusy(false)
+    const v = r.value
+    if (!r.ok || v === undefined || v.ok !== true || v.intent === undefined) {
+      setNlErr(v?.error ?? r.error?.message ?? t2('nlErrNoLlm'))
+      return
+    }
+    setNlPreview({ explanation: v.explanation ?? '', intent: v.intent })
+  }
+  const applyNl = async (): Promise<void> => {
+    if (nlPreview === null || nlBusy) return
+    setNlBusy(true); setNlErr('')
+    const r = await rpc<{ ok: boolean; error?: string }>('inbox-intent', { request: { intent: nlPreview.intent } } as unknown as Record<string, unknown>)
+    setNlBusy(false)
+    if (r.ok && r.value?.ok !== false) {
+      setNlDone(t2('nlApplied')); setNlPreview(null); setNlInput('')
+    } else {
+      setNlErr(r.value?.error ?? r.error?.message ?? '执行失败')
+    }
+  }
 
   const toggleDisable = async (name: string, disabled: boolean): Promise<void> => {
     if (disabled === false || window.confirm(t2('confirmDisable')(name))) {
@@ -794,6 +887,37 @@ function Panel(): ReturnType<typeof createElement> {
             onCopyCliInstall: () => { void copyText('npm i -g @jackwener/opencli').then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) },
           })
         : null,
+      // NL 指挥台(0.4.6 B1,总览主行动):一句话 → 意图预览卡(逐字段可改)→ 确认执行
+      createElement('div', { className: 'o4-card', 'data-anim': '' },
+        createElement('div', { className: 'o4-h3' },
+          createElement('span', { className: 'o4-miniico' }, ic('sparkles', true)),
+          t2('nlT'),
+          nlDone !== '' ? createElement('span', { className: 'rt', style: { color: 'var(--c-ok)', fontSize: '12px' } }, nlDone) : null,
+        ),
+        createElement('div', { className: 'o4-sub' }, t2('nlSub')),
+        createElement('div', { style: { display: 'flex', gap: '8px' } },
+          createElement('input', {
+            className: 'o4-in', value: nlInput,
+            placeholder: t2('nlPh'),
+            onChange: (e: { target: { value: string } }) => { setNlInput(e.target.value); setNlErr(''); setNlDone('') },
+            onKeyDown: (e: { key: string }) => { if (e.key === 'Enter' && !nlBusy) void runNl() },
+          }),
+          createElement('button', { className: 'o4-btn', disabled: nlBusy || nlInput.trim().length === 0, onClick: () => { void runNl() } }, nlBusy ? t2('nlMapping') : t2('nlGo')),
+        ),
+        nlErr !== '' ? createElement('div', { className: 'o4-sub', style: { color: 'var(--c-err)' } }, nlErr) : null,
+        nlPreview !== null
+          ? createElement('div', { className: 'o4-nlprev', 'data-anim': '' },
+              createElement('div', { className: 'o4-sub' }, nlPreview.explanation || t2('nlNoExpl')),
+              ...nlFieldRows(nlPreview.intent, (k, v) => {
+                setNlPreview((p) => (p === null ? p : { ...p, intent: { ...p.intent, [k]: v } }))
+              }),
+              createElement('div', { style: { display: 'flex', gap: '8px', marginTop: '4px' } },
+                createElement('button', { className: 'o4-btn', disabled: nlBusy, onClick: () => { void applyNl() } }, t2('nlApply')),
+                createElement('button', { className: 'o4-btn ghost sm', onClick: () => { setNlPreview(null); setNlInput('') } }, t2('nlDiscard')),
+              ),
+            )
+          : null,
+      ),
       // 试试看(通栏)
       createElement('div', { className: 'o4-card' },
         createElement('div', { className: 'o4-h3' },
