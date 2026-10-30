@@ -36,7 +36,8 @@ import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } 
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
-import { drainInbox, type IntentExecutor } from './inbox.ts'
+import { drainInbox, parseIntent, type IntentExecutor, type Intent } from './inbox.ts'
+import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
 // 对话内预览卡(site/site_batch/opencli_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
 export { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
@@ -2014,6 +2015,103 @@ export class OpencliService extends TypertRemoteService {
     delete this.runHistory[String(request.id ?? '')]
     await this.saveState()
     return { ok: true }
+  }
+
+  /**
+   * NL 意图映射(0.4.6 B1):自然语言 → ctl 同款闭集意图(经宿主 llm)。显式按钮触发——
+   * 花的是用户自己的模型额度,且映射结果必须过预览卡确认,不做黑箱执行。
+   * llm 服务缺席(web 之外的宿主)→ ok:false 带指引;模型输出不合法 → ok:false(绝不猜测补全)。
+   */
+  @Remote('nl-intent')
+  async nlIntent(request: { text: string }): Promise<{ ok: boolean; explanation?: string; intent?: Intent; error?: string }> {
+    const text = String(request?.text ?? '')
+    if (text.trim().length === 0) return { ok: false, error: '输入为空' }
+    // 动态取用(不 static inject:裸 Context 测试宿主没有 llm,inject 会让插件整装失败)
+    const llm = (this.ctx as unknown as { get?: (n: string) => unknown }).get?.('llm') as
+      | { stream: (o: Record<string, unknown>) => AsyncIterable<unknown> }
+      | undefined
+    if (llm === undefined) return { ok: false, error: '宿主未提供 llm 服务(NL 指挥台需要 dsh web 宿主)' }
+    const selection = (this.ctx as unknown as { get?: (n: string) => unknown }).get?.('agentDefaultModel') as
+      | { currentSelection?: () => { provider: string; model: string } }
+      | undefined
+    let provider: string | undefined
+    let model: string | undefined
+    try { const s = selection?.currentSelection?.(); if (s !== undefined) { provider = s.provider; model = s.model } } catch { /* 用 llm 默认路由 */ }
+    // 热门站点命令:适配器目录蒸馏(已有缓存)的前 30 条零参命令
+    const commands = this.hotCommands(30)
+    const ctxNl: NlContext = {
+      commands,
+      schedules: this.schedules.slice(0, 20).map((s) => ({ id: s.id, site: s.site })),
+      channels: (this.state.notifyConfig?.channels ?? []).map((c) => c.type),
+    }
+    // 候选路由:默认选择优先,401/403(key 失效)时轮试其他已注册 provider。每条路由都先
+    // resolveModelInfo 拿适配器默认模型(undefined model 会炸 INVALID_MODEL_INFO,真机踩过)
+    const candidates: Array<{ provider?: string; model?: string }> = []
+    if (provider !== undefined && model !== undefined) candidates.push({ provider, model })
+    try {
+      const providers = (llm as unknown as { listProviders?: () => Array<{ id?: string; name?: string }>; resolveModelInfo?: (p: string, m?: string) => Promise<{ id?: string }> }).listProviders?.() ?? []
+      for (const p of providers) {
+        const id = p.id ?? p.name
+        if (id === undefined || candidates.some((c) => c.provider === id)) continue
+        try {
+          const info = await llm.resolveModelInfo?.(id, undefined)
+          const mid = typeof info?.id === 'string' && info.id.length > 0 ? info.id : undefined
+          candidates.push({ provider: id, ...(mid !== undefined ? { model: mid } : {}) })
+        } catch { /* 该 provider 解析不出默认模型,跳过 */ }
+      }
+    } catch { /* 只有默认路由可用 */ }
+    let raw = ''
+    let llmErr = ''
+    const call: LlmCaller = async (system, user) => {
+      let lastErr: Error | null = null
+      for (const route of candidates.length > 0 ? candidates : [{}]) {
+        raw = ''
+        try {
+          const stream = llm.stream({
+            ...(route.provider !== undefined ? { provider: route.provider, ...(route.model !== undefined ? { model: route.model } : {}) } : {}),
+            system,
+            messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
+            temperature: 0,
+          })
+          for await (const chunk of stream) {
+            const c = chunk as { type?: string; text?: string; reason?: { kind?: string; failure?: { code?: string; message?: string } } }
+            if (c.type === 'text-delta' && typeof c.text === 'string') raw += c.text
+            if (c.type === 'finish' && (c.reason?.kind === 'error' || c.reason?.kind === 'aborted')) {
+              throw new Error(`llm ${c.reason?.kind}: ${c.reason?.failure?.code ?? ''} ${c.reason?.failure?.message ?? ''}`)
+            }
+          }
+          if (raw.trim().length > 0) return raw
+          lastErr = new Error('空输出')
+        } catch (e) {
+          lastErr = e instanceof Error ? e : new Error(String(e))
+          // 鉴权类错误才轮试下一条路由;其他(超时/网络)也试下一条,反正候选少
+        }
+      }
+      llmErr = lastErr !== null ? lastErr.message.slice(0, 200) : '无可用路由'
+      throw lastErr ?? new Error('无可用路由')
+    }
+    const r = await nlToIntent(call, text, ctxNl)
+    if (r === null) {
+      if (llmErr.length > 0) return { ok: false, error: '映射失败:llm 调用出错 ' + llmErr + '(可在面板 Models 页检查模型 key)' }
+      if (raw.trim().length === 0) return { ok: false, error: '映射失败:llm 无文本输出(路由/额度问题?宿主模型会话可正常对话则重试)' }
+      return { ok: false, error: '映射失败:模型输出未通过闭集校验。原始输出头:' + raw.slice(0, 160).replace(/\n/g, ' ') + ' ——可换更明确的说法,或用命令模式/ctl' }
+    }
+    return { ok: true, explanation: r.explanation, intent: r.intent }
+  }
+
+  /** 热门站点命令(目录蒸馏,零参命令优先,给 NL 映射当候选)。 */
+  private hotCommands(limit: number): string[] {
+    const out: string[] = []
+    const dir = (this.adapterCache as { json?: unknown } | null)?.json as { sites?: Array<{ name: string; commands?: Array<{ name: string; args?: string[] }> }> } | undefined
+    for (const site of dir?.sites ?? []) {
+      for (const c of site.commands ?? []) {
+        if ((c.args ?? []).length === 0) {
+          out.push(`site ${site.name} ${c.name}`)
+          if (out.length >= limit) return out
+        }
+      }
+    }
+    return out
   }
 
   @Remote('try-run')
