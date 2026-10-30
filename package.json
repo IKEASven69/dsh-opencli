@@ -1,7 +1,7 @@
 {
   "name": "dsh-opencli",
   "description": "登录态浏览器自动化 dsh 插件:让 agent 用你自己登录态的真实浏览器办事——170+ 站点一步式结构化命令(site),任意网页 browser 原语兜底,写操作带审批门,采集结果经执行真实性判定。Logged-in browser automation for DeepSeek Harness: 170+ one-step structured site commands, generic browser primitives for any page, approval-gated writes, and action-evidence verification of collected results.",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "publishConfig": {
     "access": "public"
   },
