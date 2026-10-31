@@ -1828,7 +1828,8 @@ export class OpencliService extends TypertRemoteService {
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     try {
       const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
-      const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-21)
+      let files: string[] = []
+      try { files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-21) } catch { return { ok: true, days: [] } } // 目录不存在=零采集任务,空时间线而非 ENOENT
       if (files.length < 2) return { ok: true, days: [] }
       const days: Array<{ day: string; added: number; removed: number; moved: number; summary: string }> = []
       for (let i = 1; i < files.length; i++) {
