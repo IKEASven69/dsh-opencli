@@ -2119,31 +2119,46 @@ export class OpencliService extends TypertRemoteService {
       schedules: this.schedules.slice(0, 20).map((s) => ({ id: s.id, site: s.site })),
       channels: (this.state.notifyConfig?.channels ?? []).map((c) => c.type),
     }
-    // 候选路由:默认选择优先,401/403(key 失效)时轮试其他已注册 provider。每条路由都先
-    // resolveModelInfo 拿适配器默认模型(undefined model 会炸 INVALID_MODEL_INFO,真机踩过)
+    // 候选路由:默认选择优先,401/403(key 失效)时轮试其他已注册 provider。
+    // 模型名来源(按序):① llm.resolveModelInfo(provider, undefined)(适配器有默认则用);
+    // ② llm.listModels(provider) 首项(panel 添加 provider 时注册的模型清单,如 minimax-cn
+    //   的 MiniMax-M3.1-Flash——pi-ai 无"default model"语义,undefined model 必炸,真机踩过)。
     const candidates: Array<{ provider?: string; model?: string }> = []
     if (provider !== undefined && model !== undefined) candidates.push({ provider, model })
     try {
-      const providers = (llm as unknown as { listProviders?: () => Array<{ id?: string; name?: string }>; resolveModelInfo?: (p: string, m?: string) => Promise<{ id?: string }> }).listProviders?.() ?? []
+      const llmX = llm as unknown as { listProviders?: () => Array<{ id?: string; name?: string }>; resolveModelInfo?: (p: string, m?: string) => Promise<{ id?: string }>; listModels?: (p: string) => Promise<Array<{ id?: string }>> }
+      const providers = llmX.listProviders?.() ?? []
       for (const p of providers) {
         const id = p.id ?? p.name
         if (id === undefined || candidates.some((c) => c.provider === id)) continue
+        let pushed = false
         try {
-          const info = await llm.resolveModelInfo?.(id, undefined)
+          const info = await llmX.resolveModelInfo?.(id, undefined)
           const mid = typeof info?.id === 'string' && info.id.length > 0 ? info.id : undefined
-          candidates.push({ provider: id, ...(mid !== undefined ? { model: mid } : {}) })
-        } catch { /* 该 provider 解析不出默认模型,跳过 */ }
+          if (mid !== undefined) { candidates.push({ provider: id, model: mid }); pushed = true }
+        } catch { /* 无默认语义的适配器(如 pi-ai)会炸——fallthrough 到模型清单 */ }
+        if (!pushed) {
+          try {
+            const models = await llmX.listModels?.(id)
+            const mid = Array.isArray(models) && models.length > 0 && typeof models[0]!.id === 'string' ? models[0]!.id : undefined
+            candidates.push({ provider: id, ...(mid !== undefined ? { model: mid } : {}) })
+          } catch { candidates.push({ provider: id }) }
+        }
       }
     } catch { /* 只有默认路由可用 */ }
     let raw = ''
     let llmErr = ''
     const call: LlmCaller = async (system, user) => {
       let lastErr: Error | null = null
+      const tried: string[] = []
       for (const route of candidates.length > 0 ? candidates : [{}]) {
+        // 无 model 的候选跳过(pi-ai 对 undefined model 报 UNKNOWN_MODEL,真机踩过)——
+        // 只信 resolveModelInfo 成功解析出确切模型的
+        if (route.provider !== undefined && route.model === undefined) { tried.push(route.provider + '(无默认模型,跳)'); continue }
         raw = ''
         try {
           const stream = llm.stream({
-            ...(route.provider !== undefined ? { provider: route.provider, ...(route.model !== undefined ? { model: route.model } : {}) } : {}),
+            ...(route.provider !== undefined ? { provider: route.provider, model: route.model } : {}),
             system,
             messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
             temperature: 0,
@@ -2157,12 +2172,15 @@ export class OpencliService extends TypertRemoteService {
           }
           if (raw.trim().length > 0) return raw
           lastErr = new Error('空输出')
+          tried.push((route.provider ?? 'default') + '(空输出)')
         } catch (e) {
           lastErr = e instanceof Error ? e : new Error(String(e))
-          // 鉴权类错误才轮试下一条路由;其他(超时/网络)也试下一条,反正候选少
+          tried.push((route.provider ?? 'default') + '(' + lastErr.message.slice(0, 40) + ')')
         }
       }
       llmErr = lastErr !== null ? lastErr.message.slice(0, 200) : '无可用路由'
+      // 带轮试轨迹:用户能看到试过哪些路由、各为什么失败(诊断不再靠猜)
+      llmErr = tried.length > 0 ? llmErr + ' [轮试:' + tried.join(' → ') + ']' : llmErr
       throw lastErr ?? new Error('无可用路由')
     }
     const r = await nlToIntent(call, text, ctxNl)
