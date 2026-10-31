@@ -160,3 +160,49 @@ describe('report-build 意图(F1 补齐)', () => {
     expect(JSON.stringify(r.value)).toContain('sched-9')
   })
 })
+
+describe('0.4.6 补强批次:undo/backup/source/notifyLevel', () => {
+  it('意图闭集:undo(带 stem)/backup 通过;schedule-add 带 source/notifyLevel 白名单内通过,伪造 source 拒绝', () => {
+    expect(parseIntent({ kind: 'undo', stem: '1793-abc' })).toEqual({ kind: 'undo', stem: '1793-abc' })
+    expect(parseIntent({ kind: 'backup' })).toEqual({ kind: 'backup' })
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', source: 'chat', notifyLevel: 'quiet' })).not.toBeNull()
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', source: 'eval' })).toBeNull()
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', notifyLevel: 'sometimes' })).toBeNull()
+  })
+
+  it('undo:从 processed 回执取 id 调 scheduleRemove;backup:落 JSON 并返回路径', async () => {
+    const removed: string[] = []
+    const backedUp: string[] = []
+    const ex = {
+      scheduleAdd: async () => ({ ok: true, id: 'sched-1' }), scheduleRemove: async (id: string) => { removed.push(id); return { ok: true } },
+      scheduleRun: async () => ({ ok: true }), scheduleList: async () => ({ ok: true, schedules: [] }),
+      notifySet: async () => ({ ok: true }), notifyTest: async () => ({ ok: true }),
+      reportBuild: async () => ({ ok: true }),
+      undo: async (stem: string) => {
+        // 与 index.ts 执行器同语义:读 processed 回执取 id
+        try {
+          const result = JSON.parse(readFileSync(join(dir, stem + '.result.json'), 'utf8')) as { kind?: string; value?: { id?: string } }
+          if (result.kind !== 'schedule-add' || typeof result.value?.id !== 'string') return { ok: false, error: '该意图不可撤销' }
+          return await ex2.scheduleRemove(result.value.id)
+        } catch { return { ok: false, error: '找不到回执' } }
+      },
+      backup: async () => { backedUp.push('1'); return { ok: true, file: 'dsh-opencli-backup.json' } },
+      status: async () => ({}), event: () => {},
+    }
+    const ex2 = ex
+    // 建 add 意图并消费,回执落在 processed
+    writeFileSync(join(dir, '500-add.json'), JSON.stringify({ kind: 'schedule-add', site: 'site zhihu hot', cron: '0 9 * * *', source: 'chat' }))
+    await drainInbox(ex)
+    const addResult = JSON.parse(readFileSync(join(dir, '500-add.result.json'), 'utf8')) as { kind?: string; value?: { id?: string } }
+    expect(addResult.value?.id).toBe('sched-1')
+    // undo 同 stem:回执里取 id → remove 被调
+    writeFileSync(join(dir, '501-undo.json'), JSON.stringify({ kind: 'undo', stem: '500-add' }))
+    await drainInbox(ex)
+    expect(removed).toEqual(['sched-1'])
+    expect(backedUp.length).toBe(0)
+    // backup
+    writeFileSync(join(dir, '502-bk.json'), JSON.stringify({ kind: 'backup' }))
+    await drainInbox(ex)
+    expect(backedUp.length).toBe(1)
+  })
+})

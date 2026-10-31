@@ -23,13 +23,16 @@ export const inboxDir = (): string => process.env.DSH_OPENCLI_INBOX_DIR ?? join(
 
 /** 意图(闭集):kind 与字段全部显式,多余字段=拒绝。 */
 export type Intent =
-  | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number }
+  | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number; source?: string; notifyLevel?: string }
   | { kind: 'schedule-remove'; id: string }
   | { kind: 'schedule-run'; id: string }
   | { kind: 'schedule-list' }
   | { kind: 'notify-set'; channels: Array<{ type: 'webhook' | 'email' | 'dsh'; url?: string; to?: string; enabled?: boolean }> }
   | { kind: 'notify-test' }
   | { kind: 'report-build'; id: string }
+  | { kind: 'undo'; stem: string }
+  | { kind: 'backup' }
+  | { kind: 'report-export'; id: string }
   | { kind: 'status' }
 
 /** 消费结果:ctl --wait 读它向 agent 回话。 */
@@ -50,6 +53,9 @@ export interface IntentExecutor {
   notifySet(channels: Intent extends never ? never : Extract<Intent, { kind: 'notify-set' }>['channels']): Promise<{ ok: boolean; error?: string }>
   notifyTest(): Promise<{ ok: boolean; error?: string }>
   reportBuild(id: string): Promise<{ ok: boolean; path?: string; error?: string }>
+  undo(stem: string): Promise<{ ok: boolean; error?: string }>
+  backup(): Promise<{ ok: boolean; file?: string; error?: string }>
+  reportExport(id: string): Promise<{ ok: boolean; text?: string; rows?: number; count?: number; error?: string }>
   status(): Promise<Record<string, unknown>>
   event(text: string): void
 }
@@ -63,12 +69,14 @@ export function parseIntent(raw: unknown): Intent | null {
   const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0
   switch (o.kind) {
     case 'schedule-add':
-      if (!allow(['kind', 'site', 'cron', 'watch', 'notify', 'retry'])) return null
+      if (!allow(['kind', 'site', 'cron', 'watch', 'notify', 'retry', 'source', 'notifyLevel'])) return null
       if (!str(o.site) || !str(o.cron)) return null
       if (o.watch !== undefined && typeof o.watch !== 'string') return null
       if (o.notify !== undefined && typeof o.notify !== 'boolean') return null
       if (o.retry !== undefined && (typeof o.retry !== 'number' || !Number.isFinite(o.retry))) return null
-      return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}) } as Intent
+      if (o.source !== undefined && (typeof o.source !== 'string' || !['agent', 'chat', 'panel', 'ctl'].includes(o.source))) return null
+      if (o.notifyLevel !== undefined && o.notifyLevel !== 'quiet' && o.notifyLevel !== 'all') return null
+      return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}), ...(o.source !== undefined ? { source: o.source } : {}), ...(o.notifyLevel !== undefined ? { notifyLevel: o.notifyLevel } : {}) } as Intent
     case 'schedule-remove':
       return allow(['kind', 'id']) && str(o.id) ? { kind: 'schedule-remove', id: o.id } : null
     case 'schedule-run':
@@ -92,6 +100,12 @@ export function parseIntent(raw: unknown): Intent | null {
     }
     case 'notify-test':
       return allow(['kind']) ? { kind: 'notify-test' } : null
+    case 'undo':
+      return allow(['kind', 'stem']) && str(o.stem) ? { kind: 'undo', stem: o.stem } : null
+    case 'report-export':
+      return allow(['kind', 'id']) && str(o.id) ? { kind: 'report-export', id: o.id } : null
+    case 'backup':
+      return allow(['kind']) ? { kind: 'backup' } : null
     case 'report-build':
       return allow(['kind', 'id']) && str(o.id) ? { kind: 'report-build', id: o.id } : null
     case 'status':
@@ -133,6 +147,18 @@ export async function applyIntent(intent: Intent, ex: IntentExecutor): Promise<I
       case 'report-build': {
         const r = await ex.reportBuild(intent.id)
         return { ok: r.ok, at, kind: intent.kind, ...(r.ok ? { value: { path: r.path } } : { error: r.error ?? '生成失败' }) }
+      }
+      case 'report-export': {
+        const r = await ex.reportExport(intent.id)
+        return { ok: r.ok, at, kind: intent.kind, ...(r.ok ? { value: { text: r.text, rows: r.rows, count: r.count } } : { error: r.error ?? '导出失败' }) }
+      }
+      case 'undo': {
+        const r = await ex.undo(intent.stem)
+        return { ok: r.ok, at, kind: intent.kind, ...(r.ok ? {} : { error: r.error ?? '撤销失败' }) }
+      }
+      case 'backup': {
+        const r = await ex.backup()
+        return { ok: r.ok, at, kind: intent.kind, ...(r.ok ? { value: { file: r.file } } : { error: r.error ?? '备份失败' }) }
       }
       case 'status':
         return { ok: true, at, kind: intent.kind, value: await ex.status() }

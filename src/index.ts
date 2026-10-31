@@ -36,8 +36,9 @@ import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } 
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
-import { drainInbox, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
+import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
 import { diffSnapshots, renderDiffText } from './diffsnap.ts'
+import { exportSnapshots } from './exportcsv.ts'
 import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
 // 对话内预览卡(site/site_batch/opencli_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
@@ -1520,7 +1521,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (request === undefined) request = {} as never
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
@@ -1550,6 +1551,9 @@ export class OpencliService extends TypertRemoteService {
     }
     const id = String(Date.now())
     const entry: typeof this.schedules[number] = { id, site, cron, createdAt: new Date().toISOString(), enabled: true }
+    // 补强⑤④:来源标记(agent/chat/panel/ctl——面板任务行徽章,分不清谁建的问题)+ 通知级别(quiet=只推变化与失败)
+    if (typeof request.source === 'string' && ['agent', 'chat', 'panel', 'ctl'].includes(request.source)) entry.source = request.source
+    if (request.notifyLevel === 'quiet' || request.notifyLevel === 'all') entry.notifyLevel = request.notifyLevel
     if (typeof request.retry === 'number' && Number.isFinite(request.retry)) entry.retry = Math.max(1, Math.min(5, Math.round(request.retry)))
     if (typeof request.notify === 'boolean') entry.notify = request.notify
     if (watch !== undefined) entry.watch = watch
@@ -1808,6 +1812,61 @@ export class OpencliService extends TypertRemoteService {
       })
     } catch { /* 无快照目录 */ }
     return { ok: true, history: this.runHistory[id] ?? [], ...(snapshots !== undefined ? { snapshots } : {}) }
+  }
+
+  /**
+   * 变化时间线(0.4.6 补强③):逐相邻快照对 diff,按天聚合。
+   * 数据源=快照目录(diff 已在调度链入推送;这里给面板补"历史上都变了什么"的视图)。
+   * 上限:逐份读 stdout 有 IO 成本,只看最近 21 份(约一周的日频任务)。
+   */
+  @Remote('snap-diff-history')
+  async snapDiffHistory(p: { id: string } | undefined): Promise<{ ok: boolean; days?: Array<{ day: string; added: number; removed: number; moved: number; summary: string }>; error?: string }> {
+    const id = String((p ?? { id: '' }).id ?? '')
+    if (id.length === 0) return { ok: false, error: 'id 为空' }
+    try {
+      const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+      const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-21)
+      if (files.length < 2) return { ok: true, days: [] }
+      const days: Array<{ day: string; added: number; removed: number; moved: number; summary: string }> = []
+      for (let i = 1; i < files.length; i++) {
+        try {
+          const prev = JSON.parse(readFileSync(join(dir, files[i - 1]!), 'utf8')) as { at?: string; stdout?: string }
+          const cur = JSON.parse(readFileSync(join(dir, files[i]!), 'utf8')) as { at?: string; stdout?: string }
+          const d = diffSnapshots(String(prev.stdout ?? ''), String(cur.stdout ?? ''))
+          const at = cur.at ?? files[i]!.slice(0, -5)
+          days.push({
+            day: at.slice(0, 10) + ' ' + at.slice(11, 16),
+            added: d.added, removed: d.removed, moved: d.moved,
+            summary: renderDiffText(d).slice(0, 160),
+          })
+        } catch { /* 单份损坏跳过 */ }
+      }
+      return { ok: true, days: days.reverse() } // 新→旧
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+
+  /** ⑦CSV 导出(0.4.6 补强):任务快照 → 单表 CSV/原文分节(exportcsv 同门解析纪律)。 */
+  @Remote('snap-export')
+  async snapExport(p: { id: string } | undefined): Promise<{ ok: boolean; text?: string; rows?: number; count?: number; error?: string }> {
+    const id = String((p ?? { id: '' }).id ?? '')
+    if (id.length === 0) return { ok: false, error: 'id 为空' }
+    try {
+      const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+      const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-50)
+      if (files.length === 0) return { ok: false, error: '该任务暂无快照' }
+      const snapshots = files.map((f) => {
+        try {
+          const j = JSON.parse(readFileSync(join(dir, f), 'utf8')) as { at?: string; site?: string; stdout?: string }
+          return { at: String(j.at ?? f), site: String(j.site ?? ''), stdout: String(j.stdout ?? '') }
+        } catch { return { at: f, site: '', stdout: '' } }
+      })
+      const r = exportSnapshots({ snapshots })
+      return { ok: true, text: r.text, rows: r.rows, count: r.snapshots }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
   }
 
   /**
@@ -3152,6 +3211,22 @@ export class OpencliService extends TypertRemoteService {
         return { ok: bad.length === 0, error: bad.length === 0 ? undefined : bad.map((x) => `${x.name}:${x.error ?? ''}`).join('; ') }
       },
       reportBuild: async (id) => this.reportBuild({ id }),
+      undo: async (stem) => {
+        // ⑥:按收件箱 stem 撤销——目前只覆盖 schedule-add(回执 <stem>.result.json 在收件箱根)
+        const dir = inboxDir()
+        try {
+          const result = JSON.parse(readFileSync(join(dir, `${stem}.result.json`), 'utf8')) as { kind?: string; value?: { id?: string } }
+          if (result.kind !== 'schedule-add' || typeof result.value?.id !== 'string') return { ok: false, error: '该意图不可撤销(仅 schedule-add 支持)' }
+          return await this.scheduleRemove({ id: result.value.id })
+        } catch { return { ok: false, error: `找不到 ${stem} 的执行回执` } }
+      },
+      reportExport: async (id) => this.snapExport({ id }),
+      backup: async () => {
+        // ⑨:任务+通知配置打包 JSON(快照体积大不进备份,路径在任务里可按 id 重采)
+        const file = join(homedir(), '.dsh', `dsh-opencli-backup-${Date.now()}.json`)
+        await writeFile(file, JSON.stringify({ version: 1, at: new Date().toISOString(), schedules: this.schedules, notifyConfig: this.state.notifyConfig ?? { channels: [] } }, null, 2), 'utf8')
+        return { ok: true, file }
+      },
       status: async () => ({
         plugin: 'dsh-opencli', version: PKG_VERSION, schedules: this.schedules.length,
         ...(this.state.notifyConfig !== undefined ? { notifyChannels: this.state.notifyConfig.channels.length } : {}),
@@ -3305,7 +3380,10 @@ export class OpencliService extends TypertRemoteService {
     // 评审 MEDIUM:sch.notify===false 时任务级关闸(面板"通知 关"徽章与实际行为一致);
     // 例行结果默认即发(成功=例行通知,失败=schedule-failed,watch 命中=正文加 🔔 前缀)——
     // 没有按通道的"安静成功"开关(早期注释曾宣称 wantRoutine 门,该字段从未实现,勿再引用)
-    if (sch?.notify !== false) {
+    // ④补强:notifyLevel==='quiet' 只推有价值信号(watch 命中/有变化/失败),高频任务不再刷屏
+    const quiet = sch?.notifyLevel === 'quiet'
+    const worthPushing = !lastOk || watchHits.length > 0 || diffText.length > 0
+    if (sch?.notify !== false && (!quiet || worthPushing)) {
       await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText)
     }
   }

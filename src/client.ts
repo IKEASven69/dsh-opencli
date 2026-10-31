@@ -39,9 +39,12 @@ const STR = {
     tryT: '试试看', trySub: '在对话里直接说,或先在这里跑一条 · 点右侧快捷/命令徽章 → 填入输入框',
     nlT: '自然语言指挥台', nlSub: '一句话描述你想做的事,确认后由插件执行(用你当前的模型,一次调用)',
     nlPh: '例:每天早9点把掘金热榜存档,AI 相关的推送给我', nlGo: '映射', nlMapping: '映射中…',
-    nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行', nfUrlPh: 'webhook URL(钉钉加签可带 &secret=…)', nfSave: '保存通道', nfTest: '测试', nfSaved: '✓ 通道已保存', nfTestOk: '✓ 测试消息已送达', nfTestFail: '✗ 测试失败',
+    nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行', nfUrlPh: 'webhook URL(钉钉加签可带 &secret=…)', nfSave: '保存通道', nfTest: '测试', nfSaved: '✓ 通道已保存', nfTestOk: '✓ 测试消息已送达', nfTestFail: '✗ 测试失败',
+    diffT: '📊 变化', diffEmpty: '还没有两次采集的对比——再跑一次就有了', diffNone: '无变化',
+    csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`,
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
-    quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑',
+    hintT: '你是不是想用这些?点击直接跑:',
+    quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑', quickMore: '↑ 每次刷新从你的站点目录抽 6 个——170+ 站都能这么用',
     loginT: '登录态巡检', loginSub: '绿=已登 黄=超时 红=未登 · 状态条只亮灯,操作在这里',
     online: '在线', expired: '失效', unknown: '未知', timeout: '超时', openLogin: '打开登录',
     secT: '安全中心', secSub: '写操作全部经过你批准', lastBlocked: '最近拦截',
@@ -122,9 +125,12 @@ const STR = {
     tryT: 'Try it', trySub: 'Say it in chat, or run one here · click a quick pick/command badge to fill the input',
     nlT: 'Natural-language console', nlSub: 'Describe what you want in one line, review the mapped intent, then apply (uses your current model, one call)',
     nlPh: 'e.g. archive juejin hot every day at 9am and ping me on AI news', nlGo: 'Map', nlMapping: 'Mapping…',
-    nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied', nfUrlPh: 'webhook URL (dingtalk secret via &secret=…)', nfSave: 'Save', nfTest: 'Test', nfSaved: '✓ channel saved', nfTestOk: '✓ test delivered', nfTestFail: '✗ test failed',
+    nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied', nfUrlPh: 'webhook URL (dingtalk secret via &secret=…)', nfSave: 'Save', nfTest: 'Test', nfSaved: '✓ channel saved', nfTestOk: '✓ test delivered', nfTestFail: '✗ test failed',
+    diffT: 'Diff', diffEmpty: 'No pairs yet — run one more collection', diffNone: 'no change',
+    csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`,
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
-    quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run',
+    hintT: 'Did you mean? Click to run:',
+    quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run', quickMore: '↑ 6 picked from your catalog on each refresh — 170+ sites work like this',
     loginT: 'Login check', loginSub: 'green=logged-in yellow=timeout red=expired · status bar shows dots, actions live here',
     online: 'online', expired: 'expired', unknown: 'unknown', timeout: 'timeout', openLogin: 'Open login',
     secT: 'Security center', secSub: 'Every write goes through your approval', lastBlocked: 'Blocked (7d)',
@@ -198,7 +204,7 @@ const STR = {
 
 type StrKey = keyof typeof STR.zh
 
-interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; history?: Array<{ at: string; ok: boolean; summary: string }> }
+interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; history?: Array<{ at: string; ok: boolean; summary: string }> }
 interface AssetHit { id: string; name: string }
 interface BuiltinScript { name: string; sha256: string; description: string }
 interface ToastMsg { msg: string; ok: boolean }
@@ -565,6 +571,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [runInput, setRunInput] = useState('site zhihu hot')
   const [running, setRunning] = useState(false)
   const [runOut, setRunOut] = useState<{ cmd: string; text: string; ok: boolean } | null>(null)
+  const [runHints, setRunHints] = useState<Array<[string, string]>>([])
   // NL 指挥台(B1):输入→nl-intent→预览卡(逐字段可改)→确认投递 inbox 消费
   const [nlInput, setNlInput] = useState('')
   const [nlBusy, setNlBusy] = useState(false)
@@ -690,16 +697,27 @@ function Panel(): ReturnType<typeof createElement> {
     if (r.ok) setAutoMode(mode)
   }
 
+  const a2includes = (guess: string, name: string): boolean => guess.length >= 3 && (name.includes(guess) || guess.includes(name))
   const runDemo = async (cmd?: string): Promise<void> => {
     const line = (cmd ?? runInput).trim()
     if (line.length === 0 || running) return
     setRunning(true)
     const r = await rpc<{ text?: string; error?: string }>('try-run', { request: { line } } as unknown as Record<string, unknown>)
     setRunning(false)
-    if (r.ok && r.value !== undefined && r.value.ok) setRunOut({ cmd: line, text: r.value.text ?? '', ok: true })
+    if (r.ok && r.value !== undefined && r.value.ok) { setRunOut({ cmd: line, text: r.value.text ?? '', ok: true }); setRunHints([]) }
     else {
       const msg = r.ok ? (r.value?.error ?? '') : (r.error?.message ?? t2('errReq'))
       setRunOut({ cmd: line, text: msg, ok: false })
+      // ①新手引导:站名拼错/命令不存在的失败,从目录带 3 条最接近的真实命令让用户点选
+      const guessSite = line.replace(/^site\s+/, '').split(/\s+/)[0]?.toLowerCase() ?? ''
+      const near = (a: string, b: string): number => { const d: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0)); for (let i = 0; i <= a.length; i++) d[i]![0] = i; for (let j = 0; j <= b.length; j++) d[0]![j] = j; for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i]![j] = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length]![b.length]! }
+      const hints: Array<[string, string]> = (adapters ?? [])
+        .filter((a) => !a.disabled && a.sample.length > 0)
+        .map((a) => ({ a, dist: guessSite.length > 0 ? near(guessSite, a.name.toLowerCase()) : 99 }))
+        .filter((x) => x.dist <= 2 || a2includes(guessSite, x.a.name.toLowerCase()))
+        .sort((x, y) => x.dist - y.dist).slice(0, 3)
+        .map((x) => [x.a.name, 'site ' + x.a.sample] as [string, string])
+      setRunHints(hints)
     }
   }
 
@@ -793,6 +811,14 @@ function Panel(): ReturnType<typeof createElement> {
     const r = await rpc<{ ok: boolean; error?: string }>('notify-test')
     setNfBusy(false)
     showToast(r.ok && (r.value?.ok !== false) ? t2('nfTestOk') : (r.value?.error ?? t2('nfTestFail')), r.ok && (r.value?.ok !== false))
+  }
+  // ⑦CSV 导出:snap-export RPC → 复制到剪贴板(toast 提示行数)
+  const exportSnapshotsUi = async (id: string): Promise<void> => {
+    const r = await rpc<{ text?: string; rows?: number; error?: string }>('snap-export', { p: { id } } as unknown as Record<string, unknown>)
+    if (r.ok && r.value?.text !== undefined) {
+      await copyText(r.value.text)
+      showToast(t2('csvDone')(r.value.rows ?? 0), true)
+    } else showToast(r.value?.error ?? r.error?.message ?? t2('errReq'), false)
   }
   const toggleSchedule = async (id: string, enabled: boolean): Promise<void> => {
     const r = await rpc('schedule-toggle', { request: { id, enabled } } as unknown as Record<string, unknown>)
@@ -964,6 +990,15 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('span', { className: 'lnk', onClick: () => { void copyText(`${runOut.cmd}\n${runOut.text}`) } }, t2('copy')), ' ',
                 createElement('span', { className: 'lnk', onClick: () => { void runDemo(runOut.cmd) } }, t2('rerun')),
               ),
+            )
+          : null,
+        !runOut?.ok && runHints.length > 0
+          ? createElement('div', { style: { marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' } },
+              createElement('div', { className: 'o4-sub' }, t2('hintT')),
+              ...runHints.map(([label, cmd]) =>
+                createElement('div', { key: cmd, className: 'o4-qrow', onClick: () => { setRunInput(cmd); setRunHints([]); void runDemo(cmd) } },
+                  label, createElement('span', { className: 'mono' }, cmd), createElement('span', { className: 'o4arr', style: { color: '#5F6873', display: 'flex' } }, ic('chev-r', true)),
+                )),
             )
           : null,
       ),
@@ -1198,9 +1233,13 @@ function Panel(): ReturnType<typeof createElement> {
                     ` · ${okN}/${hist.length || 0}${hist.length === 0 ? '' : (okN > 0 ? ' ✓' : ' ✗')}`)),
                 createElement('span', { className: 'o4-bdg b' }, t2('retryN')(s.retry ?? 3)),
                 createElement('span', { className: 'o4-bdg' }, s.notify === false ? t2('notifyOff') : t2('notifyOn')),
+                ...(s.notifyLevel === 'quiet' ? [createElement('span', { className: 'o4-bdg', title: t2('nfQuietTip') }, t2('nfQuiet'))] : []),
+                ...(s.source !== undefined ? [createElement('span', { className: 'o4-bdg', title: t2('nfSrcTip')(s.source) }, s.source)] : []),
                 createElement('span', { style: { flex: '1' } }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
+                createElement(DiffToggle, { id: s.id, lang, label: t2('diffT') }),
                 createElement(TimelineToggle, { id: s.id, lang, label: t2('timeline'), site: s.site }),
+                createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void exportSnapshotsUi(s.id) } }, t2('csvT')),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void removeSchedule(s.id) } }, t2('del')),
               ),
                           )
@@ -1483,6 +1522,45 @@ interface HistRow { at: string; ok: boolean; summary: string }
  *  数据源 schedule-history;卡片流来自画布页装配(fetchCanvasPage 复用)按站点过滤——
  *  旧时间线是画布的一个"趋势视角":柱状图看规模走势,卡片流看每步现场。 */
 /** 行内时间线开关:按钮+面板自带局部状态(不依赖父组件 state,杜绝跨实例展开失效)。 */
+/** 变化时间线开关(0.4.6 补强③):snap-diff-history 拉取按天聚合的 diff,展开态列表。 */
+function DiffToggle(props: { id: string; lang: Lang; label: string }): ReturnType<typeof createElement> {
+  const { id, lang, label } = props
+  const [open, setOpen] = useState(false)
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
+  return createElement('div', { style: { display: 'contents' } },
+    createElement('button', { className: 'o4-btn ghost sm', onClick: () => setOpen(!open) }, label),
+    open ? createElement(DiffDaysPanel, { id, tt }) : null,
+  )
+}
+
+function DiffDaysPanel(props: { id: string; tt: (k: keyof typeof STR.zh) => string }): ReturnType<typeof createElement> {
+  const { id, tt } = props
+  const [days, setDays] = useState<Array<{ day: string; added: number; removed: number; moved: number; summary: string }> | null>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const r = await rpc<{ days?: Array<{ day: string; added: number; removed: number; moved: number; summary: string }> }>('snap-diff-history', { p: { id } } as unknown as Record<string, unknown>)
+      if (!alive) return
+      if (r.ok && r.value?.days !== undefined) setDays(r.value.days)
+      else setErr(r.value && (r.value as { error?: string }).error || r.error?.message || tt('errReq'))
+    })()
+    return () => { alive = false }
+  }, [id, tt])
+  if (err !== '') return createElement('div', { className: 'o4-sub', style: { color: 'var(--c-err)' } }, err)
+  if (days === null) return createElement('div', { className: 'o4-load' }, '…')
+  if (days.length === 0) return createElement('div', { className: 'o4-sub' }, tt('diffEmpty'))
+  return createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '5px', margin: '8px 0' } },
+    ...days.slice(0, 14).map((d) => createElement('div', { key: d.day, className: 'o4-qrow', style: { flexWrap: 'wrap' } },
+      createElement('span', { className: 'mono', style: { flex: 'none', fontSize: '11px', color: '#5F6873' } }, d.day),
+      createElement('span', { style: { fontSize: '12px' } },
+        d.added + d.removed + d.moved === 0
+          ? tt('diffNone')
+          : `📈 +${d.added} / -${d.removed} / ⇅${d.moved}`),
+      createElement('span', { style: { fontSize: '11px', color: '#5F6873', flex: '1', minWidth: '160px' } }, d.summary.slice(0, 90)),
+    )))
+}
+
 function TimelineToggle(props: { id: string; lang: Lang; label: string; site: string }): ReturnType<typeof createElement> {
   const { id, lang, label, site } = props
   const [open, setOpen] = useState(false)

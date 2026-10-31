@@ -67,3 +67,25 @@ describe('renderDiffText(推送正文)', () => {
     expect(t).toContain('新3')
   })
 })
+
+describe('exportSnapshots(⑦ CSV 导出)', () => {
+  it('多份结构化快照 → 单表 CSV(_at/_site 前缀列+条目列并集,引号转义)', async () => {
+    const { exportSnapshots, csvCell } = await import('../src/exportcsv.ts')
+    expect(csvCell('a,b')).toBe('"a,b"')
+    expect(csvCell('say "hi"')).toBe('"say ""hi"""')
+    const r = exportSnapshots({ snapshots: [
+      { at: '2026-10-30T01:00:00Z', site: 'site juejin hot', stdout: JSON.stringify([{ rank: 1, title: 'A' }, { rank: 2, title: 'B' }]) },
+      { at: '2026-10-31T01:00:00Z', site: 'site juejin hot', stdout: JSON.stringify({ data: [{ rank: 1, title: 'A2', extra: true }] }) },
+    ] })
+    expect(r.rows).toBe(3)
+    expect(r.text.split('\r\n')[0]).toBe('_at,_site,rank,title,extra')
+    expect(r.text).toContain('2026-10-30T01:00:00Z,site juejin hot,1,A,')
+  })
+  it('非 JSON 快照 → 原文分节带出处,rows=0', async () => {
+    const { exportSnapshots } = await import('../src/exportcsv.ts')
+    const r = exportSnapshots({ snapshots: [{ at: 'a', site: 'site x hot', stdout: '纯文本内容' }] })
+    expect(r.rows).toBe(0)
+    expect(r.text).toContain('# a site x hot')
+    expect(r.text).toContain('纯文本内容')
+  })
+})

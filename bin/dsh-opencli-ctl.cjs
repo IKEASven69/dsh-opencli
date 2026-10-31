@@ -15,6 +15,8 @@
  *   dsh-opencli-ctl notify set --webhook http://127.0.0.1:19999/hook
  *   dsh-opencli-ctl notify test
   dsh-opencli-ctl report build --id <scheduleId>
+  dsh-opencli-ctl report export --id <scheduleId>   # 快照→CSV(结构化)或原文分节
+  dsh-opencli-ctl schedule add --source chat --notify-level quiet …  # 来源标记/只推变化
  *   dsh-opencli-ctl status
  * 选项:--no-wait(只投递不等结果)/ --timeout <秒>(默认 45)
  */
@@ -63,6 +65,8 @@ function buildIntent() {
       const w = flag('--watch'); if (w !== undefined) intent.watch = w
       const nf = flag('--notify'); if (nf !== undefined) intent.notify = nf === 'true'
       const r = flag('--retry'); if (r !== undefined) intent.retry = Number(r)
+      const src = flag('--source'); if (src !== undefined) intent.source = src
+      const lvl = flag('--notify-level'); if (lvl !== undefined) intent.notifyLevel = lvl
       return intent
     }
     if (sub === 'list') return { kind: 'schedule-list' }
@@ -87,6 +91,7 @@ function buildIntent() {
   }
   if (group === 'report') {
     if (sub === 'build') return { kind: 'report-build', id: need('--id') }
+    if (sub === 'export') return { kind: 'report-export', id: need('--id') }
   }
   if (group === 'status') return { kind: 'status' }
   if (group === 'version') {
