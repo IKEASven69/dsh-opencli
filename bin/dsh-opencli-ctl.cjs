@@ -89,6 +89,9 @@ function buildIntent() {
       return { kind: 'notify-set', channels }
     }
   }
+  if (group === 'undo') {
+    if (sub === 'run') return { kind: 'undo', stem: need('--stem') }
+  }
   if (group === 'report') {
     if (sub === 'build') return { kind: 'report-build', id: need('--id') }
     if (sub === 'export') return { kind: 'report-export', id: need('--id') }

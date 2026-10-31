@@ -1547,6 +1547,9 @@ export class OpencliService extends TypertRemoteService {
     const dup = this.schedules.find((s) => s.site === site && s.cron === cron)
     if (dup !== undefined) {
       if (watch !== undefined && dup.watch !== watch) { dup.watch = watch; await this.saveState() }
+      // 补强⑤④:复用既有任务时也补来源/级别(否则 agent 建的任务二次调用永远丢来源标记)
+      if (typeof request.source === 'string' && ['agent', 'chat', 'panel', 'ctl'].includes(request.source) && dup.source !== request.source) { dup.source = request.source; await this.saveState() }
+      if ((request.notifyLevel === 'quiet' || request.notifyLevel === 'all') && dup.notifyLevel !== request.notifyLevel) { dup.notifyLevel = request.notifyLevel; await this.saveState() }
       return { ok: true, id: dup.id }
     }
     const id = String(Date.now())
@@ -3212,22 +3215,28 @@ export class OpencliService extends TypertRemoteService {
     return await applyIntent(intent, this.inboxExecutor())
   }
 
+  /** 通知测试真实发送(D):面板「测试」按钮与 ctl notify test 共用。 */
+  private async notifyTestSend(): Promise<{ ok: boolean; error?: string }> {
+    const config = this.state.notifyConfig ?? { channels: [] }
+    const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
+    if (channels.length === 0) return { ok: false, error: '尚未配置通知通道:先 notify set' }
+    const rs = await sendViaChannels(channels, 'dsh-openctl 测试通知', '如果你收到这条,通知通道配置成功。')
+    const bad = rs.filter((x) => !x.ok)
+    return { ok: bad.length === 0, error: bad.length === 0 ? undefined : bad.map((x) => `${x.name}:${x.error ?? ''}`).join('; ') }
+  }
+  @Remote('notify-test')
+  async notifyTest(): Promise<{ ok: boolean; error?: string }> {
+    return await this.notifyTestSend()
+  }
   /** 执行器桥(inbox-intent 与收件箱轮询共用;意图 → 既有 RPC 同源方法,一套逻辑两个入口)。 */
   private inboxExecutor(): IntentExecutor {
     return {
-      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}) }),
+      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}) }),
       scheduleRemove: async (id) => this.scheduleRemove({ id }),
       scheduleRun: async (id) => this.scheduleRunNow({ id }),
       scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
       notifySet: async (channels) => { const r = await this.notifyConfig({ channels }); return { ok: r.ok, error: r.error } },
-      notifyTest: async () => {
-        const config = this.state.notifyConfig ?? { channels: [] }
-        const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
-        if (channels.length === 0) return { ok: false, error: '尚未配置通知通道:先 notify set' }
-        const rs = await sendViaChannels(channels, 'dsh-openctl 测试通知', '如果你收到这条,通知通道配置成功。')
-        const bad = rs.filter((x) => !x.ok)
-        return { ok: bad.length === 0, error: bad.length === 0 ? undefined : bad.map((x) => `${x.name}:${x.error ?? ''}`).join('; ') }
-      },
+      notifyTest: async () => this.notifyTestSend(),
       reportBuild: async (id) => this.reportBuild({ id }),
       undo: async (stem) => {
         // ⑥:按收件箱 stem 撤销——目前只覆盖 schedule-add(回执 <stem>.result.json 在收件箱根)
