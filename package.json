@@ -24,7 +24,8 @@
     "README.md",
     "CHANGELOG.md",
     "cordis.patch.yml",
-    "bin"
+    "bin",
+    "AGENT_INSTALL.md"
   ],
   "license": "MIT",
   "repository": {

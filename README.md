@@ -1,241 +1,155 @@
-# dsh-opencli · 你的登录态数据产品
+# dsh-opencli
 
 [![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-listed-17695?logo=github&labelColor=555)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/tree/main/data/plugins/IKEASven69__dsh-opencli.yml)
 [![dsh-plugin](https://img.shields.io/badge/GitHub%20topic-dsh--plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
 [![npm](https://img.shields.io/npm/v/@cold777/dsh-opencli?label=npm&color=CB3837)](https://www.npmjs.com/package/@cold777/dsh-opencli)
 
-> **你的登录态数据产品——定时采集、真实性判定、带出处报告、写操作审批。** Your data, from your own logged-in browser:知乎/B站/微博/GitHub 等 170+ 站点,agent 按点采集、先判真伪,报告条条带出处,要动你的账号先过审批门。
+[English](README.en.md) | 简体中文
 
-**dsh 自带的 web 工具是"搜索"——匿名检索,所有人拿到一样的结果。这个插件补上另一半:以你的账号视角,把网上的事变成你手里可信的数据。** 它经 OpenCLI daemon + BrowserBridge 扩展驱动你日常登录的真实浏览器(Chrome/Edge),采集结果经真实性判定(空结果/风控页会被标出,不信 `exit 0`),报告每个数据节自带出处三元组(命令+时间+快照路径,零模型改写),写操作先弹审批窗。
+**dsh 插件 · 登录态驱动的浏览器数据引擎。** 经 [OpenCLI](https://github.com/jackwener/OpenCLI) daemon + BrowserBridge 扩展驱动你日常使用的真实浏览器(Chrome/Edge),提供 170 站点一步式结构化命令、登录态网页原语、定时采集、真实性判定、推送通知与带出处的运行回放。dsh 内置 web 工具面向匿名检索;本插件补上账号视角的一半——所有数据来自你已登录的会话,所有写操作先经人工审批。
 
-## 它能帮你干什么(大白话)
+- 面向使用者:安装与面板操作见 [快速开始](#快速开始);全部能力清单见 [功能矩阵](#功能矩阵)
+- 面向 agent:SKILL.md 已随包分发,会话内可直接发现并调用;命令行入口 `dsh-opencli-ctl`
+- 面向贡献者:开发约定、审查流程与内部调研见 [docs/](docs/)
 
-**一句话:让 dsh 帮你盯着网上你关心的东西,定时去看、有变化就通知你、要看过程随时回放——而且是用你自己的登录身份去看。**
+## 工作原理
 
-想象几个真实场景:
-
-- **你每天早上想看掘金/B站热榜,但不想自己打开网站翻。** 跟 dsh 说一句"每天早9点把掘金热榜存下来,AI 相关的推送给我"——它建好定时任务,每天到点用你登录的浏览器去抓,发现 AI 相关的内容直接推到你飞书/钉钉。你睡你的觉。
-- **你盯着一个商品/一条公告/一次放榜。** 设个 watch 关键词("降价""官宣""出分"),内容一出现就通知;插件还会对比上次和这次:多了 2 条、少了 1 条、某条从第 5 名跳到第 1 名——📊 直接写在通知里,不用你自己对比。
-- **你怀疑"它是不是真的抓到了"。** 每份采集都过真实性判定:网站返回假数据/风控页会被当场标出("疑似静默失败"),不会拿一个 `exit 0` 糊弄你。报告里每条数据都注明哪来的(哪条命令、几点、存在哪个文件),可以自己点开对。
-- **你想让 dsh 替你在网上做点事**(发个帖、填个表单):写操作**先弹审批窗**,你点了允许才执行,前后截图存进证据包——它动你账号之前必须问过你。
-- **出问题想搞清楚"它刚才干了啥"。** 每一步浏览器操作都落了运行轨迹:几点、执行了什么、成功失败、截图——画布上像时间轴一样摊开,一目了然。
-
-**怎么开始用?三条路,选最省事的:**
-
-1. **装好后打开面板,对着"自然语言指挥台"打一句话**(推荐):比如"每天早9点看看掘金热榜,出现 AI 就告诉我"——点"映射",插件把你的话拆成一个可检查的计划(建什么任务、几点跑、盯什么词),你确认就执行。看不懂计划也没关系,每一项都能改。
-2. **在 dsh 聊天里直接说人话**:不管是带插件工具的会话还是普通面板聊天,agent 都有办法替你完成(聊天里它自己会调命令)。
-3. **喜欢亲手的**:面板"自动化"页三格填一填(站点命令/cron/关键词)建任务,"通知通道"选个平台填 URL,总览页"试试看"直接跑一条命令看真实数据。
-
-**要准备什么**:你电脑上装着 OpenCLI(它负责指挥你日常用的 Chrome/Edge,登录态来自浏览器本身,插件**永远不碰你的账号密码**)+ dsh。装插件 30 秒,详见下面"30 秒装完"。
-
-| 在对话里说 | 插件做的事 |
-|---|---|
-| "每天早 9 点拉知乎/B站热榜存档" | 面板建 cron 定时任务:持久化真执行,重启不丢,失败自动重试 |
-| "盯住热榜,'降价''官宣'一出现就告诉我" | watch 关键词命中 → 🔔 推送通知(面板事件流,点击直达任务) |
-| "把这次的采集和上次对比一下" | 📊 快照差异:新增/消失/位移三形态写进通知,不用自己肉眼比 |
-| "把这周采集的数据整理成报告,注明每条哪来的" | 带出处报告导出:每节 = 命令 + 时间 + 快照路径,零模型改写 |
-| "昨晚 3 点那个任务到底跑没跑成?" | 运行轨迹逐命令落盘 + 画布回放,失败步附截图与输出摘录 |
-| "exit 0 就算拿到数据了?" | 真实性判定:确定性规则 + 亚秒决策模型,空结果/风控页标"疑似静默失败",定时任务按失败重试 |
-| "把这个转发到我的微博" | `site weibo post …` —— **先弹审批窗**,你点了允许才执行,前后截图入证据包 |
-
-## 15 秒价值演示:一句话 → 定时采集 → 变化推送 → 画布回放
-
-1. **一句话**:总览页"自然语言指挥台"输入"每天早9点看看掘金热榜,出现 AI 就告诉我"→ 点"映射"→ 预览卡上确认(建什么任务/几点跑/盯什么词,每项可改);
-2. **到点自动跑 + 有变化才吵你**:定时任务用你登录态的浏览器真实采集,快照落盘;watch 词命中 → 🔔 推送;内容有变化 → 📊 "新增 2 条/消失 1 条/#5 跳到 #1"直接写进通知(飞书/钉钉/企微/TG/面板事件流);
-3. **画布回放**:运行现场钉在可平移缩放的画布上——每步一张卡(命令/截图/exit/耗时),卡片自带出处三元组,拖时间轴复盘"它到底做了什么"。
-
-*(待录 GIF:15 秒完整闭环演示录制中,先以静态截图+文字代替。)*
-
-**实测效果(真实登录态,非演示数据):**
-
-| 对话里直接跑命令 | 定时采集 → 快照 → 时间线 → 带出处报告 |
-|---|---|
-| ![试试看](docs/assets/readme/demo-try-run.png) | ![真实数据时间线](docs/assets/readme/demo-timeline-realdata.png) |
-
-## 30 秒装完
-
-```sh
-# ① 装 opencli 并启动(已装过 opencli/OpenCLIApp?跳到 ③)
-npm i -g @jackwener/opencli && opencli daemon restart
-
-# ② 装 BrowserBridge 扩展(Chrome/Edge 都行),在浏览器里登录你的常用站点
-#    https://github.com/jackwener/OpenCLI/releases → opencli-extension-*.zip → 浏览器"加载解压缩的扩展"
-
-# ③ 装插件——两种方式任选:
-
-#    a. dsh 面板:设置 → 浏览器代理 → 「依赖信任清单」旁的插件市场入口搜索安装;
-#       或 dsh 插件市场页面直接搜 dsh-opencli
-
-#    b. npm(发布即进 dsh-market 目录):
-npm i -g @cold777/dsh-opencli
-
-#    c. GitHub tarball(不依赖 npm 的传统方式):
-dsh plugin add IKEASven69/dsh-opencli
+```
+dsh agent ─┬─ 工具调用(site / opencli_* / canvas_*)──┐
+dsh 面板 ──┼─ 面板 RPC(定时/通知/画布/审计)─────────┤
+任意会话 ──┴─ dsh-opencli-ctl(收件箱意图)────────┤
+                                                    ▼
+                              dsh-opencli 插件(审批门 · 真实性判定 · 快照 · 轨迹)
+                                                    │
+                                    OpenCLI daemon + BrowserBridge 扩展
+                                                    │
+                                          你的真实浏览器(登录态)
 ```
 
-**命令行助手**(可选):npm 方式安装会自动带 `dsh-opencli-ctl` 命令——任何 dsh 会话的 agent 都能用它一句话完成建定时/配通知/出报告(见 SKILL.md)。
+所有执行路径汇聚到同一个插件服务:写操作经审批门(fail-closed),采集结果经真实性判定(exit 0 不等于有效数据),每次运行落快照与轨迹供回放。
 
-**不想自己动手?把下面这句发给你的 dsh,它替你装完并自检:**
+## 快速开始
 
-> 请按 https://github.com/IKEASven69/dsh-opencli/blob/opencli-release/AGENT_INSTALL.md 里的步骤帮我安装 dsh-opencli,装完跑一次自检并告诉我结果。
+```sh
+# ① OpenCLI 运行时(已装可跳过)
+npm i -g @jackwener/opencli && opencli daemon restart
 
-装完打开 dsh 设置 →「浏览器代理」面板:站点目录、定时任务与时间线、登录态巡检、daemon 一键修复。
+# ② BrowserBridge 扩展:https://github.com/jackwener/OpenCLI/releases
+#    下载 opencli-extension-*.zip,浏览器开发者模式加载;在浏览器里登录常用站点
 
-<details>
-<summary><b>安装注意事项(3 条,遇到问题再展开)</b></summary>
+# ③ 本插件
+npm i -g @cold777/dsh-opencli          # npm(含 dsh-opencli-ctl 命令面)
+# 或
+dsh plugin add IKEASven69/dsh-opencli   # GitHub tarball
+```
 
-- ⚠️ 旧版 opencli(≤1.8.8)在插件目录内跑 `npm install` 会静默替换宿主链接([#2555](https://github.com/jackwener/opencli/issues/2555),**2.0 已修复**)——仍在 1.8.x 的用户请在仓库外装依赖。
-- ⚠️ Windows:dsh shell 走 PowerShell,`DSH_OPENCLI_BIN` 需指向 `.cmd` 结尾的 shim(无扩展名会被静默忽略)。版本管理器(vfox/nvm)切 node 版本后插件会自动扫描各版本目录找回 opencli。
-- ⚠️ 升级 dsh 到 0.2 前自查 profile `cordis.patch.yml` 有无引用未安装的 bundle——0.2 对此静默退出。
+装完重启 dsh,打开 **设置 → 浏览器代理**:五个 tab:总览 / 命令 / 自动化 / 安全与设置 / 画布。
 
-</details>
+## 核心能力
 
-<details>
-<summary><b>完整命令目录(170+ 站 / 1200+ 命令,点击展开)</b></summary>
+### 定时采集 → 推送
 
-170+ 站点适配器、1200+ 条命令(`site <站> <命令>` 一步式执行;目录蒸馏后注入 systemPrompt,模型第一轮就选对命令,不用先跑 `opencli list` 翻数 MB 输出)。
+cron 持久化任务,到点用登录态真实采集:失败自动重试 ×3,成功落结构化快照(50 份轮转)。watch 关键词命中或内容增减(新增/消失/位移)时推送至飞书/钉钉/企微/Telegram 等渠道,附与上次相比的差异摘要。
 
-| 在对话里说 | 一步式命令 |
-|---|---|
-| "B站搜罗翔,总结播放量前 3" | `site bilibili search 罗翔` |
-| "知乎热榜前 10 摘要" | `site zhihu hot` |
-| "同时拉知乎/微博/B站热榜做对比" | `site_batch` 一条命令三站并行 |
-| "打开公司后台把审批单批了" | `browser_open/click` 通用原语,用你的登录态 |
+### 真实性判定
 
-**没适配器的网站?** 目录之外,`browser_*` 通用原语覆盖任意网页;agent 还能当场造适配器,越用越会浏览。
+`exit 0` 不等于有效数据。确定性规则 + 亚秒决策模型两层判定:空结果、风控页、登录墙被识别为"疑似静默失败",无人值守任务按失败重试。每份快照可回溯到采集命令与时间。
 
-![命令目录](docs/assets/readme/demo-catalog.png)
+### 结构化站点命令
 
-</details>
+170 站 / 1200+ 命令预编译目录,蒸馏后注入 systemPrompt——agent 首轮即选对命令,不需要现场试错。每站附知识卡(已知坑 + 失败签名恢复表)。多站并行 `site_batch`。
 
----
+### 网页原语与 canvas 位图
 
-## 登录态到底是怎么回事(重要澄清)
+适配器未覆盖的页面用登录态原语(open/click/fill/extract/screenshot 等);eval 族经 daemon 直连传输,毫秒级往返。canvas 位图画布(图表/游戏/画板)三件套:discover 定位、read 读取为位图(自动落盘进画布)、click 坐标点击(写原语,经审批)。
 
-**本插件不使用、也不需要 dsh 的内置浏览器。**它经 [OpenCLI](https://github.com/jackwener/OpenCLI) 的 daemon + BrowserBridge 扩展,驱动**你扩展装在哪个、就哪个浏览器的真实窗口**(Chrome/Edge 均可)——登录态来自你日常浏览器里的真实会话,和你在地址栏手打网址完全同源。你在哪登录了知乎,agent 就能用你的知乎;巡检面板会告诉你哪些站在线。
+### 运行回放
 
-## 两张牌:固定命令 × 任意网页原语
+每条 browser/定时执行落 JSONL 轨迹;画布页将轨迹/证据/快照聚合为可平移缩放的卡片流,点卡片展开逐步回放(命令/截图/耗时)。失败步附输出摘录——复盘"上次为什么失败"不靠猜。
 
-模型对每个站有两张牌,**先打第一张,失败自动换第二张**:
+### 写操作审批门
 
-1. **固定命令**(`site <站> <命令>`):预编译站点知识,省 token、结果可验证、有失败签名恢复表;
-2. **任意网页原语**(`browser_open/state/click/fill` + 只读脚本 + Playwright recipe):适配器没覆盖的页面用登录态自由组合。
+发帖、删评等写命令默认弹审批窗,允许才执行;权限不明按写处理(fail-closed)。放行/拒绝前后截图入证据包。攻击表 22 行(含 5 条只读对照)+ 独立通道 3 项逐条回归,200 次可复现 fuzz,不变量:**凡 allow ⟹ 只读意图**(见 [安全不变量](#安全不变量))。
 
-动手前先让模型调 `site_knowledge <站>` 读知识卡:全部命令+已知坑+失败恢复表——不现场试错。知识卡可导出 markdown 分享(`~/.dsh/opencli-knowledge/`)。
-
-## 竞品差异
-
-对比基于 2026-10 各家公开仓库与 issue 区的调研,能力变化以各家最新版本为准。
-
-| 能力 | 本插件 | Tencent/BrowserSkill | dsh 官方 Browser Use |
-|---|---|---|---|
-| 登录态真实浏览器 | ✓ 你日常的浏览器 | ✓ | ✗ 匿名会话,无持久身份 |
-| 结构化站点命令 | ✓ 170+ 站预编译目录 | ✗ | ✗ |
-| 真实性判定(exit 0 ≠ 有效数据) | ✓ 规则 + 亚秒决策模型 | ✗ | ✗ |
-| **定时 → 报告 → 推送闭环** | ✓ cron 持久化 + 带出处报告 + watch 推送 | ✗ | ✗ 无持久化存储 |
-| **无限画布** | ✓ 用户侧运行现场复盘(卡片带出处三元组) | Canvas 面向 agent 操作(0.4.0 起含类型化 visual ref);用户侧复盘视图未见于其文档 | 自带引擎,与本插件路线不同 |
-| 写操作审批门 | ✓ 工具层拦截,fail-closed | — | — |
-
-### 它回答的三个真实缺口
-
-- *"browser agents re-learn every site on every session"*([browser-use#5841](https://github.com/browser-use/browser-use/issues/5841))→ **170+ 站预置结构化命令**:站点知识预编译,不重学。
-- *"想在当前打开的 Chrome 实例上做自动化"*([browser-use#4709](https://github.com/browser-use/browser-use/issues/4709))→ **登录态原生**:所有命令跑在你已登录的浏览器里,不另起无头实例。
-- *"求结构化动作证据:动作到底改没改页面"*([browser-use#5137](https://github.com/browser-use/browser-use/issues/5137);同源 [BrowserSkill#242](https://github.com/Tencent/BrowserSkill/issues/242))→ **执行真实性层**:采集结果经确定性规则+亚秒决策模型两层判定,`exit 0` 但内容无效会被标"疑似静默失败",无人值守定时任务按失败重试。
-
-## 已经自己装过 opencli,这插件还有什么用
-
-| | 只装 opencli(agent 走 shell) | + 本插件 |
-|---|---|---|
-| 开局发现 | 模型得先跑 `opencli list`(数 MB 输出) | **蒸馏命令目录已注入 systemPrompt**,第一轮就选对命令 |
-| 权限模型 | 需要 shell 权限;写操作裸奔无门 | 一等公民工具 + **write 审批门**(工具层拦截) |
-| 只读/受限会话 | 无 shell 就没戏 | 无需 shell,工具照用 |
-| 定时采集 | 自己写 crontab + 脚本 + 通知 | 面板建定时任务,持久化 + 真执行 + watch 推送 + 带出处报告 |
-| 管理 | 敲命令 | dsh 设置页:诊断/一键启动/目录浏览/巡检/启停/模式切换 |
-
-两不冲突:深度用法仍可配合官方 opencli 技能,本插件负责工具化、安全与面板。
-
-## 全功能面
+## 功能矩阵
 
 | 模块 | 能力 |
 |---|---|
-| **site 适配器** | 170+ 站 / 1200+ 命令,蒸馏目录注入 systemPrompt;`site_batch` 多站并行 |
-| **定时采集** | cron 持久化真执行,重启不丢;失败重试 ×3;成功落结构化快照(50 份轮转) |
-| **watch 推送** | 关键词命中 → 🔔 通知事件(面板事件流,大小写不敏感) |
-| **带出处报告** | 快照时间线趋势+历史;报告导出每节 = 命令+时间+快照路径,零模型改写 |
-| **canvas 位图操作** | `canvas_discover/read/click` 三件套触达网页内无 DOM 节点的位图画布(图表/游戏/画板);read 读到的位图自动落盘为图片步骤,流进下行「无限画布」 |
-| **无限画布** | 运行现场复盘:任务/步骤卡片钉在可平移缩放画布,截图+出处三元组,时间轴回放(与上行同名不同层:上行作用于网页内 canvas 元素,本行是你自己的活动复盘视图) |
-| **真实性判定** | 确定性规则+亚秒决策模型两层;空结果/风控页标"疑似静默失败" |
-| **写操作审批** | 工具层审批门(默认开,fail-closed);放行/拒绝前后截图入证据包(100 份轮转) |
-| **冒烟基准** | 一键跑默认 5 站只读冒烟,逐站成功率/真实性 P/耗时,报告落盘(20 份轮转) |
-| **执行轨迹** | 每条 browser/定时执行落盘 JSONL,面板「运行轨迹」复盘"上次为什么失败" |
-| **browser 原语** | open/click/type/fill/scroll/state/screenshot/extract/wait/crawl 全套(泛爬带限流) |
-| **自动化模式** | read-only / standard / autonomous / unrestricted 四档,接入 `tools/pre-execute` 审批门 |
-| **站点健康度/漂移巡检** | 上游 issue 数据驱动受损站标注 + browser 兜底提示;canary top-20 站只读实测出漂移报告 |
-| **MCP Resources** | dsh 0.2 下站点知识经 `opencli://sites/{site}/knowledge` 暴露 |
-| **我的适配器** | 禁用/启用管理,禁用即从 systemPrompt 目录收缩 |
-| **登录态巡检/桥** | 面板实时各站在线状态(cookie 级诊断);一键把 dsh 官方 Browser Use 接到你登录态的浏览器 |
-| **拦截审计** | 审批门拦截记录(近 7 天计数 + 明细) |
-| **限流与限域** | `usagePolicy` + 429/5xx 自动退避;`--authProfile` 限域登录,跨域拒绝 |
-| **站点品牌图标** | 48+ 站 simple-icons 官方标 + 品牌色 |
-| **中英双语** | 面板 EN / zh 一键切换 |
+| site 适配器 | 170 站 / 1200+ 命令;`site_batch` 多站并行;蒸馏目录注入 systemPrompt |
+| 定时采集 | cron 持久化;失败重试 ×3;结构化快照(50 份轮转) |
+| watch 推送 | 关键词命中/内容增减 → 飞书/钉钉/企微/Telegram/面板事件流 |
+| 带出处报告 | 每节 = 命令 + 时间 + 快照路径;零模型改写 |
+| 画布回放 | 轨迹/证据/快照聚合为卡片流,平移缩放,逐步回放 |
+| canvas 位图操作 | discover/read/click 三件套;read 位图自动落盘进画布 |
+| 真实性判定 | 确定性规则 + 亚秒决策模型;静默失败标注与重试 |
+| 写操作审批 | 工具层 fail-closed 审批门;证据包(100 份轮转) |
+| 执行轨迹 | 每条执行落 JSONL;面板复盘视图 |
+| 冒烟基准 | 默认 5 站只读冒烟;成功率/真实性 P/耗时/直连加速对照 |
+| 自动化模式 | read-only / standard / autonomous / unrestricted 四档 |
+| 站点健康度 | 上游 issue 驱动受损站标注;canary top-20 只读漂移巡检 |
+| MCP Resources | 站点知识经 `opencli://sites/{site}/knowledge` 暴露(dsh 0.2+) |
+| 登录态巡检/桥 | 各站 cookie 级在线诊断;一键将 dsh 官方 Browser Use 接入登录态浏览器 |
+| 拦截审计 | 审批拦截记录(近 7 天计数 + 明细) |
+| 限流限域 | usagePolicy + 429/5xx 退避;authProfile 限域登录 |
+| 中英双语 | 面板 EN/zh 切换 |
+
+## 面向 agent
+
+- **CLI agent 会话**(dsh CLI 或其他宿主的 CLI 会话):`site`、`opencli_*`、`canvas_*`、`so_*` 等工具随插件注册,SKILL.md 随包分发可被会话发现
+- **面板聊天会话**:受 dsh 预设作用域限制,agent 工具不直接注册——但 agent 可用 shell 调 `dsh-opencli-ctl`(随 npm 包分发):`schedule add/list/run/remove`、`notify set/test`、`report build/export`、`status`;意图经收件箱由插件执行,白名单闭集校验,结果 JSON 回传;同步等待依赖 dsh 面板进程在线(超时会明确提示)
+- **命令面示例**:`dsh-opencli-ctl schedule add --site "site juejin hot" --cron "0 9 * * *" --watch "AI"`
+
+## 安装注意
+
+- opencli ≤1.8.8 在插件目录内跑 `npm install` 会静默替换宿主链接([#2555](https://github.com/jackwener/opencli/issues/2555),2.0 已修复)——1.8.x 用户请在仓库外装依赖
+- 升级 dsh 到 0.2 前自查 profile `cordis.patch.yml` 有无引用未安装的 bundle——0.2 对此静默退出
+- 面板聊天会话不装载插件 agent 工具是 dsh 预设作用域架构所致,详见 [docs/RESEARCH-20261030-dsh-preset-and-env.md](docs/RESEARCH-20261030-dsh-preset-and-env.md)
 
 ## 配置
 
-零配置开箱即用;需要微调时:
+零配置开箱即用;微调项:
 
 | 配置 | 方式 | 默认 |
 |---|---|---|
-| opencli 二进制路径 | 环境变量 `DSH_OPENCLI_BIN`,或插件自带本地依赖 | `opencli`(全局) |
-| 写审批开关 | 面板「审批门」一键开关 | 开 |
+| opencli 二进制路径 | 环境变量 `DSH_OPENCLI_BIN` | `opencli`(全局) |
+| 写审批开关 | 面板「审批门」开关 | 开 |
 | 自动化模式 | 面板四档 | standard |
-| 限流策略 | `usagePolicy`(minDelayMs 750 / maxConcurrency 2 / burst 3 / cooldown 30s / maxPagesPerRun 20) | 见左 |
-| 限域登录 | `authProfiles`(`allowedDomains`/`storageStatePath`),配 `site --authProfile` | 无 |
+| 限流策略 | `usagePolicy`(minDelay 750ms / 并发 2 / burst 3 / 冷却 30s) | 见左 |
+| 限域登录 | `authProfiles`(`allowedDomains`/`storageStatePath`) | 无 |
 
-## 安全不变量攻击表
+## 安全不变量
 
-**write 审批门**(默认开):写命令经 dsh 原生审批——弹窗点"允许"才执行;权限不明按写处理(fail-closed)。每一条攻击形态都有回归用例(tests/approval-invariant.test.ts):
+write 审批门 fail-closed:权限不明按写处理。20 种绕过形态逐条回归 + 200 次可复现 fuzz,不变量:**凡 allow ⟹ 只读意图**。形态样本:
 
-| 攻击形态 | 门的行为 |
+| 攻击形态 | 行为 |
 |---|---|
-| 已知写命令(`site zhihu comment`) | 弹审批 |
-| 目录外/未知站点与命令 | 按写审批(fail-closed,不因"没见过"放行) |
-| 原型链名攻击(`constructor`) | 弹审批 |
-| 路径形态攻击(`../etc passwd`) | 弹审批 |
+| 原型链名(`constructor`)/ 路径形态(`../etc passwd`)/ NUL 截断 | 弹审批 |
 | 尾部空格绕权限查询(`"zhihu "`) | 弹审批 |
-| NUL 截断攻击(`comment\u0000`) | 弹审批 |
-| 超长命令名(500 字符) | 弹审批 |
 | 通用网关 `opencli_run` 传写形态 | 弹审批(网关不豁免) |
-| `chrome_raw` 高危方法(`windows.remove`) | 人工确认 |
-| `browser_do eval`(登录页任意 JS = 写原语) | 弹审批 |
 | `site_batch` 混入写命令 | 整批拒绝,shell 零调用 |
-| benchmark 独立通道传写命令 | 拒绝(不经 pre-execute 也自带只读门) |
-| canary 夜间热词伪装写命令 | 只读门拦截 |
+| benchmark / canary 独立通道传写命令 | 自带只读门拦截 |
 
-共 20 形态逐条回归 + 200 次可复现 fuzz,不变量:**凡 allow ⟹ 只读意图**。命令白名单与参数校验之外,全部输出经截断与噪声剥离防上下文污染;限流+自动退避;限域登录跨域拒绝。
+全部输出经截断与噪声剥离防上下文污染;限流 + 自动退避;限域登录跨域拒绝。
 
-## 已验证的测试矩阵
+## 测试与验证
 
-| 层面 | 方式 | 结果 |
-|---|---|---|
-| 单元/回归 | vitest 301+ 用例(审批门不变量攻击表 + 200 次 fuzz / cron 回归 / 空参数护栏 / trace / 报告结构 / 机检器) | ✅ |
-| 全权审查套件 | 22 项真机逐项(渲染/真执行/状态对账/RPC 真值),`full-review.cjs` 一键复测(结果 JSON 记录宿主 dsh 版本,见 .design/video-frames/审查结果.json);dsh 0.2.0-rc.2 全套通过,0.2.1-rc.1 兼容回归通过 | ✅ |
-| 真模型 E2E | 会话调 `site zhihu hot`/写拒绝/browser 往返 | ✅ |
-| 登录态真数据 | 浏览器扩展桥 → try-run 真实热榜(判定 P=0.91)→ 定时采集 15s 回填 → 快照 → 时间线 → 带出处报告 | ✅ |
+| 层面 | 方式 |
+|---|---|
+| 单元/回归 | vitest 450+ 用例:审批门不变量攻击表 + 200 次 fuzz / cron 回归 / 直连传输 / 快照 diff / 导出格式 / 机检器 |
+| 真机审查套件 | 22 项逐项(渲染/真执行/状态对账/RPC 真值),`full-review.cjs` 一键复测,结果记录宿主 dsh 版本 |
+| 全功能矩阵 | 全链路端到端(会话/直连/推送/导出/生态 ctl 全链),`full-matrix.cjs` |
+| 前端走查 | 10 幕 27 断言(真实浏览器鼠标键盘),`ui-walkthrough.cjs` |
+| 真模型 E2E | 会话调 site 命令/写拒绝/NL 映射闭环(经宿主 llm) |
 
-## 更新日志
+## 文档
 
-完整版本历史见 [CHANGELOG.md](CHANGELOG.md) 与 [Releases](https://github.com/IKEASven69/dsh-opencli/releases)。
+- [CHANGELOG](CHANGELOG.md) · [SKILL.md](SKILL.md)(agent 使用手册) · [AGENT_INSTALL.md](AGENT_INSTALL.md)(agent 自助安装)
+- 开发文档:[docs/](docs/) — 设计稿、调研、验收记录与内部约定
 
-## 常见问题
+## 定位
 
-**在 dsh 面板(Web UI)的聊天里让 agent 用 `site`/`canvas_read` 等工具,agent 说不存在?**
-
-这是 dsh 0.2.x 的既定行为,不是插件没装好:面板聊天会话的工具目录由其"预设"决定,目前只含 dsh 框架自带工具;插件注册的 agent 工具仅在 CLI agent 会话(如经 ZCode/dsh CLI 的会话)中可用。插件在面板里的部分是**设置页**(浏览器代理五 tab:诊断/定时/画布/安全与设置/命令)与全部 RPC 能力。详见 [docs/RESEARCH-20261030-dsh-preset-and-env.md](docs/RESEARCH-20261030-dsh-preset-and-env.md)。
-
-## 定位(不做什么)
-
-- 不替代 OpenCLIApp/daemon/扩展——那是引擎与管家,本插件是 **dsh 里的数据驾驶舱**;
-- 不替代 dsh 内置 web_search/web_fetch——内置管匿名检索,本插件管你登录态的数据;
-- 无头服务器(没有任何真实浏览器的机器)不适用。
+- 不替代 OpenCLIApp/daemon/扩展——那是引擎层,本插件是 dsh 里的数据驾驶舱
+- 不替代 dsh 内置 web_search/web_fetch——内置管匿名检索,本插件管登录态数据
+- 无真实浏览器的机器不适用
 
 MIT License.
