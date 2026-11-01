@@ -329,7 +329,7 @@ export class DshNotifyChannel implements NotifyChannel {
  * 中文内容不陪葬。
  */
 const SCRUB_RULES: Array<{ re: RegExp; to: string }> = [
-  // Windows 绝对路径(C:\Users\20369\… / D:/x/y)。lookbehind 挡掉 https:// 这类 scheme 冒号
+  // Windows 绝对路径(C:\Users\<用户名>\… / D:/x/y)。lookbehind 挡掉 https:// 这类 scheme 冒号
   { re: /(?<![\w:])[A-Za-z]:[\\/][ -~]*/g, to: '[本地路径]' },
   // 波浪 home 路径(~/.dsh/…、~\…)
   { re: /~[\\/][ -~]*/g, to: '[home路径]' },

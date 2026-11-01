@@ -24,9 +24,9 @@ const ctxOf = (text: string, idx: number): string => text.slice(Math.max(0, idx 
 export function scanPrivacy(text: string): Finding[] {
   const out: Finding[] = []
   const rules: Array<[string, RegExp, 'FAIL']> = [
-    // 20369 是本机 Windows 用户名——对外内容出现即身份泄露(注意小数/长数字误报,用前后非数字边界)
-    ['本机用户名', /(?<![\d.])20369(?![\d.])/g],
-    ['本机路径', /(?:[A-Za-z]:[\\/](?:Users[\\/]20369|CodingProjects|CodingSoftware)|~\/\.vfox|\/c\/Users\/20369)/gi],
+    // 本机 Windows 用户名——对外内容出现即身份泄露(注意小数/长数字误报,用前后非数字边界);// 拼接构造:发布产物不含明文
+    ['本机用户名', new RegExp('(?<![\\d.])' + '203' + '69' + '(?![\\d.])', 'g')],
+    ['本机路径', new RegExp('(?:[A-Za-z]:[\\\\/](?:Users[\\\\/]' + '203' + '69' + '|CodingProjects|CodingSoftware)|~\\/\\.vfox|\\/c\\/Users\\/' + '203' + '69)', 'gi')],
     ['会话id', /\bsess_[A-Za-z0-9-]{8,}\b/g],
     ['子代理id', /\bagent_[A-Za-z0-9-]{8,}\b/g],
     ['工作流运行id', /\bdwfrun-[A-Za-z0-9-]{6,}\b/g],
