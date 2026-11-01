@@ -41,6 +41,9 @@
 - **来源徽章**:任务行标注 agent/chat/panel/ctl 创建来源;**undo**:按收件箱 stem 撤销误建任务;**backup**:任务+通知配置打包 JSON
 - **动态快捷**:每次刷新从站点目录抽 6 个站点示例——170+ 站都被看见
 
+### npm 首发
+- `@cold777/dsh-opencli@0.1.0` 发布至 npm(作用域包,与同名竞品以用户名前缀区分);`npm i -g @cold777/dsh-opencli` 即装,自动带 `dsh-opencli-ctl` 命令面;发布包经敏感扫描(本机用户名零残留——运行时正则改拼接构造)
+
 ### 兼容与验收
 - OpenCLI 2.0 双版本兼容延续;22 项套件 dsh 0.2.1-rc.5 全过
 - dsh 面板聊天会话不装载插件 agent 工具属 dsh 预设作用域架构(RESEARCH-20261030),0.4.6 的 ctl/inbox 生态层即其正解

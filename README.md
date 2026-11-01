@@ -2,6 +2,7 @@
 
 [![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-listed-17695?logo=github&labelColor=555)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/tree/main/data/plugins/IKEASven69__dsh-opencli.yml)
 [![dsh-plugin](https://img.shields.io/badge/GitHub%20topic-dsh--plugin-4D6BFE?style=flat-square)](https://github.com/topics/dsh-plugin)
+[![npm](https://img.shields.io/npm/v/@cold777/dsh-opencli?label=npm&color=CB3837)](https://www.npmjs.com/package/@cold777/dsh-opencli)
 
 > **你的登录态数据产品——定时采集、真实性判定、带出处报告、写操作审批。** Your data, from your own logged-in browser:知乎/B站/微博/GitHub 等 170+ 站点,agent 按点采集、先判真伪,报告条条带出处,要动你的账号先过审批门。
 
@@ -60,9 +61,19 @@ npm i -g @jackwener/opencli && opencli daemon restart
 # ② 装 BrowserBridge 扩展(Chrome/Edge 都行),在浏览器里登录你的常用站点
 #    https://github.com/jackwener/OpenCLI/releases → opencli-extension-*.zip → 浏览器"加载解压缩的扩展"
 
-# ③ 装插件
+# ③ 装插件——两种方式任选:
+
+#    a. dsh 面板:设置 → 浏览器代理 → 「依赖信任清单」旁的插件市场入口搜索安装;
+#       或 dsh 插件市场页面直接搜 dsh-opencli
+
+#    b. npm(发布即进 dsh-market 目录):
+npm i -g @cold777/dsh-opencli
+
+#    c. GitHub tarball(不依赖 npm 的传统方式):
 dsh plugin add IKEASven69/dsh-opencli
 ```
+
+**命令行助手**(可选):npm 方式安装会自动带 `dsh-opencli-ctl` 命令——任何 dsh 会话的 agent 都能用它一句话完成建定时/配通知/出报告(见 SKILL.md)。
 
 **不想自己动手?把下面这句发给你的 dsh,它替你装完并自检:**
 
