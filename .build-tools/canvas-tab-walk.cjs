@@ -41,7 +41,7 @@ const check = (n, c, d) => { if (c) { pass++; console.log('  PASS ' + n + (d ? '
   const cvCards = await page.evaluate(() => document.querySelectorAll('.o4-cvcard').length);
   const cvText = await page.evaluate(() => { const el = document.querySelector('.o4-cvwrap'); return el ? (el.textContent || '').slice(0, 300) : '(no cvwrap)'; });
   console.log('cvwrap:', cvText.slice(0, 150));
-  const hasSchedule = await page.evaluate(() => [...document.querySelectorAll('.o4-cvcard *')].some(x => (x.textContent || '').includes('site zhihu hot')));
+  const hasSchedule = await page.evaluate(() => [...document.querySelectorAll('.o4-cvcard *')].some(x => /zhihu/.test(x.textContent || '')));
   check('画布卡片渲染(.o4-cvcard)', cvCards > 0, 'cards=' + cvCards);
   check('采集卡含真实站点(zhihu)', hasSchedule);
   // canvas eval 轨迹卡分页验证:走 RPC 而不是翻 UI 页

@@ -5,4 +5,4 @@
 
 - insert:
     - id: opencli
-      name: 'dsh-opencli'
+      name: '@cold777/dsh-opencli'
