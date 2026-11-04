@@ -730,9 +730,11 @@ export class OpencliService extends TypertRemoteService {
         command: { type: 'string', description: 'site 子命令(不含站点名),如 hot/search/recent' },
         sites: { type: 'array', items: { type: 'string' }, description: '站点名列表(2-6 个)' },
         args: { type: 'array', items: { type: 'string' }, description: '可选:命令参数' },
+        preflight: { type: 'boolean', description: '可选:派发前登录态快检(whoami 池,带 TTL 缓存);未登录站标 ⚠。无人值守/可靠性敏感时开' },
+        skipNotLoggedIn: { type: 'boolean', description: '可选:配合 preflight,未登录站不进批次(输出 ⛔ 行列出)' },
       },
       output: { schema: { type: 'json' }, render: siteBatchCardRender },
-      execute: async (a: { command?: unknown; sites?: unknown; args?: unknown }): Promise<{ text: string }> => {
+      execute: async (a: { command?: unknown; sites?: unknown; args?: unknown; preflight?: unknown; skipNotLoggedIn?: unknown }): Promise<{ text: string }> => {
         const command = String(a.command ?? '').trim()
         const sites = Array.isArray(a.sites) ? a.sites.map(String).slice(0, 6) : []
         if (!command) return { text: 'command 不能为空。' }
@@ -773,6 +775,31 @@ export class OpencliService extends TypertRemoteService {
         const preflightNote = collisions.length > 0
           ? `preflight:同域冲突已串行化(${collisions.map(([d, ss]) => `${ss.join(' + ')} → ${d}`).join(';')}),避免登录态/标签页互踩\n\n`
           : ''
+        // 派发前登录态快检(0.4.7 W5',复用 login-check 的 whoami 池+TTL 缓存):
+        // 未登录站标 ⚠(结果可能是登录墙,事后 noul 才发现=烧完整超时);skipNotLoggedIn=true
+        // 时直接不进批次(⛔ 行列出)。preflight 旁路纪律:体检任何失败不挡批次。默认关。
+        const wantPreflight = a.preflight === true
+        const skipNotLoggedIn = a.skipNotLoggedIn === true
+        let loginLines: string[] = []
+        let effSites = sites
+        if (wantPreflight) {
+          try {
+            const lc = await this.loginCheck()
+            if (lc.ok) {
+              const bySite = new Map(lc.results.map((r) => [r.site.toLowerCase(), r] as const))
+              const eff: string[] = []
+              for (const s0 of sites) {
+                const r = bySite.get(s0.toLowerCase())
+                if (r === undefined || r.ok === true) { eff.push(s0); continue }
+                if (skipNotLoggedIn) loginLines = [...loginLines, `⛔ ${s0}:未登录,已跳过(先逐站 site ${s0} login)`]
+                else { eff.push(s0); loginLines = [...loginLines, `⚠ ${s0}:未登录——结果可能是登录墙(先逐站登录,或带 skipNotLoggedIn 跳过)`] }
+              }
+              effSites = eff
+              // 显式 skip 语义:跳剩几站跑几站(拦 0 不拦 1——batch 下限闸只管输入,不管显式摘除)
+              if (effSites.length < 1) return { text: `登录态快检后全部未登录(${loginLines.join(';')})。请先逐站登录再批量。` }
+            }
+          } catch { /* 体检旁路:失败照常派发 */ }
+        }
         const args = Array.isArray(a.args) ? a.args.map(String) : []
         const runOne = async (site: string): Promise<{ site: string; ok: boolean; badge: string; text: string }> => {
           try {
@@ -785,16 +812,17 @@ export class OpencliService extends TypertRemoteService {
           }
         }
         const settled = await Promise.all([
-          ...sites.filter((s) => !chained.has(s)).map(runOne),
-          ...collisions.map(async ([, ss]) => { const out = []; for (const s of ss) out.push(await runOne(s)); return out }),
+          ...effSites.filter((s) => !chained.has(s)).map(runOne),
+          ...collisions.map(async ([, ss]) => { const out = []; for (const s of ss) if (effSites.includes(s)) out.push(await runOne(s)); return out }),
         ])
         const results = settled.flat()
         // 按请求顺序回填输出
-        results.sort((x, y) => sites.indexOf(x.site) - sites.indexOf(y.site))
+        results.sort((x, y) => effSites.indexOf(x.site) - effSites.indexOf(y.site))
         const okN = results.filter((r) => r.ok).length
         const silentN = results.filter((r) => r.badge.includes('疑似静默失败')).length
-        const head = `批量采集 ${okN}/${sites.length} 站成功${silentN > 0 ? `,其中 ${silentN} 站疑似静默失败(exit 0 但内容无效)` : ''}:\n\n`
-        const pre = `${unknownSites.length > 0 ? `目录预检:以下站点不在适配器目录,请确认拼写:${unknownSites.join(', ')}\n\n` : ''}${preflightNote}`
+        const head = `批量采集 ${okN}/${effSites.length} 站成功${silentN > 0 ? `,其中 ${silentN} 站疑似静默失败(exit 0 但内容无效)` : ''}:\n\n`
+        const loginSeg = loginLines.length > 0 ? `登录态快检:\n${loginLines.join('\n')}\n\n` : ''
+        const pre = `${unknownSites.length > 0 ? `目录预检:以下站点不在适配器目录,请确认拼写:${unknownSites.join(', ')}\n\n` : ''}${preflightNote}${loginSeg}`
         const body = results.map((r) => `== ${r.site} ${r.ok ? '✓' : '✗'}${r.badge} ==\n${r.text}`).join('\n\n')
         // 报告导出(主线 B 渲染层):多站结果合并为带出处 markdown,落盘并在工具输出附路径
         let reportTail = ''

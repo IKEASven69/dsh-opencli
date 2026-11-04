@@ -339,6 +339,34 @@ describe('三工具接线(注册表的 output.render 即本卡)+ execute 契约�
     expect(bd!.output!.render!({ command: 'find' }, { text: 'found 3' })[0]!.text).toContain('▣ opencli_do · find')
   })
 
+  it('site_batch 派发前登录态快检(0.4.7 W5):⚠ 标注不改变派发;skipNotLoggedIn 摘除;默认关', async () => {
+    const tool = ctx.tools.registered.get('site_batch')!
+    // loginCheck 走 TTL 缓存桩:bbb 未登录,aaa 正常(缓存注入=零 shell 依赖)
+    const mk = (results: Array<{ site: string; ok: boolean }>) => ({
+      at: Date.now(),
+      results: { ok: true, checkedAt: new Date().toISOString(), results: results.map((r) => ({ ...r, timedOut: false, detail: null })) },
+    })
+    const svc = ctx.opencli as unknown as { loginCache: unknown }
+    // 默认关:不传 preflight → 无 登录态快检 段
+    const r0 = await tool.execute({ command: 'hot', sites: ['aaa', 'bbb'] })
+    expect(r0.text).not.toContain('登录态快检')
+    svc.loginCache = mk([{ site: 'aaa', ok: true }, { site: 'bbb', ok: false }])
+    try {
+      // ⚠ 标注:两站照常派发
+      const r1 = await tool.execute({ command: 'hot', sites: ['aaa', 'bbb'], preflight: true })
+      expect(r1.text).toContain('登录态快检:')
+      expect(r1.text).toContain('⚠ bbb:未登录')
+      expect(r1.text).toContain('批量采集 2/2 站成功')
+      // skipNotLoggedIn:bbb 摘除,只跑 aaa
+      const r2 = await tool.execute({ command: 'hot', sites: ['aaa', 'bbb'], preflight: true, skipNotLoggedIn: true })
+      expect(r2.text).toContain('⛔ bbb:未登录,已跳过')
+      expect(r2.text).toContain('批量采集 1/1 站成功')
+      expect(r2.text).not.toContain('== bbb')
+    } finally {
+      svc.loginCache = null
+    }
+  })
+
   it('site_batch execute 文本契约未被 render 升级破坏(桩 shell 全成功路径)', async () => {
     const tool = ctx.tools.registered.get('site_batch')!
     const r = await tool.execute({ command: 'hot', sites: ['aaa', 'bbb'] })
