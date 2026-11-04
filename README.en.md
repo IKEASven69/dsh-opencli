@@ -28,7 +28,18 @@ any shell ─┴─ dsh-opencli-ctl (inbox intents) ─────────�
 
 Every execution path converges on one plugin service: write operations pass an approval gate (fail-closed), collected results pass authenticity verification (exit 0 does not mean valid data), and every run leaves snapshots and traces for replay.
 
-## Getting Started
+> The npm package is **@cold777/dsh-opencli** — the unscoped name `dsh-opencli` is taken by an unrelated low-level tool. Watch out when searching: this plugin is the full product of 170+ structured site commands, scheduled watch + change alerting, and approval gates. Install commands in this README are canonical.
+
+## Choosing between browser plugins
+
+Browser automation plugins in the dsh ecosystem follow two technical routes; pick by scenario, they do not conflict:
+
+- **CDP-attach plugins** (connect to a debug port of an already-running browser): good for scripted page control — light and fast, but no site semantic layer and no unattended product layer.
+- **This plugin (daemon + BrowserBridge extension)**: rides your everyday browser's logged-in sessions; the value sits above the semantic layer as a product loop — 170+ one-step site commands, approval-gated writes, action-evidence verification, scheduled collection + change alerting + multi-channel push, snapshot diff, provenance reports and run replay. Built for "let agents and schedules continuously work through your own accounts".
+
+The two can coexist: port-based control plugins drive pages; this plugin owns the data product and approval chain.
+
+## Quick start
 
 ```sh
 # ① OpenCLI runtime (skip if already installed)

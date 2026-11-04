@@ -82,7 +82,10 @@
     "site-commands",
     "data-product",
     "scheduled-collection",
-    "provenance-report"
+    "provenance-report",
+    "deepseek-harness",
+    "scheduled-watch",
+    "change-alerting"
   ],
   "bin": {
     "dsh-opencli-ctl": "bin/dsh-opencli-ctl.cjs"
