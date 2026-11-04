@@ -2,3 +2,4 @@ node_modules/
 .build-tools/tmp-src/
 *.log
 *.tgz
+tmp-client
