@@ -501,3 +501,51 @@ export async function sendViaChannels(channels: NotifyChannel[], title: string, 
     return { name: ch.name, ...r }
   }))
 }
+
+// ---------------------------------------------------------------------------
+// 任务级静默时段(0.4.7 B2):命中窗内的通知暂存,出窗首跑合并推送
+// ---------------------------------------------------------------------------
+
+/** 静默期暂存条目(进任务持久化,重启不丢)。 */
+export interface QuietPendingItem { at: string; ok: boolean; summary: string; hits: number; diff: boolean }
+
+const QUIET_RE = /^(\d{2}:\d{2})-(\d{2}:\d{2})$/
+
+/**
+ * 解析并归一 "HH:MM-HH:MM"(支持跨夜 23:00-07:00);非法返回 undefined——调用方
+ * 按未配置处理(fail-open:解析不出窗≠全天静默,宁可多推不可吞通知)。
+ */
+export function parseQuietHours(raw: string | undefined): { from: string; to: string } | undefined {
+  if (typeof raw !== 'string') return undefined
+  const m = QUIET_RE.exec(raw.trim())
+  if (m === null) return undefined
+  const [from, to] = [m[1], m[2]]
+  for (const t of [from, to]) {
+    const [h, mi] = t.split(':').map(Number)
+    if (h > 23 || mi > 59) return undefined
+  }
+  return { from, to }
+}
+
+/** 判定 now 是否落在静默窗内(跨夜窗:from>to 时 t≥from 或 t<to)。 */
+export function inQuietHours(raw: string | undefined, now: Date = new Date()): boolean {
+  const q = parseQuietHours(raw)
+  if (q === undefined) return false
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const t = `${pad(now.getHours())}:${pad(now.getMinutes())}`
+  if (q.from <= q.to) return t >= q.from && t < q.to
+  return t >= q.from || t < q.to
+}
+
+/**
+ * 合并推送的静默摘要段(附在正文尾;出窗首跑时调用方把 pending 一并传入并清空)。
+ * 每条一行:HH:MM ✓/✗ + 🔔(命中)/📊(有变化)标记 + 摘要截断;空数组返回空串。
+ */
+export function renderQuietDigest(pending: QuietPendingItem[] | undefined, quietHours: string | undefined): string {
+  if (pending === undefined || pending.length === 0) return ''
+  const lines = pending.map((p) => {
+    const mark = `${p.ok ? '✓' : '✗'}${p.hits > 0 ? ' 🔔' : ''}${p.diff ? ' 📊' : ''}`
+    return `- ${p.at.slice(11, 16)} ${mark} ${p.summary}`
+  })
+  return `\n😴 静默期(${quietHours ?? ''})合并 ${pending.length} 条:\n${lines.join('\n')}`
+}

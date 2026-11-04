@@ -16,6 +16,8 @@ export interface DiffEntry {
   kind: 'new' | 'gone' | 'moved'
   /** 条目摘要(身份字段或归一文本,截 80 字) */
   title: string
+  /** 身份键(0.4.7 B1:CSV diff 列按此回配行;entries 截 20 条不影响完整标记,用 diffItemMarks) */
+  key?: string
   /** 位移:from→to(moved 专用) */
   from?: number
   to?: number
@@ -60,26 +62,78 @@ function entryTitle(item: unknown, key: string): string {
   return key.slice(0, 80)
 }
 
+/** 快照 stdout → 条目数组(数组/常见包装;非结构化 ok=false)。diffSnapshots 与 diffItemMarks 共用。 */
+function parseItemArray(t: string): { items: unknown[]; ok: boolean } {
+  const s = t.trim()
+  if (s.length === 0) return { items: [], ok: true }
+  try {
+    const j = JSON.parse(s) as unknown
+    if (Array.isArray(j)) return { items: j, ok: true }
+    // {data:[...]} / {items:[...]} / {list:[...]} 常见包装
+    if (j !== null && typeof j === 'object') {
+      for (const k of ['data', 'items', 'list', 'results']) {
+        const v = (j as Record<string, unknown>)[k]
+        if (Array.isArray(v)) return { items: v, ok: true }
+      }
+    }
+    return { items: [], ok: false }
+  } catch { return { items: [], ok: false } }
+}
+
+/** 条目身份键导出(0.4.7 B1:CSV diff 列按此回配行——与 diff 内部同一身份函数)。 */
+export function itemKey(item: unknown): string | null {
+  return entryKey(item)
+}
+
+/**
+ * 逐条变化标记(0.4.7 B1 CSV diff 列):身份键 → 'new' | 'gone' | 'moved #from→#to'。
+ * 与 diffSnapshots 同一套解析/身份/位移阈值(≥3 位),但**不求摘要不截断**——CSV 每行都要标。
+ * 非结构化(任一侧解析失败)返回空 Map(该对不标,列留空)。
+ */
+export function diffItemMarks(prev: string, next: string): Map<string, string> {
+  const p = parseItemArray(prev)
+  const n = parseItemArray(next)
+  const marks = new Map<string, string>()
+  if (!p.ok || !n.ok) return marks
+  const indexOf = (items: unknown[]): Map<string, number> => {
+    const m = new Map<string, number>()
+    items.forEach((it, i) => { const k = entryKey(it); if (k !== null && !m.has(k)) m.set(k, i) })
+    return m
+  }
+  const pm = indexOf(p.items)
+  const nm = indexOf(n.items)
+  for (const [key, ni] of nm) {
+    if (!pm.has(key)) { marks.set(key, 'new'); continue }
+    const pi = pm.get(key)!
+    if (Math.abs(pi - ni) >= 3) marks.set(key, `moved #${pi + 1}→#${ni + 1}`)
+  }
+  for (const key of pm.keys()) if (!nm.has(key)) marks.set(key, 'gone')
+  return marks
+}
+
+/**
+ * 按日聚合(0.4.7 B1 七天视图):[{day:'YYYY-MM-DD HH:MM',added,removed,moved}] →
+ * 按日历日求和,近 7 天,新→旧。入参即 snap-diff-history 的 days(新→旧)。
+ */
+export function aggregateDaySums(
+  days: Array<{ day: string; added: number; removed: number; moved: number }>,
+): Array<{ day: string; added: number; removed: number; moved: number }> {
+  const byDay = new Map<string, { day: string; added: number; removed: number; moved: number }>()
+  for (const d of days) {
+    const day = d.day.slice(0, 10)
+    const cur = byDay.get(day) ?? { day, added: 0, removed: 0, moved: 0 }
+    cur.added += d.added
+    cur.removed += d.removed
+    cur.moved += d.moved
+    byDay.set(day, cur)
+  }
+  return [...byDay.values()].slice(0, 7)
+}
+
 /** 相邻快照 diff:prev/next 为站点命令原始输出文本。 */
 export function diffSnapshots(prev: string, next: string): SnapshotDiff {
-  const parse = (t: string): { items: unknown[]; ok: boolean } => {
-    const s = t.trim()
-    if (s.length === 0) return { items: [], ok: true }
-    try {
-      const j = JSON.parse(s) as unknown
-      if (Array.isArray(j)) return { items: j, ok: true }
-      // {data:[...]} / {items:[...]} / {list:[...]} 常见包装
-      if (j !== null && typeof j === 'object') {
-        for (const k of ['data', 'items', 'list', 'results']) {
-          const v = (j as Record<string, unknown>)[k]
-          if (Array.isArray(v)) return { items: v, ok: true }
-        }
-      }
-      return { items: [], ok: false }
-    } catch { return { items: [], ok: false } }
-  }
-  const p = parse(prev)
-  const n = parse(next)
+  const p = parseItemArray(prev)
+  const n = parseItemArray(next)
   if (!p.ok || !n.ok) {
     const prevBytes = prev.length, nextBytes = next.length
     const prevLines = prev.split('\n').filter((l) => l.trim().length > 0).length
@@ -102,12 +156,12 @@ export function diffSnapshots(prev: string, next: string): SnapshotDiff {
   let added = 0, removed = 0, moved = 0
   // 新增:next 有 prev 无
   for (const [key, i] of nm) {
-    if (!pm.has(key)) { added++; entries.push({ kind: 'new', title: entryTitle(n.items[i], key), to: i + 1 }); if (entries.length >= 20) break }
+    if (!pm.has(key)) { added++; entries.push({ kind: 'new', title: entryTitle(n.items[i], key), key, to: i + 1 }); if (entries.length >= 20) break }
   }
   // 消失:prev 有 next 无
   if (entries.length < 20) {
     for (const [key, i] of pm) {
-      if (!nm.has(key)) { removed++; entries.push({ kind: 'gone', title: entryTitle(p.items[i], key), from: i + 1 }); if (entries.length >= 20) break }
+      if (!nm.has(key)) { removed++; entries.push({ kind: 'gone', title: entryTitle(p.items[i], key), key, from: i + 1 }); if (entries.length >= 20) break }
     }
   }
   // 位移:两处都有但排名变了(只报升/降 ≥3 位——前列微小互换是噪音)
@@ -116,7 +170,7 @@ export function diffSnapshots(prev: string, next: string): SnapshotDiff {
       const pi = pm.get(key)
       if (pi === undefined || Math.abs(pi - ni) < 3) continue
       moved++
-      entries.push({ kind: 'moved', title: entryTitle(n.items[ni], key), from: pi + 1, to: ni + 1 })
+      entries.push({ kind: 'moved', title: entryTitle(n.items[ni], key), key, from: pi + 1, to: ni + 1 })
       if (entries.length >= 20) break
     }
   }

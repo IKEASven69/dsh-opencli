@@ -6,6 +6,7 @@
  *
  * 解析纪律(与 diffsnap 同门):JSON 数组(或 {data/items/list/results} 包装)才结构化;
  * 非数组→原样文本单列(宁给原文不给臆造)。列集合=所有条目键的并集(缺失填空)。
+ * 出处列 _at/_site 之外另有 _diff(0.4.7 B1:相邻快照逐条变化标记,首份留空)。
  * @module dsh-opencli/exportcsv
  */
 
@@ -22,6 +23,8 @@ export function toCsv(rows: Array<Record<string, unknown>>): string {
   const cell = (v: unknown): string => csvCell(v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
   return [cols.map(cell).join(','), ...rows.map((r) => cols.map((k) => cell(r[k])).join(','))].join('\r\n')
 }
+
+import { diffItemMarks, itemKey } from './diffsnap.ts'
 
 /** 解析单份快照 stdout:数组/包装→条目流;否则 null(调用方走原文单列)。 */
 function parseItems(stdout: string): Array<Record<string, unknown>> | null {
@@ -57,16 +60,24 @@ export interface ExportResult {
 /** 导出:多份快照 → 单表(结构化)或分节原文(非结构化)。 */
 export function exportSnapshots(input: ExportInput): ExportResult {
   const structured: Array<Record<string, unknown>> = []
+  // 相邻快照逐条标记(0.4.7 B1):_diff=new/gone/moved #a→#b;首份与非结构化邻接留空
+  let prevStdout: string | undefined
   const rawSections: string[] = []
   let usedStructured = 0
   for (const s of input.snapshots) {
     const items = parseItems(s.stdout)
     if (items === null) {
       rawSections.push(`# ${s.at} ${s.site}\n${s.stdout.trim()}`)
+      prevStdout = undefined
       continue
     }
     usedStructured++
-    for (const it of items) structured.push({ _at: s.at, _site: s.site, ...it })
+    const marks = prevStdout !== undefined ? diffItemMarks(prevStdout, s.stdout) : new Map()
+    for (const it of items) {
+      const k = itemKey(it)
+      structured.push({ _at: s.at, _site: s.site, _diff: k !== null ? marks.get(k) ?? '' : '', ...it })
+    }
+    prevStdout = s.stdout
   }
   if (usedStructured > 0 && structured.length > 0) {
     return { text: toCsv(structured), rows: structured.length, snapshots: input.snapshots.length }

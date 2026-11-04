@@ -23,7 +23,7 @@ export const inboxDir = (): string => process.env.DSH_OPENCLI_INBOX_DIR ?? join(
 
 /** 意图(闭集):kind 与字段全部显式,多余字段=拒绝。 */
 export type Intent =
-  | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number; source?: string; notifyLevel?: string }
+  | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number; source?: string; notifyLevel?: string; quietHours?: string }
   | { kind: 'schedule-remove'; id: string }
   | { kind: 'schedule-run'; id: string }
   | { kind: 'schedule-list' }
@@ -69,14 +69,15 @@ export function parseIntent(raw: unknown): Intent | null {
   const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0
   switch (o.kind) {
     case 'schedule-add':
-      if (!allow(['kind', 'site', 'cron', 'watch', 'notify', 'retry', 'source', 'notifyLevel'])) return null
+      if (!allow(['kind', 'site', 'cron', 'watch', 'notify', 'retry', 'source', 'notifyLevel', 'quietHours'])) return null
       if (!str(o.site) || !str(o.cron)) return null
       if (o.watch !== undefined && typeof o.watch !== 'string') return null
       if (o.notify !== undefined && typeof o.notify !== 'boolean') return null
       if (o.retry !== undefined && (typeof o.retry !== 'number' || !Number.isFinite(o.retry))) return null
       if (o.source !== undefined && (typeof o.source !== 'string' || !['agent', 'chat', 'panel', 'ctl'].includes(o.source))) return null
       if (o.notifyLevel !== undefined && o.notifyLevel !== 'quiet' && o.notifyLevel !== 'all') return null
-      return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}), ...(o.source !== undefined ? { source: o.source } : {}), ...(o.notifyLevel !== undefined ? { notifyLevel: o.notifyLevel } : {}) } as Intent
+      if (o.quietHours !== undefined && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(String(o.quietHours)) && o.quietHours !== 'off') return null
+      return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}), ...(o.source !== undefined ? { source: o.source } : {}), ...(o.notifyLevel !== undefined ? { notifyLevel: o.notifyLevel } : {}), ...(o.quietHours !== undefined ? { quietHours: String(o.quietHours) } : {}) } as Intent
     case 'schedule-remove':
       return allow(['kind', 'id']) && str(o.id) ? { kind: 'schedule-remove', id: o.id } : null
     case 'schedule-run':

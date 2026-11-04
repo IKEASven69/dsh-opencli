@@ -39,9 +39,10 @@ const STR = {
     tryT: '试试看', trySub: '在对话里直接说,或先在这里跑一条 · 点右侧快捷/命令徽章 → 填入输入框',
     nlT: '自然语言指挥台', nlSub: '一句话描述你想做的事,确认后由插件执行(用你当前的模型,一次调用)',
     nlPh: '例:每天早9点把掘金热榜存档,AI 相关的推送给我', nlGo: '映射', nlMapping: '映射中…',
-    nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行', nfUrlPh: 'webhook URL(钉钉加签可带 &secret=…)', nfSave: '保存通道', nfTest: '测试', nfSaved: '✓ 通道已保存', nfTestOk: '✓ 测试消息已送达', nfTestFail: '✗ 测试失败',
+    nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行', nfUrlPh: 'webhook URL(钉钉加签可带 &secret=…)', nfSave: '保存通道', nfTest: '测试', nfSaved: '✓ 通道已保存', nfTestOk: '✓ 测试消息已送达', nfTestFail: '✗ 测试失败',
+
     diffT: '📊 变化', diffEmpty: '还没有两次采集的对比——再跑一次就有了', diffNone: '无变化',
-    csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`,
+    csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`, nfLevel: '级别', nfLevelAll: '全部', nfLevelQuiet: '仅变化', nfLevelTip: 'quiet=只推命中/变化/失败;all=例行也推', diffWeek: '近 7 天', diffAdded: '新增', diffGone: '消失', diffMoved: '位移', qhLabel: '静默', qhOff: '关', qhTip: '窗内通知暂存,出窗合并推送', qhSetFail: '静默时段格式:HH:MM-HH:MM', qhPh: '😴 静默 23:00-07:00', qhTitle: '跨夜如 23:00-07:00;窗内暂存出窗合并',
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     hintT: '你是不是想用这些?点击直接跑:',
     quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑', quickMore: '↑ 每次刷新从你的站点目录抽 6 个——170+ 站都能这么用',
@@ -125,9 +126,10 @@ const STR = {
     tryT: 'Try it', trySub: 'Say it in chat, or run one here · click a quick pick/command badge to fill the input',
     nlT: 'Natural-language console', nlSub: 'Describe what you want in one line, review the mapped intent, then apply (uses your current model, one call)',
     nlPh: 'e.g. archive juejin hot every day at 9am and ping me on AI news', nlGo: 'Map', nlMapping: 'Mapping…',
-    nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied', nfUrlPh: 'webhook URL (dingtalk secret via &secret=…)', nfSave: 'Save', nfTest: 'Test', nfSaved: '✓ channel saved', nfTestOk: '✓ test delivered', nfTestFail: '✗ test failed',
+    nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied', nfUrlPh: 'webhook URL (dingtalk secret via &secret=…)', nfSave: 'Save', nfTest: 'Test', nfSaved: '✓ channel saved', nfTestOk: '✓ test delivered', nfTestFail: '✗ test failed',
+
     diffT: 'Diff', diffEmpty: 'No pairs yet — run one more collection', diffNone: 'no change',
-    csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`,
+    csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`, nfLevel: 'level', nfLevelAll: 'all', nfLevelQuiet: 'changes', nfLevelTip: 'quiet=hits/changes/failures only; all=routine too', diffWeek: 'last 7 days', diffAdded: 'added', diffGone: 'gone', diffMoved: 'moved', qhLabel: 'quiet', qhOff: 'off', qhTip: 'notifications during the window are merged and sent after it ends', qhSetFail: 'quiet hours format: HH:MM-HH:MM', qhPh: '😴 quiet 23:00-07:00', qhTitle: 'overnight ok e.g. 23:00-07:00; merged after window',
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     hintT: 'Did you mean? Click to run:',
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run', quickMore: '↑ 6 picked from your catalog on each refresh — 170+ sites work like this',
@@ -204,7 +206,7 @@ const STR = {
 
 type StrKey = keyof typeof STR.zh
 
-interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; history?: Array<{ at: string; ok: boolean; summary: string }> }
+interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; history?: Array<{ at: string; ok: boolean; summary: string }> }
 interface AssetHit { id: string; name: string }
 interface BuiltinScript { name: string; sha256: string; description: string }
 interface ToastMsg { msg: string; ok: boolean }
@@ -590,6 +592,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [schedSite, setSchedSite] = useState('')
   const [schedCron, setSchedCron] = useState('0 9 * * *')
   const [schedWatch, setSchedWatch] = useState('')
+  const [schedQuiet, setSchedQuiet] = useState('')
   const [schedBusy, setSchedBusy] = useState(false)
   const [recordings, setRecordings] = useState<Recording[]>(() => {
     try { return JSON.parse(localStorage.getItem('dsh-opencli-recordings') ?? '[]') as Recording[] } catch { return [] }
@@ -789,9 +792,10 @@ function Panel(): ReturnType<typeof createElement> {
     if (schedSite.trim().length === 0 || schedBusy) return
     setSchedBusy(true)
     const watch = schedWatch.trim()
-    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, ...(watch.length > 0 ? { watch } : {}) } } as unknown as Record<string, unknown>)
+    const qh = schedQuiet.trim()
+    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}) } } as unknown as Record<string, unknown>)
     setSchedBusy(false)
-    if (r.ok) { setSchedSite(''); setSchedWatch(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
+    if (r.ok) { setSchedSite(''); setSchedWatch(''); setSchedQuiet(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
   }
   // 通知通道(D):保存当前所选平台通道;测试按钮发一条真实测试消息(用户配置的通道)。
   // dingtalk secret 支持钉在 URL query(secret=...)——保存原样,发送时由适配层处理。
@@ -824,6 +828,13 @@ function Panel(): ReturnType<typeof createElement> {
     const r = await rpc('schedule-toggle', { request: { id, enabled } } as unknown as Record<string, unknown>)
     if (r.ok) void loadSchedules()
   }
+  // 任务级补丁(0.4.7 B2/B3):走 schedule-add 幂等去重(同 site+cron 复用),只改级别/静默窗
+  const patchSchedule = async (s: SchedItem, patch: Record<string, unknown>): Promise<void> => {
+    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: s.site, cron: s.cron, ...patch } } as unknown as Record<string, unknown>)
+    if (r.ok) void loadSchedules()
+    else showToast(r.error?.message ?? t2('errReq'), false)
+  }
+  const QH_PRESETS = ['23:00-07:00', '22:00-08:00', '00:00-06:00', '01:00-09:00']
   const removeSchedule = async (id: string): Promise<void> => {
     const r = await rpc('schedule-remove', { request: { id } } as unknown as Record<string, unknown>)
     if (r.ok) void loadSchedules()
@@ -1195,6 +1206,7 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('input', { className: 'o4-in', placeholder: 'site zhihu hot', value: schedSite, onChange: (e: { target: { value: string } }) => setSchedSite(e.target.value) }),
           createElement('input', { className: 'o4-in mono', style: { maxWidth: '110px' }, placeholder: 'cron', value: schedCron, onChange: (e: { target: { value: string } }) => setSchedCron(e.target.value) }),
           createElement('input', { className: 'o4-in', style: { maxWidth: '172px' }, placeholder: '🔔 watch 关键词', title: '逗号分隔,命中即通知', value: schedWatch, onChange: (e: { target: { value: string } }) => setSchedWatch(e.target.value) }),
+          createElement('input', { className: 'o4-in mono', style: { maxWidth: '150px' }, placeholder: t2('qhPh'), title: t2('qhTitle'), value: schedQuiet, onChange: (e: { target: { value: string } }) => setSchedQuiet(e.target.value) }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
         ),
         // 通知通道节(D):平台下拉+URL+保存+测试(与 ctl notify set/test 同链)
@@ -1233,7 +1245,14 @@ function Panel(): ReturnType<typeof createElement> {
                     ` · ${okN}/${hist.length || 0}${hist.length === 0 ? '' : (okN > 0 ? ' ✓' : ' ✗')}`)),
                 createElement('span', { className: 'o4-bdg b' }, t2('retryN')(s.retry ?? 3)),
                 createElement('span', { className: 'o4-bdg' }, s.notify === false ? t2('notifyOff') : t2('notifyOn')),
-                ...(s.notifyLevel === 'quiet' ? [createElement('span', { className: 'o4-bdg', title: t2('nfQuietTip') }, t2('nfQuiet'))] : []),
+                // 0.4.7 B3:通知级别下拉(quiet=只推命中/变化/失败;all=例行也推)——同一幂等链改档
+                createElement('select', { className: 'o4-in', style: { maxWidth: '86px', padding: '1px 4px', fontSize: '11px' }, title: t2('nfLevelTip'), value: s.notifyLevel ?? 'all', onChange: (e: { target: { value: string } }) => { void patchSchedule(s, { notifyLevel: e.target.value }) } },
+                  createElement('option', { value: 'all' }, `${t2('nfLevel')}:${t2('nfLevelAll')}`),
+                  createElement('option', { value: 'quiet' }, `${t2('nfLevel')}:${t2('nfLevelQuiet')}`)),
+                // 0.4.7 B2:静默窗下拉(预设+自定义现值+关;窗内暂存出窗合并)
+                createElement('select', { className: 'o4-in', style: { maxWidth: '132px', padding: '1px 4px', fontSize: '11px' }, title: t2('qhTip'), value: s.quietHours ?? '', onChange: (e: { target: { value: string } }) => { void patchSchedule(s, { quietHours: e.target.value === '' ? 'off' : e.target.value }) } },
+                  createElement('option', { value: '' }, `${t2('qhLabel')}:${t2('qhOff')}`),
+                  ...[...new Set([...QH_PRESETS, ...(s.quietHours !== undefined ? [s.quietHours] : [])])].map((q) => createElement('option', { key: q, value: q }, `${t2('qhLabel')} ${q}`))),
                 ...(s.source !== undefined ? [createElement('span', { className: 'o4-bdg', title: t2('nfSrcTip')(s.source) }, s.source)] : []),
                 createElement('span', { style: { flex: '1' } }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
@@ -1523,6 +1542,20 @@ interface HistRow { at: string; ok: boolean; summary: string }
  *  旧时间线是画布的一个"趋势视角":柱状图看规模走势,卡片流看每步现场。 */
 /** 行内时间线开关:按钮+面板自带局部状态(不依赖父组件 state,杜绝跨实例展开失效)。 */
 /** 变化时间线开关(0.4.6 补强③):snap-diff-history 拉取按天聚合的 diff,展开态列表。 */
+/** 七日聚合:优先服务端 week;旧响应无 week 时按 day 前缀本地聚合(兜底兼容)。 */
+function weekOf(days: Array<{ day: string; added: number; removed: number; moved: number; week?: unknown }>): Array<{ day: string; added: number; removed: number; moved: number }> {
+  const w = (days as Array<{ week?: Array<{ day: string; added: number; removed: number; moved: number }> }>).week
+  if (Array.isArray(w) && w.length > 0) return w
+  const byDay = new Map<string, { day: string; added: number; removed: number; moved: number }>()
+  for (const d of days) {
+    const day = d.day.slice(0, 10)
+    const cur = byDay.get(day) ?? { day, added: 0, removed: 0, moved: 0 }
+    cur.added += d.added; cur.removed += d.removed; cur.moved += d.moved
+    byDay.set(day, cur)
+  }
+  return [...byDay.values()].slice(0, 7)
+}
+
 function DiffToggle(props: { id: string; lang: Lang; label: string }): ReturnType<typeof createElement> {
   const { id, lang, label } = props
   const [open, setOpen] = useState(false)
@@ -1535,7 +1568,7 @@ function DiffToggle(props: { id: string; lang: Lang; label: string }): ReturnTyp
 
 function DiffDaysPanel(props: { id: string; tt: (k: keyof typeof STR.zh) => string }): ReturnType<typeof createElement> {
   const { id, tt } = props
-  const [days, setDays] = useState<Array<{ day: string; added: number; removed: number; moved: number; summary: string }> | null>(null)
+  const [days, setDays] = useState<Array<{ day: string; added: number; removed: number; moved: number; summary: string; week?: Array<{ day: string; added: number; removed: number; moved: number }> }> | null>(null)
   const [err, setErr] = useState('')
   useEffect(() => {
     let alive = true
@@ -1550,7 +1583,19 @@ function DiffDaysPanel(props: { id: string; tt: (k: keyof typeof STR.zh) => stri
   if (err !== '') return createElement('div', { className: 'o4-sub', style: { color: 'var(--c-err)' } }, err)
   if (days === null) return createElement('div', { className: 'o4-load' }, '…')
   if (days.length === 0) return createElement('div', { className: 'o4-sub' }, tt('diffEmpty'))
+  // 七天聚合(B1):每日一行 新增/消失/位移——盯一周看趋势;明细行保持逐次采集粒度
+  const week = weekOf(days)
+  const weekRows = week.map((w) => createElement('div', { key: w.day, className: 'o4-qrow', style: { flexWrap: 'wrap' } },
+    createElement('span', { className: 'mono', style: { flex: 'none', fontSize: '11px', color: '#5F6873' } }, w.day),
+    createElement('span', { style: { fontSize: '12px', fontWeight: 600 } },
+      w.added + w.removed + w.moved === 0
+        ? tt('diffNone')
+        : `📈 +${w.added} / -${w.removed} / ⇅${w.moved}`)))
+  const weekBox = createElement('div', { className: 'o4-card', style: { padding: '8px 10px', margin: '8px 0', display: 'flex', flexDirection: 'column', gap: '4px' } },
+    createElement('div', { className: 'o4-h3', style: { fontSize: '12px', margin: 0 } }, tt('diffWeek')),
+    ...weekRows)
   return createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '5px', margin: '8px 0' } },
+    weekBox,
     ...days.slice(0, 14).map((d) => createElement('div', { key: d.day, className: 'o4-qrow', style: { flexWrap: 'wrap' } },
       createElement('span', { className: 'mono', style: { flex: 'none', fontSize: '11px', color: '#5F6873' } }, d.day),
       createElement('span', { style: { fontSize: '12px' } },

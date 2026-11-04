@@ -78,8 +78,9 @@ describe('exportSnapshots(⑦ CSV 导出)', () => {
       { at: '2026-10-31T01:00:00Z', site: 'site juejin hot', stdout: JSON.stringify({ data: [{ rank: 1, title: 'A2', extra: true }] }) },
     ] })
     expect(r.rows).toBe(3)
-    expect(r.text.split('\r\n')[0]).toBe('_at,_site,rank,title,extra')
-    expect(r.text).toContain('2026-10-30T01:00:00Z,site juejin hot,1,A,')
+    // 0.4.7 B1:_diff 列插入在出处列之后(相邻快照逐条变化标记)
+    expect(r.text.split('\r\n')[0]).toBe('_at,_site,_diff,rank,title,extra')
+    expect(r.text).toContain('2026-10-30T01:00:00Z,site juejin hot,,1,A,') // _diff 空单元格(首份无标记)
   })
   it('非 JSON 快照 → 原文分节带出处,rows=0', async () => {
     const { exportSnapshots } = await import('../src/exportcsv.ts')

@@ -33,12 +33,12 @@ import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, renderTransportBenchmark, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
 import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } from './evidence.ts'
-import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
+import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, inQuietHours, parseQuietHours, renderQuietDigest, type NotifyConfig, type QuietPendingItem } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
 import { composeClick, composeCloseWindow, composeOpen, composeScreenshot, composeScroll, composeState, composeTabs, setCliDistDir, type CliEnvelope } from './direct-compose.ts'
 import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
-import { diffSnapshots, renderDiffText } from './diffsnap.ts'
+import { aggregateDaySums, diffSnapshots, renderDiffText } from './diffsnap.ts'
 import { exportSnapshots } from './exportcsv.ts'
 import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
@@ -247,7 +247,11 @@ export class OpencliService extends TypertRemoteService {
   private authProfiles: Record<string, { allowedDomains: string[]; storageStatePath?: string; persistState?: boolean }> = {
     // 示例：forum: { allowedDomains: ['example.com'], storageStatePath: 'D:/secrets/forum.json' }
   }
-  private schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string }> = []
+  private schedules: Array<{
+    id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string
+    source?: string; notifyLevel?: string; retry?: number; notify?: boolean; watch?: string
+    quietHours?: string; pendingNotify?: QuietPendingItem[]
+  }> = []
   private runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string }>> = {}
   private automationMode: 'read-only' | 'standard' | 'autonomous' | 'unrestricted' = 'standard'
   private rulePacks: Array<{ matches: string[]; initScriptPath: string; initScriptSha256: string; steps: unknown[] }> = []
@@ -1547,7 +1551,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (request === undefined) request = {} as never
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
@@ -1568,6 +1572,18 @@ export class OpencliService extends TypertRemoteService {
     // watch:关键词监控(逗号/空格分隔,≤120 字符)。命中任一关键词 → ingest 事件 watch-hit。
     // v1 故意用确定性匹配(noul 模糊"值得关注的变化"留 v2):真机实测 laya 判别力不足,宁缺勿误报。
     const watch = typeof request.watch === 'string' && request.watch.trim().length > 0 ? request.watch.trim().slice(0, 120) : undefined
+    // 静默时段(0.4.7 B2):'off'/空串=清除;合法 HH:MM-HH:MM=设置;非法串=报错(不静默吞)
+    let quietHours: string | undefined
+    let quietClear = false
+    if (typeof request.quietHours === 'string') {
+      const raw = request.quietHours.trim()
+      if (raw === '' || raw === 'off') quietClear = true
+      else {
+        const q = parseQuietHours(raw)
+        if (q === undefined) return { ok: false, error: 'quietHours 非法:需 HH:MM-HH:MM(如 23:00-07:00,支持跨夜);清除传 off' }
+        quietHours = `${q.from}-${q.to}`
+      }
+    }
     // 幂等去重:governor 队列下 add/remove 可能乱序(重试/双击),同 site+cron 的
     // 已有任务直接复用,不再生成僵尸副本(审查复现过 3 条重复)
     const dup = this.schedules.find((s) => s.site === site && s.cron === cron)
@@ -1576,6 +1592,8 @@ export class OpencliService extends TypertRemoteService {
       // 补强⑤④:复用既有任务时也补来源/级别(否则 agent 建的任务二次调用永远丢来源标记)
       if (typeof request.source === 'string' && ['agent', 'chat', 'panel', 'ctl'].includes(request.source) && dup.source !== request.source) { dup.source = request.source; await this.saveState() }
       if ((request.notifyLevel === 'quiet' || request.notifyLevel === 'all') && dup.notifyLevel !== request.notifyLevel) { dup.notifyLevel = request.notifyLevel; await this.saveState() }
+      if (quietClear && dup.quietHours !== undefined) { delete dup.quietHours; await this.saveState() }
+      else if (quietHours !== undefined && dup.quietHours !== quietHours) { dup.quietHours = quietHours; await this.saveState() }
       return { ok: true, id: dup.id }
     }
     const id = String(Date.now())
@@ -1586,6 +1604,7 @@ export class OpencliService extends TypertRemoteService {
     if (typeof request.retry === 'number' && Number.isFinite(request.retry)) entry.retry = Math.max(1, Math.min(5, Math.round(request.retry)))
     if (typeof request.notify === 'boolean') entry.notify = request.notify
     if (watch !== undefined) entry.watch = watch
+    if (quietHours !== undefined) entry.quietHours = quietHours
     this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
@@ -1596,7 +1615,7 @@ export class OpencliService extends TypertRemoteService {
   async scheduleList(): Promise<{ ok: boolean; schedules: Array<typeof this.schedules[number] & { history?: Array<{ at: string; ok: boolean; summary: string }> }> }> {
     return {
       ok: true,
-      schedules: this.schedules.map((s) => ({ ...s, history: (this.runHistory[s.id] ?? []).slice(0, 3) })),
+      schedules: this.schedules.map((s) => { const { pendingNotify: _pn, ...rest } = s; return { ...rest, history: (this.runHistory[s.id] ?? []).slice(0, 3) } }),
     }
   }
 
@@ -1849,7 +1868,7 @@ export class OpencliService extends TypertRemoteService {
    * 上限:逐份读 stdout 有 IO 成本,只看最近 21 份(约一周的日频任务)。
    */
   @Remote('snap-diff-history')
-  async snapDiffHistory(p: { id: string } | undefined): Promise<{ ok: boolean; days?: Array<{ day: string; added: number; removed: number; moved: number; summary: string }>; error?: string }> {
+  async snapDiffHistory(p: { id: string } | undefined): Promise<{ ok: boolean; days?: Array<{ day: string; added: number; removed: number; moved: number; summary: string }>; week?: Array<{ day: string; added: number; removed: number; moved: number }>; error?: string }> {
     const id = String((p ?? { id: '' }).id ?? '')
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     try {
@@ -1871,7 +1890,9 @@ export class OpencliService extends TypertRemoteService {
           })
         } catch { /* 单份损坏跳过 */ }
       }
-      return { ok: true, days: days.reverse() } // 新→旧
+      const rev = days.reverse() // 新→旧
+      // 七天聚合(B1):按日历日求和,近 7 天每日一行(新增/消失/位移)——盯一周看趋势
+      return { ok: true, days: rev, week: aggregateDaySums(rev) }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
@@ -3414,7 +3435,7 @@ export class OpencliService extends TypertRemoteService {
   /** 执行器桥(inbox-intent 与收件箱轮询共用;意图 → 既有 RPC 同源方法,一套逻辑两个入口)。 */
   private inboxExecutor(): IntentExecutor {
     return {
-      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}) }),
+      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}) }),
       scheduleRemove: async (id) => this.scheduleRemove({ id }),
       scheduleRun: async (id) => this.scheduleRunNow({ id }),
       scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
@@ -3594,7 +3615,17 @@ export class OpencliService extends TypertRemoteService {
     const quiet = sch?.notifyLevel === 'quiet'
     const worthPushing = !lastOk || watchHits.length > 0 || diffText.length > 0
     if (sch?.notify !== false && (!quiet || worthPushing)) {
-      await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText)
+      // 静默时段(0.4.7 B2):窗内暂存(上限 20 条,防长窗爆内存;随任务落盘重启不丢),
+      // 出窗首跑把暂存合并进正文一次推送后清空。窗解析失败按未配置处理(fail-open 多推不吞)。
+      if (sch?.quietHours !== undefined && inQuietHours(sch.quietHours)) {
+        const pend = sch.pendingNotify ?? []
+        pend.push({ at: new Date().toISOString(), ok: lastOk, summary: lastSummary.slice(0, 200), hits: watchHits.length, diff: diffText.length > 0 })
+        sch.pendingNotify = pend.slice(-20)
+        await this.saveState()
+      } else {
+        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours)
+        if ((sch?.pendingNotify?.length ?? 0) > 0) { sch!.pendingNotify = []; await this.saveState() }
+      }
     }
   }
 
@@ -3611,7 +3642,7 @@ export class OpencliService extends TypertRemoteService {
    * 例行结果与关键词命中。sendViaChannels 并发群发且单通道失败不抛;这里再兜一层:
    * 装配阶段的意外(坏配置形状等)也绝不反噬调度主链,通知永远是旁路。
    */
-  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string): Promise<void> {
+  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string): Promise<void> {
     try {
       const config = this.state.notifyConfig
       if (config === undefined) return
@@ -3623,7 +3654,8 @@ export class OpencliService extends TypertRemoteService {
       )
       const head = watchHits.length > 0 ? `🔔 Watch 命中\n` : diffText.length > 0 ? `📊 变化\n` : ''
 const diffSeg = diffText.length > 0 ? `\n📊 与上次相比:${diffText}` : ''
-await sendViaChannels(channels, title, head + body + diffSeg)
+const quietSeg = renderQuietDigest(pending, quietHours)
+await sendViaChannels(channels, title, head + body + diffSeg + quietSeg)
     } catch { /* 通知旁路:全静默降级 */ }
   }
 
