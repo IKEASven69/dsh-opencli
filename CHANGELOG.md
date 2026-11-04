@@ -1,3 +1,29 @@
+## 0.4.7 — 2026-11-04
+
+> 直连铺满 + 场景批:浏览器原语族全量 daemon 直连(实测最高 118x),通知静默时段/级别 UI、
+> 七天变化聚合、CSV diff 列、批量派发前登录态快检。486 单元全绿;真机八原语差分基准 8/8
+> 形状一致;全功能矩阵 26/26、GUI 九幕 26/26、canvas 7/7(宿主 dsh 0.2.2-alpha.3 + OpenCLI CLI/daemon 2.0.2)。
+
+### A. 直连铺满(全原语族)
+- **direct-compose 组合层**:0.4.6 只接了 eval;本期 state/click/scroll/open/screenshot/tab/close 全部直连。上游事实(2.0.2 dist 源码级核对):state/click/scroll 不是 daemon 动作,是 CLI 本地用 JS 串构造器经 exec 组合——本层**运行时装载本机已装 CLI 的构造器模块**(永不内嵌副本,上游改 JS 自动跟上),只复刻薄编排(click=page.click 链:resolve→CDP scrollIntoView→hit-test→CDP 原生点击→el.click 兜底;open=会话捕获启动+navigate+2s 落定+拦截器兜底)
+- 纪律:只在成功路径归一 CLI 2.0 信封,任何失败/旗标不认识→CLI 兜底出权威错误(TargetError 的 candidates/hint);页面身份缓存与上游 page.js 同款流转;`DSH_OPENCLI_DIRECT=0` 总闸逃生
+- **真机差分基准**(两阶段隔离,session=bench):state **57.8x**(1142→37ms)/ tab list **118.7x** / scroll **57x** / tab new **7.9x** / tab close **8.8x** / screenshot **4.7x** / open 1.9x / click 1.4x;八原语信封形状逐字段一致 8/8
+- 步骤截图直连化:每条轨迹都付的热路径(captureStepShot)免 CLI 冷启动
+
+### B. 场景批
+- **通知静默时段**(B2):任务级 quietHours(HH:MM-HH:MM,支持跨夜)——窗内通知暂存(上限 20,随任务落盘),出窗首跑合并 😴 摘要段一次推送;解析失败 fail-open;全链:面板表单+任务行预设下拉+schedule-add 幂等更新+inbox 闭集+ctl `--quiet-hours`
+- **通知级别 UI**(B3):任务行 notifyLevel 下拉(all/quiet),0.4.6 后端能力首次有面板面
+- **七天变化聚合**(B1):变化面板顶部七日条(每日一行 新增/消失/位移);CSV 导出新增 `_diff` 列(diffItemMarks 按身份键逐条标记 new/gone/moved #a→#b,完整无截断——entries 有 20 条上限故单独实现)
+- **批量派发前登录态快检**(W5'):site_batch 加 `preflight`/`skipNotLoggedIn`——未登录站标 ⚠ 或摘除(⛔),复用 login-check 的 whoami 池+TTL 缓存;默认关(交互式首查 15-45s 不可接受),无人值守显式开
+
+### C. 工程与分发
+- OpenCLI CLI/daemon 升级 2.0.2(扩展 1.0.26 对齐);dsh 0.2.2-alpha.3 适配(插件 peer 范围天然放行,唯一断裂=换 scoped 包名时漏改的 cordis.patch.yml,已修)
+- npm keywords 补 `deepseek-harness`(自动收录渠道触发词)/`scheduled-watch`/`change-alerting`(生态空白第一叙事);README 中英加包名说明行(无作用域名被占的搜索防守)与「与其他 browser 插件的选型」段(只讲路线不点名)
+
+### 兼容与验收
+- dsh 0.2.2-alpha.3(latest 为 0.2.1-rc.5,alpha 为开发线;宿主兼容门实测 includePrerelease 对比运行时主版本,peer `>=0.1.1-rc.2 <0.3.0-0` 天然放行)
+- 真机:全功能矩阵 26/26 + GUI 九幕 26/26 + canvas 7/7 + 直连差分基准 8/8;单元 486/486(+32)
+
 ## 0.4.6 — 2026-10-30
 
 > 人机协同与引擎大版本:自然语言指挥台 + daemon 直连传输 + 生态接入(任何 dsh 会话一句话驱动插件)。
