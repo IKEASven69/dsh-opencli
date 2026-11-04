@@ -18,8 +18,13 @@ const check = (n, c, d) => { if (c) { pass++; console.log('  PASS ' + n + (d ? '
   await page.setViewport({ width: 1240, height: 1400 });
   await page.goto('http://127.0.0.1:3123/?token=' + TOKEN, { waitUntil: 'domcontentloaded' }).catch(() => {});
   await sleep(6000);
-  await page.keyboard.down('Control'); await page.keyboard.down('Alt'); await page.keyboard.press(','); await page.keyboard.up('Alt'); await page.keyboard.up('Control');
-  await sleep(2500);
+  // 入口重试(冷启动竞态实证:页面加载 6s 内宿主可能未绑快捷键/未就绪,单发会空手而归)
+  const openSettings = async () => {
+    await page.keyboard.down('Control'); await page.keyboard.down('Alt'); await page.keyboard.press(','); await page.keyboard.up('Alt'); await page.keyboard.up('Control');
+    await sleep(2500);
+    return page.evaluate(() => [...document.querySelectorAll("[role='dialog']")].some(d => (d.innerText || '').includes('浏览器代理')))
+  }
+  if (!(await openSettings())) await openSettings()
   await page.evaluate(() => { const b = [...document.querySelectorAll('button, [role=tab], div')].find(x => (x.textContent || '').trim() === '浏览器代理'); if (b) b.click() });
   let ready = false;
   for (let i = 0; i < 15 && !ready; i++) { await sleep(2000); ready = await page.evaluate(() => [...document.querySelectorAll('.o4-in')].some(x => x.placeholder === 'site zhihu hot')) }
