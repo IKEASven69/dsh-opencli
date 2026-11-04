@@ -36,6 +36,7 @@ import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } 
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, type NotifyConfig } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
+import { composeClick, composeCloseWindow, composeOpen, composeScreenshot, composeScroll, composeState, composeTabs, setCliDistDir, type CliEnvelope } from './direct-compose.ts'
 import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
 import { diffSnapshots, renderDiffText } from './diffsnap.ts'
 import { exportSnapshots } from './exportcsv.ts'
@@ -255,6 +256,31 @@ export class OpencliService extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, 'opencli')
     this.bin = this.resolveBin()
+    // 直连组合层(state/click/scroll 的 JS 构造器)从本机已装 CLI 的 dist 运行时装载:
+    // 与 resolveBin 同一套级联定位 dist/src;注入失败组合层整层回落 CLI(旁路纪律不变)
+    setCliDistDir(this.resolveCliDistDir())
+  }
+
+  /** CLI dist/src 目录定位(镜像 resolveBin 级联,只认 .js 目录不认命令串);找不到返回 undefined。 */
+  private resolveCliDistDir(): string | undefined {
+    try {
+      // @ts-ignore - optional peer
+      const pkg = require.resolve('@jackwener/opencli/package.json')
+      const dir = join(dirname(pkg), 'dist', 'src')
+      if (existsSync(dir)) return dir
+    } catch { /* 无本地依赖则回退全局 */ }
+    const globalDir = join(dirname(process.execPath), 'node_modules', '@jackwener', 'opencli', 'dist', 'src')
+    if (existsSync(globalDir)) return globalDir
+    const scanned = scanOpencliAcrossNodeVersions([
+      join(homedir(), '.vfox', 'cache', 'nodejs'),
+      join(homedir(), '.vfox', 'sdks', 'nodejs'),
+      join(homedir(), '.nvm'),
+    ])
+    if (scanned !== null) {
+      const dir = dirname(scanned) // scanned 指向 dist/src/main.js
+      if (existsSync(dir)) return dir
+    }
+    return undefined
   }
 
   private resolveBin(): string {
@@ -2247,7 +2273,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('replay')
-  async replay(request: { step: string }): Promise<{ ok: boolean; error?: string }> {
+  async replay(request: { step: string; session?: string }): Promise<{ ok: boolean; error?: string }> {
     const step = typeof request.step === 'string' ? request.step.trim() : ''
     if (step.length === 0) return { ok: false, error: 'step 为空' }
     // MVP：仅回显步骤，真实回放走 site/opencli_* 透传（与 client 的 localStorage 录制互补）
@@ -2263,7 +2289,9 @@ export class OpencliService extends TypertRemoteService {
     // 里的历史录制不会随迁移改写,旧步骤必须仍然可回放
     const ns = head.startsWith('opencli_') ? 'opencli_' : head.startsWith('browser_') ? 'browser_' : null
     if (ns !== null) {
-      const out = await this.runBrowserTraced('dsh', [head.slice(ns.length), ...rest])
+      // 0.4.7:session 可选(dsh 默认)——差分基准等自动化用独立会话,不碰用户活页
+      const sess = typeof request.session === 'string' && request.session.trim().length > 0 ? request.session.trim() : 'dsh'
+      const out = await this.runBrowserTraced(sess, [head.slice(ns.length), ...rest])
       return { ok: out.exitCode === 0, error: out.exitCode !== 0 ? this.renderOut(out) : undefined }
     }
     return { ok: false, error: `未知步骤:${step}` }
@@ -2925,6 +2953,8 @@ export class OpencliService extends TypertRemoteService {
    */
   /** 直连页面身份缓存:session → targetId。响应顶层 page 持续刷新;stale 类错误清缓存。 */
   private directPages = new Map<string, string>()
+  /** 直连总闸(DSH_OPENCLI_DIRECT=0 关):旁路加速的逃生口——组合层在某宿主异常时可整体回 CLI。 */
+  private readonly directEnabled = process.env.DSH_OPENCLI_DIRECT !== '0'
 
   /**
    * eval 族直连执行(0.4.6 A2):走 daemon /command 母语(direct.ts),成功/结构化失败都归一成
@@ -2952,6 +2982,142 @@ export class OpencliService extends TypertRemoteService {
     }
   }
 
+  /**
+   * 直连分派(0.4.7 A:直连铺满):把 runBrowserTraced 的 argv 路由到 direct-compose 组合层。
+   * 每个子命令先过旗标守卫(语义定位/annotate/ax 等组合层不覆盖的面 → undefined → CLI),
+   * compose 成功后按上游语义维护 directPages 页面身份缓存(new/select 回传 page、close 比对
+   * 清缓存、close-window 释放租约清缓存——与上游 page.js _page 字段同款流转)。
+   * 纪律:任何不确定的 argv 形状都返回 undefined 走 CLI;绝不猜。
+   */
+  private async directForArgv(session: string | undefined, argv: string[]): Promise<CliEnvelope | undefined> {
+    const head = String(argv[0] ?? '')
+    const sess = session ?? 'dsh'
+    const cachedPage = this.directPages.get(sess)
+    const refresh = (page?: string): void => { if (typeof page === 'string' && page.length > 0) this.directPages.set(sess, page) }
+    try {
+      switch (head) {
+        case 'open': {
+          // CLI 形状:open <url>(无旗标面;网络捕获/等待语义在 composeOpen 内)
+          const url = String(argv[1] ?? '')
+          if (url.length === 0 || url.startsWith('--') || argv.length > 2) return undefined
+          const r = await composeOpen(sess, url, cachedPage)
+          if (r === undefined) return undefined
+          refresh(r.pageId)
+          return r.env
+        }
+        case 'scroll': {
+          // CLI 形状:scroll <up|down> [--amount <n>]
+          const dir = String(argv[1] ?? '')
+          let amount: number | undefined
+          for (let i = 2; i < argv.length; i++) {
+            if (argv[i] === '--amount' && /^\d+$/.test(String(argv[i + 1] ?? ''))) { amount = Number(argv[i + 1]); i++ } else return undefined
+          }
+          const env = await composeScroll(sess, dir, amount, cachedPage)
+          if (env !== undefined) refresh(cachedPage)
+          return env
+        }
+        case 'state': {
+          // 只覆盖 dom 默认路径;--source ax / --diagnostics / --compare-sources 留给 CLI
+          let ax = false
+          for (let i = 1; i < argv.length; i++) {
+            if (argv[i] === '--source' && String(argv[i + 1] ?? '') === 'ax') ax = true
+            else if (argv[i] === '--source' && String(argv[i + 1] ?? '') === 'dom') { /* 默认路径 */ }
+            else if (argv[i] === '--diagnostics' || argv[i] === '--compare-sources') return undefined
+            else return undefined
+          }
+          if (ax) return undefined
+          const env = await composeState(sess, cachedPage)
+          if (env !== undefined) refresh(cachedPage)
+          return env
+        }
+        case 'click': {
+          // CLI 形状:click <target> [--nth <n>];语义定位旗标(--role/--name/…)不在本层
+          const target = String(argv[1] ?? '')
+          if (target.length === 0 || target.startsWith('--')) return undefined
+          let nth: number | undefined
+          for (let i = 2; i < argv.length; i++) {
+            if (argv[i] === '--nth' && /^\d+$/.test(String(argv[i + 1] ?? ''))) { nth = Number(argv[i + 1]); i++ } else return undefined
+          }
+          const env = await composeClick(sess, target, nth, cachedPage)
+          if (env !== undefined) refresh(cachedPage)
+          return env
+        }
+        case 'screenshot': {
+          // CLI 形状:screenshot [path] [--full-page];annotate/尺寸覆盖留给 CLI(扩展 annotatedScreenshot)
+          let path: string | undefined
+          let fullPage = false
+          for (let i = 1; i < argv.length; i++) {
+            if (argv[i] === '--full-page') fullPage = true
+            else if (argv[i] === '--annotate' || argv[i] === '--width' || argv[i] === '--height') return undefined
+            else if (!String(argv[i]).startsWith('--') && path === undefined) path = String(argv[i])
+            else return undefined
+          }
+          const shot = await composeScreenshot(sess, cachedPage, { fullPage })
+          if (shot === undefined) return undefined
+          refresh(cachedPage)
+          if (path !== undefined) {
+            try { await writeFile(path, Buffer.from(shot.base64, 'base64')) } catch { return undefined }
+            return { exitCode: 0, stdout: JSON.stringify({ ok: true, data: `Screenshot saved to: ${path}` }), stderr: '' }
+          }
+          return shot.env
+        }
+        case 'tab': {
+          // CLI 形状:tab list / tab new [url] / tab select <target>|--tab <id> / tab close [target]|--tab <id>
+          const op = String(argv[1] ?? '')
+          const rest = argv.slice(2)
+          let pos: string | undefined
+          let tabFlag: string | undefined
+          for (let i = 0; i < rest.length; i++) {
+            if (rest[i] === '--tab' && typeof rest[i + 1] === 'string') { tabFlag = String(rest[i + 1]); i++ }
+            else if (!String(rest[i]).startsWith('--') && pos === undefined) pos = String(rest[i])
+            else return undefined
+          }
+          const target = tabFlag ?? pos
+          if (op === 'list') {
+            if (rest.length > 0) return undefined
+            const r = await composeTabs(sess, 'list', {}, cachedPage)
+            if (r === undefined) return undefined
+            return r.env
+          }
+          if (op === 'new') {
+            if (rest.length > 1) return undefined
+            const r = await composeTabs(sess, 'new', pos !== undefined ? { url: pos } : {}, cachedPage)
+            if (r === undefined) return undefined
+            refresh(r.pageId)
+            return r.env
+          }
+          if (op === 'select') {
+            if (target === undefined) return undefined
+            const idx = /^\d+$/.test(target) ? Number(target) : undefined
+            const r = await composeTabs(sess, 'select', idx !== undefined ? { index: idx } : { page: target }, cachedPage)
+            if (r === undefined) return undefined
+            refresh(r.pageId)
+            return r.env
+          }
+          if (op === 'close') {
+            const idx = target !== undefined && /^\d+$/.test(target) ? Number(target) : undefined
+            const r = await composeTabs(sess, 'close', idx !== undefined ? { index: idx } : target !== undefined ? { page: target } : {}, cachedPage)
+            if (r === undefined) return undefined
+            // 上游 closeTab 语义:确认关闭的是当前缓存页时清缓存,下条命令重解析活页
+            if ((r.closedPage !== undefined && r.closedPage === cachedPage) || (r.closedPage === undefined && target === cachedPage)) this.directPages.delete(sess)
+            return r.env
+          }
+          return undefined
+        }
+        case 'close': {
+          if (argv.length > 1) return undefined
+          const env = await composeCloseWindow(sess, cachedPage)
+          if (env !== undefined) this.directPages.delete(sess)
+          return env
+        }
+        default:
+          return undefined
+      }
+    } catch {
+      return undefined
+    }
+  }
+
   private async runBrowserTraced(session: string | undefined, argv: string[], opts?: { deriveShot?: (out: { exitCode: number; stdout: string; stderr: string }) => Promise<string | undefined> }): Promise<{ exitCode: number; stdout: string; stderr: string; shot?: string }> {
     const started = Date.now()
     // ④ 无扩展短路(设计 §3-④):opencli_* 是 CLI→daemon→扩展硬链路(上游 daemon.js 头注释,
@@ -2965,12 +3131,17 @@ export class OpencliService extends TypertRemoteService {
     }
     const major = await this.cliMajor()
     let out: { exitCode: number; stdout: string; stderr: string }
-    // 0.4.6 A2:eval 族直连优先(daemon /command 母语,~135ms 级 vs CLI ~1.1s)——成功/失败都
-    // 归一成 CLI 2.0 信封形状,下游(renderOut/saveCanvasReadShot/轨迹)零改动;任何直连失败
-    // 静默回落既有 CLI 路径(旁路加速纪律:直连永不成为单点故障)
+    // 0.4.6 A2 + 0.4.7 A(直连铺满):eval 为 daemon 真动作直连(~135ms 级 vs CLI ~1.1s);
+    // scroll/state/screenshot/tab/close 为 1:1 或组合直连(direct-compose.ts,构造器运行时
+    // 装载自本机 CLI dist)——成功路径归一 CLI 2.0 信封,任何失败/不适用静默回落 CLI 路径
+    // (旁路加速纪律:直连永不成为单点故障,失败信封永远出自 CLI 权威出口)
     if (argv[0] === 'eval') {
-      const direct = await this.evalDirect(session, argv[1] ?? '')
-      if (direct !== undefined) out = direct
+      if (this.directEnabled) {
+        const direct = await this.evalDirect(session, argv[1] ?? '')
+        if (direct !== undefined) out = direct
+      }
+    } else if (major >= 2 && this.directEnabled) {
+      out = await this.directForArgv(session, argv)
     }
     if (out === undefined) {
       if (major >= 2) {
@@ -3029,6 +3200,17 @@ export class OpencliService extends TypertRemoteService {
       const clock = OpencliService.shotClock(now)
       let file = ''
       do { file = join(dir, `step-${clock}-${++this.shotSeq}.png`) } while (existsSync(file))
+      // 0.4.7 A:截图走直连(daemon screenshot 返回 base64 直接落盘,免 CLI 冷启动)——
+      // 步骤截图是每条轨迹都付的热路径;直连不适用/失败回落下方 CLI 形态(跨大版本分支保留)
+      if (major >= 2 && this.directEnabled) {
+        try {
+          const shot = await composeScreenshot(session ?? 'dsh', this.directPages.get(session ?? 'dsh'), {})
+          if (shot !== undefined) {
+            await writeFile(file, Buffer.from(shot.base64, 'base64'))
+            if (existsSync(file)) return file
+          }
+        } catch { /* 回落 CLI */ }
+      }
       // 截图命令形态跨大版本(实探 2.0.0 help:browser screenshot <path> --session <s>;1.x 为位置参数)
       const shotArgv = major >= 2
         ? ['browser', 'screenshot', file, '--session', session ?? 'dsh']

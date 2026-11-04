@@ -213,6 +213,8 @@ beforeAll(async () => {
   process.env.DSH_OPENCLI_STATE = path.join(os.tmpdir(), 'dsh-opencli-test-state-f-vom-' + uniq)
   // 0.4.6 A2 直连路径零网络纪律:默认把 fetch 桩成不可达(daemon 离线),eval 走 CLI 桩路径;
   // 直连专项用例临时换桩(见「直连优先」describe)。不桩会打到本机真 daemon(开发机在跑着)。
+  // 本文件专项测直连链路,显式开总闸(vitest config 缺省关——构造器读 env,须先于装载)
+  process.env.DSH_OPENCLI_DIRECT = '1'
   __directResetForTest()
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network unreachable (test default)') }))
   ctx = new Context()

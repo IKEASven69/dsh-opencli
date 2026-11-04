@@ -11,6 +11,9 @@ export default defineConfig({
       DSH_OPENCLI_STATE: join(tmpdir(), `dsh-opencli-test-state-${process.pid}.json`),
       DSH_OPENCLI_REPORTS_DIR: join(tmpdir(), `dsh-opencli-test-reports-${process.pid}`),
       DSH_OPENCLI_TRACE_DIR: join(tmpdir(), `dsh-opencli-test-traces-${process.pid}`),
+      // 直连总闸测试默认关:shell 桩测试断言 CLI argv 形态,直连层会先截走命令打到真 daemon
+      // (compose 单测自管 fetch 桩,不经服务层,不受此闸影响)
+      DSH_OPENCLI_DIRECT: '0',
     },
   },
 })
