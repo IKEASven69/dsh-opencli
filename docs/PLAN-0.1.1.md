@@ -1,6 +1,6 @@
 # 0.1.1 规划(2026-11-04 · 定稿待审)
 
-> 双版本轨:npm 走 0.1.1,GitHub 对应 tag 0.4.7,同一份内容。
+> 版本轨统一(2026-11-05 定):npm 版本即产品版本,GitHub release 同号(v0.1.1);此前 0.4.x 为 GitHub 旧轨。
 > 本稿吸收并取代 PLAN-0.4.7.md(后者留档)。输入:2026-11-04 五面调研(上游 OpenCLI/上游 dsh/竞品目录/自身资产/场景信号),
 > 全部数字当场实测,来源逐条标注;预判项明确标"未证实"。
 
@@ -45,7 +45,7 @@
 
 ## 二、0.1.1 范围定稿
 
-原则:**一个版本全做完再发**(沿用"没必要拖版本号"的既定决策);发布物一次成型,npm 0.1.1 与 GitHub 0.4.7 同车。
+原则:**一个版本全做完再发**(沿用"没必要拖版本号"的既定决策);发布物一次成型,GitHub release 同号 v0.1.1。
 
 | # | 项 | 内容 | 验收 | 来源 |
 |---|---|---|---|---|
@@ -56,7 +56,7 @@
 | 5 | site_batch 派发前体检 | 每站批量执行前 noul 一次登录态快检,死站先标 ⚠ 不进批次(可跳过);防无人值守假成功 | 矩阵新增:混入死站时批次行为断言 | USER-NEEDS #3 |
 | 6 | CLI 2.0.2 升级回归 | 全局 opencli 2.0.0→2.0.2(扩展 1.0.26+导航修复+抖音适配器),全套件复跑 | 22 项套件+全量回归绿,套件记录宿主/CLI 双版本 | 调研① |
 | 7 | 分发包 | npm keywords 补 `deepseek-harness`;README 顶部一行"原名 dsh-opencli 已被占注,npm 包为 @cold777/dsh-opencli";README 增"与其他 browser 插件的关系/选型"段(只讲场景不点名);目录描述把 watch+告警叙事提前 | npm pack 干净;对外数字全部"170+"口径(源码注释权威) | 调研③ |
-| 8 | 发布序列 | npm 0.1.1 publish → GitHub tag v0.4.7+release(资产含浮动 dsh-opencli.tgz)→ 两目录站版本刷新验证 → CHANGELOG 双轨记法 | 目录站详情页版本=0.1.1;release 资产链不断 | C1 |
+| 8 | 发布序列 | npm 0.1.1 publish → GitHub tag v0.1.1+release(资产含浮动 dsh-opencli.tgz)→ 两目录站版本刷新验证 → CHANGELOG 单轨记法 | 目录站详情页版本=0.1.1;release 资产链不断 | C1 |
 
 **明确不做(本期)**:零配置降级(0.1.2 首候选,设计稿已备)、无限画布交互层、MCP Resources、Electron 相关(上游 2.0 已移除,勿接)、对 hahaee 的任何公开动作。
 
@@ -84,7 +84,7 @@ W8 观察哨(被动):dsh 0.2.2-rc.1 落地→复跑适配;#2761/#2762;BrowserSki
 ## 四、需用户批准/参与的卡点
 
 1. npm publish(OTP 码或用户自跑)——W6
-2. GitHub v0.4.7 release notes 过目——W6
+2. GitHub v0.1.1 release notes 过目——W6
 3. SHOWCASE.md 自荐文案(两条:opencli+takeover,中英各一行)——W7,呈批后发
 4. plugin-hub 提交表单内容——W7,呈批后发
 
