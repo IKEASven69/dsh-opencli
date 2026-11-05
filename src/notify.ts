@@ -545,7 +545,10 @@ export function renderQuietDigest(pending: QuietPendingItem[] | undefined, quiet
   if (pending === undefined || pending.length === 0) return ''
   const lines = pending.map((p) => {
     const mark = `${p.ok ? '✓' : '✗'}${p.hits > 0 ? ' 🔔' : ''}${p.diff ? ' 📊' : ''}`
-    return `- ${p.at.slice(11, 16)} ${mark} ${p.summary}`
+    const d = new Date(p.at)
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mm = String(d.getMinutes()).padStart(2, '0')
+    return `- ${hh}:${mm} ${mark} ${p.summary}`
   })
   return `\n😴 静默期(${quietHours ?? ''})合并 ${pending.length} 条:\n${lines.join('\n')}`
 }

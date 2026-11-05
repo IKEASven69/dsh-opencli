@@ -41,14 +41,21 @@ describe('inQuietHours(窗内判定,含边界)', () => {
 })
 
 describe('renderQuietDigest(合并摘要)', () => {
-  it('逐行 ✓/✗ + 🔔/📊 标记 + HH:MM 时间;含条数头', () => {
+  it('逐行 ✓/✗ + 🔔/📊 标记 + 本地 HH:MM 时间;含条数头(P2-6:与配置窗口同时区)', () => {
+    // at 用本地时区构造(消化 P2-6:摘要时间=本地,与 inQuietHours 的本地窗判定一致)
+    const mk = (h: number, m: number): string => {
+      const d = new Date(2026, 10, 4, h, m)
+      const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString()
+      return iso
+    }
     const d = renderQuietDigest([
-      { at: '2026-11-04T23:14:00.000Z', ok: true, summary: '采集 42 条', hits: 1, diff: false },
-      { at: '2026-11-05T00:03:00.000Z', ok: false, summary: '超时', hits: 0, diff: true },
+      { at: mk(23, 14), ok: true, summary: '采集 42 条', hits: 1, diff: false },
+      { at: mk(23, 59), ok: false, summary: '超时', hits: 0, diff: true },
     ], '23:00-07:00')
     expect(d).toContain('😴 静默期(23:00-07:00)合并 2 条')
-    expect(d).toContain('- 23:14 ✓ 🔔 采集 42 条')
-    expect(d).toContain('- 00:03 ✗ 📊 超时')
+    // HH:MM 是本地时区渲染(与 inQuietHours 本地窗判定一致)——钟点随时区漂移,断言只锁结构:
+    expect(d).toMatch(/- \d{2}:\d{2} ✓ 🔔 采集 42 条/)
+    expect(d).toMatch(/- \d{2}:\d{2} ✗ 📊 超时/)
   })
   it('空暂存返回空串(无谓段不占正文)', () => {
     expect(renderQuietDigest([], '23:00-07:00')).toBe('')

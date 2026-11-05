@@ -293,8 +293,9 @@ describe('真实性判定(noul 体检:site_batch/try-run 共用)', () => {
 
   it('verifyResult:空结果走快速通道,不消耗推理调用', async () => {
     const state = installSoStub({})
+    // P1-2b:裸 '[]'=#2708 canonical 空——合法成功不判死重试,真空由 receipt.empty 标注
     const v = await verifyResult('zhihu', 'hot', '[]')
-    expect(v).toEqual({ verdict: false, p: 0, why: '空输出' })
+    expect(v).toEqual({ verdict: true, p: 1, why: '空数组' })
     expect(state.calls).toBe(0)
   })
 

@@ -76,6 +76,7 @@ export function parseIntent(raw: unknown): Intent | null {
       if (o.retry !== undefined && (typeof o.retry !== 'number' || !Number.isFinite(o.retry))) return null
       if (o.source !== undefined && (typeof o.source !== 'string' || !['agent', 'chat', 'panel', 'ctl'].includes(o.source))) return null
       if (o.notifyLevel !== undefined && o.notifyLevel !== 'quiet' && o.notifyLevel !== 'all') return null
+      if (o.jitter !== undefined && typeof o.jitter !== 'boolean') return null // P2-8:字符串 'false' 不得静默强转
       if (o.quietHours !== undefined && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(String(o.quietHours)) && o.quietHours !== 'off') return null
       return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}), ...(o.source !== undefined ? { source: o.source } : {}), ...(o.notifyLevel !== undefined ? { notifyLevel: o.notifyLevel } : {}), ...(o.quietHours !== undefined ? { quietHours: String(o.quietHours) } : {}), ...(o.jitter !== undefined ? { jitter: o.jitter === true } : {}) } as Intent
     case 'schedule-remove':

@@ -39,7 +39,7 @@ import { directCapability, directProbe, directExec } from './direct.ts'
 import { composeClick, composeCloseWindow, composeOpen, composeScreenshot, composeScroll, composeState, composeTabs, setCliDistDir, type CliEnvelope } from './direct-compose.ts'
 import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
 import { aggregateDaySums, diffSnapshots, renderDiffText } from './diffsnap.ts'
-import { authRiskClass, countStructuredItems, isChallengePage, type Receipt } from './parsers.ts'
+import { authRiskClass, countStructuredItems, isChallengePage, looksTruncated, type Receipt } from './parsers.ts'
 
 /** 本插件版本(package.json 同源,自检视图与更新检查用;bundle 内联,发布脚本管同步)。 */
 const PLUGIN_VERSION = '0.1.2'
@@ -1471,7 +1471,9 @@ export class OpencliService extends TypertRemoteService {
    */
   private async verifyResult(site: string, command: string, text: string, opts?: { warmOnly?: boolean }): Promise<{ verdict: boolean; p: number; why?: string } | null> {
     const trimmed = text.trim()
-    if (trimmed.length === 0 || trimmed === '[]') return { verdict: false, p: 0, why: '空输出' }
+    if (trimmed.length === 0) return { verdict: false, p: 0, why: '空输出' }
+    // 裸 '[]'=#2708 canonical 空形态:合法成功不再判死重试(重试无意义),真空/登录后空壳由 receipt.empty 标注
+    if (trimmed === '[]') return { verdict: true, p: 1, why: '空数组' }
     // 规则层:opencli 已知失败词汇 + 风控/登录墙关键词(实测覆盖 #2497/#2515/#2528/#2470 类)
     const head = trimmed.slice(0, 2000)
     const RULES: Array<[RegExp, string]> = [
@@ -1880,7 +1882,7 @@ export class OpencliService extends TypertRemoteService {
   async scheduleRunNow(p: { id: string }): Promise<{ ok: boolean; error?: string }> {
     const sch = this.schedules.find((s) => s.id === String(p.id ?? ''))
     if (sch === undefined) return { ok: false, error: '未找到' }
-    void this.runSiteCommand(sch.site, sch.id)
+    void this.runSiteCommand(sch.site, sch.id, { manual: true })
     return { ok: true }
   }
 
@@ -3612,33 +3614,40 @@ export class OpencliService extends TypertRemoteService {
   private async taskHealthCheck(id: string): Promise<{ ok: boolean; note?: string }> {
     const notes: string[] = []
     const ds = await this.daemonStatus()
-    // ① daemon 未运行 → 尝试自动拉起(单次,不重试;失败即诚实跳过本 tick)
-    if (ds === null || ds.running !== true) {
+    // ① daemon 未运行 → 尝试自动拉起(单次;失败即诚实跳过本 tick)。
+    //    审查 P1-5:exit≠0 与'未运行'不可分——仅当明确报告未运行(ds!==null&&!running)才动手 restart,
+    //    ds=null(命令失败/输出变异)不碰 restart(fail-open 放行,让 attempt 循环自然失败并暴露)
+    let effDs = ds
+    if (ds !== null && ds.running !== true) {
       notes.push('daemon 未运行')
       try {
         await this.runOpencli(['daemon', 'restart'], 30_000)
-        // restart 输出是纯文本('Daemon restarted'),解析不出 running——恢复判定必须**重新探测**
+        // restart 输出是纯文本,解析不出 running——恢复判定必须**重新探测**;
+        // 审查 P1-4:重探结果 after **取代** ds 走后续全部检查(拉起后扩展几乎必然未重连)
         const after = await this.daemonStatus()
-        if (after !== null && after.running === true) notes.push('已自动拉起 daemon')
-        else return { ok: false, note: 'daemon 不可用且自动拉起失败——本 tick 跳过(装扩展/查 daemon 日志后自动恢复)' }
+        if (after === null || after.running !== true) {
+          return { ok: false, note: 'daemon 不可用且自动拉起失败——本 tick 跳过(装扩展/查 daemon 日志后自动恢复)' }
+        }
+        notes.push('已自动拉起 daemon')
+        effDs = after
       } catch {
         return { ok: false, note: 'daemon 不可用且自动拉起异常——本 tick 跳过' }
       }
     }
     // ② daemon 版本翻转检测(#2761):版本变化 → 记事件(扩展连接通常随之断开,下个预检周期会处理)
-    if (ds !== null && typeof ds.version === 'string' && ds.version.length > 0) {
-      if (this.lastDaemonVersion !== undefined && this.lastDaemonVersion !== ds.version) {
-        const flip = `daemon 版本翻转 ${this.lastDaemonVersion} → ${ds.version}(疑似 CLI/App 互杀,#2761)——观察扩展重连`
+    if (effDs !== null && typeof effDs.version === 'string' && effDs.version.length > 0) {
+      if (this.lastDaemonVersion !== undefined && this.lastDaemonVersion !== effDs.version) {
+        const flip = `daemon 版本翻转 ${this.lastDaemonVersion} → ${effDs.version}(疑似 CLI/App 互杀,#2761)——观察扩展重连`
         this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'daemon-flip', text: `⚠ ${flip}` })
         this.ingestEventList = this.ingestEventList.slice(0, 30)
         notes.push(flip)
       }
-      this.lastDaemonVersion = ds.version
+      this.lastDaemonVersion = effDs.version
     }
     // ③ 扩展未连:不自动恢复(扩展重连是浏览器侧行为)——诚实跳过并给指引。
     // 词法对齐 extensionState('not connected' 文本经 \S+ 截断为 'not';connected 前缀才是连上)
-    if (ds !== null) {
-      const extLine = (ds.extension ?? '').trim()
+    if (effDs !== null) {
+      const extLine = (effDs.extension ?? '').trim()
       const up = /^connected/.test(extLine) || /profiles connected/.test(extLine) || extLine === 'unknown'
       if (extLine !== '' && !up) {
         return { ok: false, note: '浏览器扩展未连接——本 tick 跳过;打开浏览器后自动恢复,任务保留' }
@@ -3647,15 +3656,15 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, ...(notes.length > 0 ? { note: notes.join(';') } : {}) }
   }
 
-  private async runSiteCommand(siteCmd: string, id: string): Promise<void> {
+  private async runSiteCommand(siteCmd: string, id: string, opts?: { manual?: boolean }): Promise<void> {
     const sch = this.schedules.find((s) => s.id === id)
     // 健康预检(0.1.2 P0-3):daemon 探测/自动拉起/版本翻转/扩展断连四合一;
     // fail-open 纪律:预检自身异常 → 放行(预检故障不能变成任务死因)
     let healthNote: string | undefined
     try {
       const hc = await this.taskHealthCheck(id)
-      if (!hc.ok) {
-        const hist0 = this.runHistory[id] ?? []
+        if (!hc.ok) {
+          const hist0 = this.runHistory[id] ?? []
         hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}` })
         this.runHistory[id] = hist0.slice(0, 5)
         await this.saveState()
@@ -3688,7 +3697,7 @@ export class OpencliService extends TypertRemoteService {
     let lastRaw = ''
     // 拟人限速(0.1.2 P0-1):精确 cron 时刻本身是指纹——首跑前随机延迟打散命中时间
     // (重试链已有风控感知退避;任务级 jitter:false 可关;DSH_OPENCLI_JITTER_MAX_MS 调上限/置 0 关)
-    if (sch?.jitter !== false) {
+    if (opts?.manual !== true && sch?.jitter !== false) {
       const raw = Number(process.env.DSH_OPENCLI_JITTER_MAX_MS ?? 90_000)
       const hi = Number.isFinite(raw) && raw > 0 ? Math.min(Math.round(raw), 600_000) : 0
       if (hi > 0) {
@@ -3753,6 +3762,7 @@ ${r.stderr}`
       ...(lastOk && itemCount !== null ? { items: itemCount } : {}),
       bytes: lastOut.length,
       ...(lastOk && itemCount === 0 ? { empty: true } : {}),
+      ...(lastOk && looksTruncated(lastOut) ? { truncated: true } : {}),
     }
     if (hist[0] !== undefined) (hist[0] as { receipt?: Receipt }).receipt = receipt
     this.runHistory[id] = hist.slice(0, 5)
@@ -3824,7 +3834,7 @@ ${r.stderr}`
         sch.pendingNotify = pend.slice(-20)
         await this.saveState()
       } else {
-        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours, receipt)
+        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours, receipt, healthNote)
         if ((sch?.pendingNotify?.length ?? 0) > 0) { sch!.pendingNotify = []; await this.saveState() }
       }
     }
@@ -3843,7 +3853,7 @@ ${r.stderr}`
    * 例行结果与关键词命中。sendViaChannels 并发群发且单通道失败不抛;这里再兜一层:
    * 装配阶段的意外(坏配置形状等)也绝不反噬调度主链,通知永远是旁路。
    */
-  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string, receipt?: Receipt): Promise<void> {
+  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string, receipt?: Receipt, recoveredNote?: string): Promise<void> {
     try {
       const config = this.state.notifyConfig
       if (config === undefined) return
@@ -3856,8 +3866,9 @@ ${r.stderr}`
       const head = watchHits.length > 0 ? `🔔 Watch 命中\n` : diffText.length > 0 ? `📊 变化\n` : ''
 const diffSeg = diffText.length > 0 ? `\n📊 与上次相比:${diffText}` : ''
 const quietSeg = renderQuietDigest(pending, quietHours)
+const recoverSeg = recoveredNote !== undefined && recoveredNote.length > 0 ? `\n🩺 ${recoveredNote}` : ''
 const receiptSeg = receipt !== undefined ? `\n🧾 回执:auth=${receipt.auth_state}${receipt.items !== undefined ? ` · ${receipt.items} 条` : ''} · ${receipt.bytes}B${receipt.empty === true ? ' · ⚠ 空结果' : ''}` : ''
-await sendViaChannels(channels, title, head + body + diffSeg + quietSeg + receiptSeg)
+await sendViaChannels(channels, title, head + body + recoverSeg + diffSeg + quietSeg + receiptSeg)
     } catch { /* 通知旁路:全静默降级 */ }
   }
 

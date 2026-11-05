@@ -68,7 +68,7 @@ function buildIntent() {
       const src = flag('--source'); if (src !== undefined) intent.source = src
       const lvl = flag('--notify-level'); if (lvl !== undefined) intent.notifyLevel = lvl
       const qh = flag('--quiet-hours'); if (qh !== undefined) intent.quietHours = qh
-      if (flag('--no-jitter') !== undefined) intent.jitter = false
+      if (has('--no-jitter')) intent.jitter = false // has():布尔旗标无参数值,flag() 取下一 token 在末位时失效(审查 P1-1)
       return intent
     }
     if (sub === 'list') return { kind: 'schedule-list' }

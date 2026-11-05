@@ -208,10 +208,17 @@ export interface Receipt {
   auth_state: 'auth_wall' | 'risk_wall' | 'ok' | 'unknown'
   /** 结构化条目数(非结构化输出=null,不臆造) */
   items?: number
-  /** 原始输出字节数 */
+  /** 原始输出字节数(UTF-16 字符数,CJK 偏差存在,趋势参照用) */
   bytes: number
   /** 成功但零条目——明确标注(missing≠zero:空数组≠没数据,可能是登录后空壳页) */
   empty?: true
+  /** 输出触及上限——可能被截断(#2698:调用方有权知道"自然翻完"与"被截断"的区别) */
+  truncated?: true
+}
+
+/** 截断启发:输出达到读取上限的 95% 即标记可能截断(上游静默截断无信号,这是诚实的近似)。 */
+export function looksTruncated(text: string, limitBytes = 1_048_576): boolean {
+  return text.length >= Math.floor(limitBytes * 0.95)
 }
 
 /** auth/风控分类(receipt 用;语义与 verifyResult 规则层一致,导出为单一口径)。 */

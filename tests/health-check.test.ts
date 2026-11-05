@@ -15,14 +15,18 @@ class ShellStub extends Service {
   resolve(req: unknown): unknown { return req }
   static statusSeq: Array<{ running: boolean; version: string; extension: string }> = []
   static restartFails = false
+  static statusCalls = 0
+  static restartCalls = 0
   async run(spec: { command: string }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
     const cmdStr = Array.isArray(spec.command) ? spec.command.join(' ') : String(spec.command)
     if (/daemon status/.test(cmdStr)) {
+      ShellStub.statusCalls++
       const st = ShellStub.statusSeq.length > 1 ? ShellStub.statusSeq.shift()! : (ShellStub.statusSeq[0] ?? { running: false, version: '', extension: '' })
       if (!st.running) return { exitCode: 0, stdout: { text: 'Daemon: not running' }, stderr: { text: '' } }
       return { exitCode: 0, stdout: { text: 'Daemon: running' + BSN + 'Version: ' + st.version + BSN + 'Extension: ' + st.extension + BSN + 'Port: 19825' }, stderr: { text: '' } }
     }
     if (/daemon restart/.test(cmdStr)) {
+      ShellStub.restartCalls++
       if (ShellStub.restartFails) return { exitCode: 1, stdout: { text: '' }, stderr: { text: 'restart failed (stub)' } }
       const last = ShellStub.statusSeq[ShellStub.statusSeq.length - 1]
       if (last !== undefined) { last.running = true; if (!last.version) last.version = '2.0.0' }
@@ -86,6 +90,41 @@ describe('任务健康预检+断线恢复+版本翻转(P0-3)', () => {
   /** 服务实例唯一引用(cordis Proxy 每次 ctx.opencli 访问返回新 wrapper——必须缓存同一份)。 */
   let svcRef: OpencliService
   const svc = (): OpencliService => svcRef
+
+  it('预检自身异常 → fail-open 放行(采集照跑,预检故障不是任务死因)', async () => {
+    const S = svc()
+    // daemonStatus 方法桩直接抛异常(审查 P1-6:fail-open 承诺必须有守护)
+    const Sv = S as unknown as { daemonStatus: () => Promise<never> }
+    const origDsF = Sv.daemonStatus
+    Sv.daemonStatus = async () => { throw new Error('probe exploded') }
+    const id = `hc-f-${Date.now()}`
+    S.schedules.push({ id, site: 'site hc-f hot', cron: '0 9 * * *', createdAt: new Date().toISOString(), enabled: true, retry: 1 })
+    try {
+      await S.runSiteCommand('site hc-f hot', id)
+    } finally {
+      Sv.daemonStatus = origDsF // 还原:proxy 是同一实例,不还原会污染后续用例
+    }
+    const rows = S.runHistory[id] ?? []
+    const row = rows.find((r) => r.ok === true)
+    expect(row).toBeDefined() // 放行:采集照跑
+    expect(row!.summary).not.toContain('⏸')
+    delete S.runHistory[id]
+    S.schedules.splice(S.schedules.findIndex((x) => x.id === id), 1)
+  })
+
+  it('restart 成功但扩展未连 → 跳过(审查 P1-4:重探结果必须走扩展检查)', async () => {
+    const S = svc()
+    // 序列:首探 not running → restart → 重探 running 但扩展未连
+    stubDs([{ running: false, version: '', extension: '' }, { running: true, version: '2.0.2', extension: 'not connected' }])
+    const id = `hc-e-${Date.now()}`
+    S.schedules.push({ id, site: 'site hc-e hot', cron: '0 9 * * *', createdAt: new Date().toISOString(), enabled: true, retry: 1 })
+    await S.runSiteCommand('site hc-e hot', id)
+    const row = S.runHistory[id]?.[0]
+    expect(row?.summary).toContain('扩展未连接')
+    expect(row?.summary).toContain('⏸')
+    delete S.runHistory[id]
+    S.schedules.splice(S.schedules.findIndex((x) => x.id === id), 1)
+  })
 
   it('daemon 拉起失败 → 诚实跳过(schedule-skipped 事件,不烧 60s 往返)', async () => {
     const S = svc()
