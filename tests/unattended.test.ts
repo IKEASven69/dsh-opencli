@@ -51,6 +51,8 @@ class StubShell extends Service {
   /** 调用序列:第 1 次=验证码挑战页(exit 0,规则层判静默失败),第 2 次=正常 JSON 列表 */
   static seq: string[] = []
   async run(spec: { command: string }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
+    const cmdStr = Array.isArray(spec.command) ? spec.command.join(' ') : String(spec.command)
+    if (/daemon status/.test(cmdStr)) return { exitCode: 0, stdout: { text: 'Daemon: running\nnVersion: 2.0.2\nnExtension: connected\nnPort: 19825\nn' }, stderr: { text: '' } }
     const n = StubShell.seq.length
     StubShell.seq.push(spec.command)
     if (n === 0) return { exitCode: 0, stdout: { text: '请完成验证后继续操作 安全验证' }, stderr: { text: '' } }

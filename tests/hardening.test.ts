@@ -8,6 +8,8 @@ class StubShell extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
   resolve(req: unknown): unknown { return req }
   async run(spec: { command: string }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
+    const cmd = Array.isArray(spec.command) ? spec.command.join(' ') : String(spec.command)
+    if (/daemon status/.test(cmd)) return { exitCode: 0, stdout: { text: 'Daemon: running\nVersion: 2.0.2\nExtension: connected\nPort: 19825\nn' }, stderr: { text: '' } }
     return { exitCode: 0, stdout: { text: '{}\n' }, stderr: { text: '' } }
   }
 }
@@ -174,7 +176,12 @@ describe('真机走查发现 B/C 修复:site 前缀剥离+watch 大小写+cron �
     const S = svc as unknown as { runOpencli: (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>; runSiteCommand: (s: string, id: string) => Promise<void> }
     const orig = S.runOpencli.bind(svc)
     let captured: string[] = []
-    S.runOpencli = async (a: string[]) => { captured = a; return { exitCode: 0, stdout: '1 热点A', stderr: '' } }
+    S.runOpencli = async (a: string[]) => {
+      const a0 = Array.isArray(a) ? a[0] : a
+      if (a0 === 'daemon') return { exitCode: 0, stdout: 'Daemon: running\nVersion: 2.0.2\nExtension: connected\nPort: 19825\nn', stderr: '' }
+      captured = a
+      return { exitCode: 0, stdout: '1 热点A', stderr: '' }
+    }
     await S.runSiteCommand('site zhihu hot', r.id!)
     S.runOpencli = orig
     expect(captured[0]).toBe('zhihu')
@@ -185,7 +192,11 @@ describe('真机走查发现 B/C 修复:site 前缀剥离+watch 大小写+cron �
     const r = await svc.scheduleAdd({ site: 'arxiv recent cs.AI', cron: '0 9 * * *', watch: 'agent' })
     const S = svc as unknown as { runOpencli: (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>; runSiteCommand: (s: string, id: string) => Promise<void>; ingestEventList: Array<{ kind: string }> }
     const orig = S.runOpencli.bind(svc)
-    S.runOpencli = async () => ({ exitCode: 0, stdout: 'Paper: Agentic Systems with LLM', stderr: '' })
+    S.runOpencli = async (a: string[]) => {
+      const a0 = Array.isArray(a) ? a[0] : a
+      if (a0 === 'daemon') return { exitCode: 0, stdout: 'Daemon: running\nVersion: 2.0.2\nExtension: connected\nPort: 19825\nn', stderr: '' }
+      return { exitCode: 0, stdout: 'Paper: Agentic Systems with LLM', stderr: '' }
+    }
     const before = S.ingestEventList.length
     await S.runSiteCommand('arxiv recent cs.AI', r.id!)
     S.runOpencli = orig

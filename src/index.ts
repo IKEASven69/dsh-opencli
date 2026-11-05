@@ -3532,8 +3532,71 @@ export class OpencliService extends TypertRemoteService {
     try { this.schedTimer.unref?.() } catch { /* ignore */ }
   }
 
+  /** 上次看到的 daemon 版本(版本翻转检测:CLI 2.0.x 与 App 内置 1.8.6 互杀,#2761 实测一天 3 翻)。 */
+  private lastDaemonVersion: string | undefined
+
+  /**
+   * 任务级健康预检+断线恢复(0.1.2 P0-3,#2416/#2417/#1565/#2761):
+   * 返回 {ok, note}——ok=true 可跑;note=人类可读的预检说明(进 history 行与推送)。
+   * 预检失败且自动恢复也失败 → ok=false,本次 tick 跳过(诚实跳过优于注定失败的 60s 往返)。
+   * 预检纪律:任何探测失败降级为"放行"——预检自身故障不能变成定时任务的死因(fail-open)。
+   */
+  private async taskHealthCheck(id: string): Promise<{ ok: boolean; note?: string }> {
+    const notes: string[] = []
+    const ds = await this.daemonStatus()
+    // ① daemon 未运行 → 尝试自动拉起(单次,不重试;失败即诚实跳过本 tick)
+    if (ds === null || ds.running !== true) {
+      notes.push('daemon 未运行')
+      try {
+        await this.runOpencli(['daemon', 'restart'], 30_000)
+        // restart 输出是纯文本('Daemon restarted'),解析不出 running——恢复判定必须**重新探测**
+        const after = await this.daemonStatus()
+        if (after !== null && after.running === true) notes.push('已自动拉起 daemon')
+        else return { ok: false, note: 'daemon 不可用且自动拉起失败——本 tick 跳过(装扩展/查 daemon 日志后自动恢复)' }
+      } catch {
+        return { ok: false, note: 'daemon 不可用且自动拉起异常——本 tick 跳过' }
+      }
+    }
+    // ② daemon 版本翻转检测(#2761):版本变化 → 记事件(扩展连接通常随之断开,下个预检周期会处理)
+    if (ds !== null && typeof ds.version === 'string' && ds.version.length > 0) {
+      if (this.lastDaemonVersion !== undefined && this.lastDaemonVersion !== ds.version) {
+        const flip = `daemon 版本翻转 ${this.lastDaemonVersion} → ${ds.version}(疑似 CLI/App 互杀,#2761)——观察扩展重连`
+        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'daemon-flip', text: `⚠ ${flip}` })
+        this.ingestEventList = this.ingestEventList.slice(0, 30)
+        notes.push(flip)
+      }
+      this.lastDaemonVersion = ds.version
+    }
+    // ③ 扩展未连:不自动恢复(扩展重连是浏览器侧行为)——诚实跳过并给指引。
+    // 词法对齐 extensionState('not connected' 文本经 \S+ 截断为 'not';connected 前缀才是连上)
+    if (ds !== null) {
+      const extLine = (ds.extension ?? '').trim()
+      const up = /^connected/.test(extLine) || /profiles connected/.test(extLine) || extLine === 'unknown'
+      if (extLine !== '' && !up) {
+        return { ok: false, note: '浏览器扩展未连接——本 tick 跳过;打开浏览器后自动恢复,任务保留' }
+      }
+    }
+    return { ok: true, ...(notes.length > 0 ? { note: notes.join(';') } : {}) }
+  }
+
   private async runSiteCommand(siteCmd: string, id: string): Promise<void> {
     const sch = this.schedules.find((s) => s.id === id)
+    // 健康预检(0.1.2 P0-3):daemon 探测/自动拉起/版本翻转/扩展断连四合一;
+    // fail-open 纪律:预检自身异常 → 放行(预检故障不能变成任务死因)
+    let healthNote: string | undefined
+    try {
+      const hc = await this.taskHealthCheck(id)
+      if (!hc.ok) {
+        const hist0 = this.runHistory[id] ?? []
+        hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}` })
+        this.runHistory[id] = hist0.slice(0, 5)
+        await this.saveState()
+        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'schedule-skipped', text: `⏸ ${siteCmd} 本 tick 跳过:${hc.note ?? ''}` })
+        this.ingestEventList = this.ingestEventList.slice(0, 30)
+        return
+      }
+      healthNote = hc.note
+    } catch { /* 预检异常 → 放行(fail-open) */ }
     const attempts = Math.max(1, Math.min(5, sch?.retry ?? 3))
     const notify = sch?.notify !== false
     const hist = this.runHistory[id] ?? []
@@ -3594,7 +3657,8 @@ ${r.stderr}`
         lastOk = false
         lastSummary = e instanceof Error ? e.message.slice(0, 120) : 'failed'
       }
-      hist.unshift({ at: new Date().toISOString(), ok: lastOk, summary: attempts > 1 ? `#${attempt}/${attempts} ${lastSummary}` : lastSummary })
+      const sum = attempts > 1 ? `#${attempt}/${attempts} ${lastSummary}` : lastSummary
+      hist.unshift({ at: new Date().toISOString(), ok: lastOk, summary: healthNote !== undefined ? `【${healthNote}】${sum}` : sum })
       if (lastOk) break
       // 挑战自解等待(0.1.2 P0-1):验证码/人机验证常在数十秒内自解(上游 #2045 已采纳同方向)——
       // 首次命中额外赠一次尝试(不占 attempts 预算);DSH_OPENCLI_CHALLENGE_WAIT_MS 调等待时长

@@ -404,6 +404,7 @@ class SchedShell extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
   resolve(req: unknown): unknown { return req }
   async run(_spec: { command: string }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
+    if (/daemon status/.test(Array.isArray(_spec.command) ? _spec.command.join(' ') : String(_spec.command))) return { exitCode: 0, stdout: { text: 'Daemon: running\nVersion: 2.0.2\nExtension: connected\nPort: 19825\nn' }, stderr: { text: '' } }
     return { exitCode: 0, stdout: { text: '{}\n' }, stderr: { text: '' } }
   }
 }
@@ -475,7 +476,11 @@ describe('任务 E 集成:定时任务 → 通知通道(桩 shell + 桩 fetch,�
   const withRunOpencli = async (stdout: string, fn: () => Promise<void>): Promise<void> => {
     const S = svc as unknown as { runOpencli: (a: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>; runSiteCommand: (s: string, id: string) => Promise<void> }
     const orig = S.runOpencli.bind(svc)
-    S.runOpencli = async () => ({ exitCode: 0, stdout, stderr: '' })
+    S.runOpencli = async (...args: unknown[]) => {
+      const a0 = Array.isArray(args[0]) ? (args[0] as string[])[0] : args[0]
+      if (a0 === 'daemon') return { exitCode: 0, stdout: 'Daemon: running" + BSN + "Version: 2.0.2" + BSN + "Extension: connected" + BSN + "Port: 19825" + BSN + "n', stderr: '' }
+      return { exitCode: 0, stdout, stderr: '' }
+    }
     try { await fn() } finally { S.runOpencli = orig }
   }
 
