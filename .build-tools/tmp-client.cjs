@@ -524,6 +524,17 @@ var STR = {
     diffAdded: "\u65B0\u589E",
     diffGone: "\u6D88\u5931",
     diffMoved: "\u4F4D\u79FB",
+    scTitle: "\u63D2\u4EF6\u81EA\u68C0",
+    scSub: "\u5DE5\u5177\u6CE8\u518C\u70B9\u540D + \u5165\u53E3\u5728\u7EBF + \u5BBF\u4E3B\u5339\u914D\u2014\u2014\u201C\u88C5\u4E0A\u6CA1\u6548\u679C\u201D3 \u79D2\u53EF\u89C1",
+    scOk: "\u5168\u90E8\u6B63\u5E38",
+    scTools: (n) => `${n} \u4E2A\u5DE5\u5177\u5DF2\u6CE8\u518C`,
+    scConflict: (n) => `${n} \u4E2A\u5DE5\u5177\u649E\u540D\u8BA9\u4F4D`,
+    scDaemon: "daemon",
+    scCtl: "ctl \u6536\u4EF6\u7BB1",
+    scPanel: "\u9762\u677F RPC",
+    scUpdate: (v) => `\u6709\u65B0\u7248\u672C v${v}`,
+    scUpgradeTip: "\u590D\u5236\u5347\u7EA7\u547D\u4EE4\u5230\u526A\u8D34\u677F(\u4E0D\u81EA\u52A8\u6267\u884C\u2014\u2014\u5347\u7EA7\u662F\u4F60\u7684\u663E\u5F0F\u51B3\u7B56)",
+    scCurrent: (v) => `\u5F53\u524D v${v}`,
     qhLabel: "\u9759\u9ED8",
     qhOff: "\u5173",
     qhTip: "\u7A97\u5185\u901A\u77E5\u6682\u5B58,\u51FA\u7A97\u5408\u5E76\u63A8\u9001",
@@ -754,6 +765,17 @@ var STR = {
     diffAdded: "added",
     diffGone: "gone",
     diffMoved: "moved",
+    scTitle: "Plugin self-check",
+    scSub: 'Tool registration roll-call + entries online + host match \u2014 "installed but no effect" visible in 3s',
+    scOk: "All good",
+    scTools: (n) => `${n} tools registered`,
+    scConflict: (n) => `${n} name conflicts yielded`,
+    scDaemon: "daemon",
+    scCtl: "ctl inbox",
+    scPanel: "panel RPC",
+    scUpdate: (v) => `new version v${v} available`,
+    scUpgradeTip: "copy upgrade command to clipboard (never auto-runs \u2014 upgrading is your explicit call)",
+    scCurrent: (v) => `current v${v}`,
     qhLabel: "quiet",
     qhOff: "off",
     qhTip: "notifications during the window are merged and sent after it ends",
@@ -1320,6 +1342,7 @@ function Panel() {
   const [ingest, setIngest] = (0, import_react.useState)(null);
   const [login, setLogin] = (0, import_react.useState)(null);
   const [checking, setChecking] = (0, import_react.useState)(false);
+  const [selfCheck, setSelfCheck] = (0, import_react.useState)(null);
   const [toast, setToast] = (0, import_react.useState)(null);
   const [runInput, setRunInput] = (0, import_react.useState)("site zhihu hot");
   const [running, setRunning] = (0, import_react.useState)(false);
@@ -1438,6 +1461,16 @@ function Panel() {
   }, [
     tab,
     cdp
+  ]);
+  (0, import_react.useEffect)(() => {
+    if (tab === "sec" && selfCheck === null) {
+      void rpc("self-check").then((r) => {
+        if (r.ok && r.value !== void 0) setSelfCheck(r.value);
+      });
+    }
+  }, [
+    tab,
+    selfCheck
   ]);
   const runLoginCheck = async () => {
     if (checking) return;
@@ -3018,6 +3051,88 @@ ${c.description}`,
       }, "\u2014")))))
     );
   };
+  function SelfCheckCard(props) {
+    const { sc, lang: lang2 } = props;
+    const tt = (k) => STR[lang2][k] ?? STR.zh[k];
+    const entryLabel = {
+      "panel-rpc": tt("scPanel"),
+      "ctl-inbox": tt("scCtl"),
+      daemon: tt("scDaemon")
+    };
+    const toolOk = sc.tools.filter((t3) => t3.registered).length;
+    const updColor = sc.updateAvailable === true ? "#FF9F0A" : "#34C759";
+    return (0, import_react.createElement)(
+      "div",
+      {
+        className: "o4-card",
+        style: {
+          marginBottom: "12px"
+        }
+      },
+      (0, import_react.createElement)("div", {
+        className: "o4-h3"
+      }, (0, import_react.createElement)("span", {
+        className: "o4-miniico"
+      }, ic("shield", true)), tt("scTitle"), (0, import_react.createElement)("span", {
+        style: {
+          marginLeft: "auto",
+          fontSize: "11px",
+          color: updColor
+        }
+      }, sc.updateAvailable === true ? tt("scUpdate")(sc.latestVersion ?? "") : tt("scCurrent")(sc.currentVersion))),
+      (0, import_react.createElement)("div", {
+        className: "o4-sub"
+      }, tt("scSub")),
+      // 工具点名:全部注册=绿一行;有让位=琥珀列名
+      (0, import_react.createElement)("div", {
+        style: {
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "6px",
+          margin: "8px 0"
+        }
+      }, sc.conflicts.length > 0 ? (0, import_react.createElement)("span", {
+        className: "o4-bdg",
+        style: {
+          color: "#FF9F0A"
+        }
+      }, tt("scConflict")(sc.conflicts.length) + ": " + sc.conflicts.join(", ")) : (0, import_react.createElement)("span", {
+        className: "o4-bdg",
+        style: {
+          color: "#34C759"
+        }
+      }, "\u2713 " + tt("scTools")(toolOk)), ...sc.entries.map((e) => (0, import_react.createElement)("span", {
+        key: e.name,
+        className: "o4-bdg",
+        style: {
+          color: e.ok ? "#34C759" : "#FF6B63"
+        }
+      }, `${e.ok ? "\u2713" : "\u2717"} ${entryLabel[e.name] ?? e.name}`))),
+      // 更新绕行(#10869):一键复制升级命令——绝不自动执行
+      sc.updateAvailable === true && sc.upgradeCmd !== void 0 ? (0, import_react.createElement)("div", {
+        style: {
+          display: "flex",
+          gap: "8px",
+          alignItems: "center",
+          marginTop: "6px"
+        }
+      }, (0, import_react.createElement)("code", {
+        style: {
+          flex: "1",
+          fontSize: "11px",
+          color: "#8E8E93",
+          wordBreak: "break-all"
+        }
+      }, sc.upgradeCmd), (0, import_react.createElement)("button", {
+        className: "o4-btn ghost sm",
+        title: tt("scUpgradeTip"),
+        onClick: () => {
+          void navigator.clipboard.writeText(sc.upgradeCmd ?? "").then(() => {
+          });
+        }
+      }, ic("copy", true), tt("csvT"))) : null
+    );
+  }
   const renderSecurity = () => {
     const modes = [
       [
@@ -3042,7 +3157,10 @@ ${c.description}`,
       ]
     ];
     const diagText = `bin: ${status?.bin ?? "\u2014"} | version: ${status?.version ?? "\u2014"} | mode: ${autoMode} | approval: ${settings?.approvalOn === true ? "on" : "off"} | daemon: ${daemonUp ? "running" : "down"}`;
-    return (0, import_react.createElement)("div", null, (0, import_react.createElement)("div", {
+    return (0, import_react.createElement)("div", null, selfCheck !== null ? (0, import_react.createElement)(SelfCheckCard, {
+      sc: selfCheck,
+      lang
+    }) : null, (0, import_react.createElement)("div", {
       className: "o4-sec"
     }, (0, import_react.createElement)("div", {
       style: {

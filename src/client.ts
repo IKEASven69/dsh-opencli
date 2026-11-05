@@ -42,7 +42,7 @@ const STR = {
     nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行', nfUrlPh: 'webhook URL(钉钉加签可带 &secret=…)', nfSave: '保存通道', nfTest: '测试', nfSaved: '✓ 通道已保存', nfTestOk: '✓ 测试消息已送达', nfTestFail: '✗ 测试失败',
 
     diffT: '📊 变化', diffEmpty: '还没有两次采集的对比——再跑一次就有了', diffNone: '无变化',
-    csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`, nfLevel: '级别', nfLevelAll: '全部', nfLevelQuiet: '仅变化', nfLevelTip: 'quiet=只推命中/变化/失败;all=例行也推', diffWeek: '近 7 天', diffAdded: '新增', diffGone: '消失', diffMoved: '位移', qhLabel: '静默', qhOff: '关', qhTip: '窗内通知暂存,出窗合并推送', qhSetFail: '静默时段格式:HH:MM-HH:MM', qhPh: '😴 静默 23:00-07:00', qhTitle: '跨夜如 23:00-07:00;窗内暂存出窗合并',
+    csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`, nfLevel: '级别', nfLevelAll: '全部', nfLevelQuiet: '仅变化', nfLevelTip: 'quiet=只推命中/变化/失败;all=例行也推', diffWeek: '近 7 天', diffAdded: '新增', diffGone: '消失', diffMoved: '位移', scTitle: '插件自检', scSub: '工具注册点名 + 入口在线 + 宿主匹配——“装上没效果”3 秒可见', scOk: '全部正常', scTools: (n: number) => `${n} 个工具已注册`, scConflict: (n: number) => `${n} 个工具撞名让位`, scDaemon: 'daemon', scCtl: 'ctl 收件箱', scPanel: '面板 RPC', scUpdate: (v: string) => `有新版本 v${v}`, scUpgradeTip: '复制升级命令到剪贴板(不自动执行——升级是你的显式决策)', scCurrent: (v: string) => `当前 v${v}`, qhLabel: '静默', qhOff: '关', qhTip: '窗内通知暂存,出窗合并推送', qhSetFail: '静默时段格式:HH:MM-HH:MM', qhPh: '😴 静默 23:00-07:00', qhTitle: '跨夜如 23:00-07:00;窗内暂存出窗合并',
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     hintT: '你是不是想用这些?点击直接跑:',
     quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑', quickMore: '↑ 每次刷新从你的站点目录抽 6 个——170+ 站都能这么用',
@@ -129,7 +129,7 @@ const STR = {
     nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied', nfUrlPh: 'webhook URL (dingtalk secret via &secret=…)', nfSave: 'Save', nfTest: 'Test', nfSaved: '✓ channel saved', nfTestOk: '✓ test delivered', nfTestFail: '✗ test failed',
 
     diffT: 'Diff', diffEmpty: 'No pairs yet — run one more collection', diffNone: 'no change',
-    csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`, nfLevel: 'level', nfLevelAll: 'all', nfLevelQuiet: 'changes', nfLevelTip: 'quiet=hits/changes/failures only; all=routine too', diffWeek: 'last 7 days', diffAdded: 'added', diffGone: 'gone', diffMoved: 'moved', qhLabel: 'quiet', qhOff: 'off', qhTip: 'notifications during the window are merged and sent after it ends', qhSetFail: 'quiet hours format: HH:MM-HH:MM', qhPh: '😴 quiet 23:00-07:00', qhTitle: 'overnight ok e.g. 23:00-07:00; merged after window',
+    csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`, nfLevel: 'level', nfLevelAll: 'all', nfLevelQuiet: 'changes', nfLevelTip: 'quiet=hits/changes/failures only; all=routine too', diffWeek: 'last 7 days', diffAdded: 'added', diffGone: 'gone', diffMoved: 'moved', scTitle: 'Plugin self-check', scSub: 'Tool registration roll-call + entries online + host match — "installed but no effect" visible in 3s', scOk: 'All good', scTools: (n: number) => `${n} tools registered`, scConflict: (n: number) => `${n} name conflicts yielded`, scDaemon: 'daemon', scCtl: 'ctl inbox', scPanel: 'panel RPC', scUpdate: (v: string) => `new version v${v} available`, scUpgradeTip: 'copy upgrade command to clipboard (never auto-runs — upgrading is your explicit call)', scCurrent: (v: string) => `current v${v}`, qhLabel: 'quiet', qhOff: 'off', qhTip: 'notifications during the window are merged and sent after it ends', qhSetFail: 'quiet hours format: HH:MM-HH:MM', qhPh: '😴 quiet 23:00-07:00', qhTitle: 'overnight ok e.g. 23:00-07:00; merged after window',
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     hintT: 'Did you mean? Click to run:',
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run', quickMore: '↑ 6 picked from your catalog on each refresh — 170+ sites work like this',
@@ -557,6 +557,18 @@ const CSS = `
 function Panel(): ReturnType<typeof createElement> {
   const [lang, setLang] = useState<Lang>('zh')
   const t = (k: StrKey): string => (STR[lang][k] ?? STR.zh[k]) as string
+  type SelfCheckResult4 = SelfCheckResult
+  type SelfCheckResult = {
+    ok: boolean; activated: boolean
+    tools: Array<{ name: string; registered: boolean }>
+    conflicts: string[]
+    entries: Array<{ name: string; ok: boolean }>
+    currentVersion: string
+    latestVersion?: string
+    updateAvailable?: boolean
+    upgradeCmd?: string
+    error?: string
+  }
   const [tab, setTab] = useState<'ov' | 'cmd' | 'auto' | 'sec' | 'cv'>('ov')
   const [phase, setPhase] = useState<'loading' | 'ready'>('loading')
   const [status, setStatus] = useState<OpencliStatus | null>(null)
@@ -568,6 +580,8 @@ function Panel(): ReturnType<typeof createElement> {
   const [ingest, setIngest] = useState<IngestEvent[] | null>(null)
   const [login, setLogin] = useState<LoginCheckResult | null>(null)
   const [checking, setChecking] = useState(false)
+  // 0.1.2 P0-6/7:插件自检(工具点名/入口在线/更新检查)
+  const [selfCheck, setSelfCheck] = useState<SelfCheckResult | null>(null)
   const [toast, setToast] = useState<ToastMsg | null>(null)
   // 试试看
   const [runInput, setRunInput] = useState('site zhihu hot')
@@ -672,6 +686,7 @@ function Panel(): ReturnType<typeof createElement> {
   // 进入自动化 tab 即拉任务列表:此前仅在增删改后拉取,面板重开/刷新后已有任务不显示(真机复现)
   useEffect(() => { if (tab === 'auto') void loadSchedules() }, [tab])
   useEffect(() => { if (tab === 'sec' && cdp === null) { void rpc<{ found: boolean; endpoint: string | null; hint?: string }>('browser-cdp').then((r) => { if (r.ok && r.value !== undefined) setCdp(r.value) }) } }, [tab, cdp])
+  useEffect(() => { if (tab === 'sec' && selfCheck === null) { void rpc<SelfCheckResult>('self-check').then((r) => { if (r.ok && r.value !== undefined) setSelfCheck(r.value) }) } }, [tab, selfCheck])
 
   const runLoginCheck = async (): Promise<void> => {
     if (checking) return
@@ -1309,6 +1324,37 @@ function Panel(): ReturnType<typeof createElement> {
   }
 
   /* ── 安全与设置 ── */
+/** 插件自检卡(0.1.2 P0-6/7):工具点名/入口在线/更新检查——'装上没效果'3 秒可见。 */
+function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<typeof createElement> {
+  const { sc, lang } = props
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
+  const entryLabel: Record<string, string> = { 'panel-rpc': tt('scPanel'), 'ctl-inbox': tt('scCtl'), daemon: tt('scDaemon') }
+  const toolOk = sc.tools.filter((t) => t.registered).length
+  const updColor = sc.updateAvailable === true ? '#FF9F0A' : '#34C759'
+  return createElement('div', { className: 'o4-card', style: { marginBottom: '12px' } },
+    createElement('div', { className: 'o4-h3' },
+      createElement('span', { className: 'o4-miniico' }, ic('shield', true)), tt('scTitle'),
+      createElement('span', { style: { marginLeft: 'auto', fontSize: '11px', color: updColor } },
+        sc.updateAvailable === true ? tt('scUpdate')(sc.latestVersion ?? '') : tt('scCurrent')(sc.currentVersion))),
+    createElement('div', { className: 'o4-sub' }, tt('scSub')),
+    // 工具点名:全部注册=绿一行;有让位=琥珀列名
+    createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '8px 0' } },
+      sc.conflicts.length > 0
+        ? createElement('span', { className: 'o4-bdg', style: { color: '#FF9F0A' } }, tt('scConflict')(sc.conflicts.length) + ': ' + sc.conflicts.join(', '))
+        : createElement('span', { className: 'o4-bdg', style: { color: '#34C759' } }, '✓ ' + tt('scTools')(toolOk)),
+      ...sc.entries.map((e) => createElement('span', { key: e.name, className: 'o4-bdg', style: { color: e.ok ? '#34C759' : '#FF6B63' } },
+        `${e.ok ? '✓' : '✗'} ${entryLabel[e.name] ?? e.name}`)),
+    ),
+    // 更新绕行(#10869):一键复制升级命令——绝不自动执行
+    sc.updateAvailable === true && sc.upgradeCmd !== undefined
+      ? createElement('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' } },
+          createElement('code', { style: { flex: '1', fontSize: '11px', color: '#8E8E93', wordBreak: 'break-all' } }, sc.upgradeCmd),
+          createElement('button', { className: 'o4-btn ghost sm', title: tt('scUpgradeTip'), onClick: () => { void navigator.clipboard.writeText(sc.upgradeCmd ?? '').then(() => {}) } }, ic('copy', true), tt('csvT')),
+        )
+      : null,
+  )
+}
+
   const renderSecurity = (): ReturnType<typeof createElement> => {
     const modes: Array<[string, string, IconName]> = [
       ['read-only', t2('modeReadOnly'), 'activity'],
@@ -1318,6 +1364,7 @@ function Panel(): ReturnType<typeof createElement> {
     ]
     const diagText = `bin: ${status?.bin ?? '—'} | version: ${status?.version ?? '—'} | mode: ${autoMode} | approval: ${settings?.approvalOn === true ? 'on' : 'off'} | daemon: ${daemonUp ? 'running' : 'down'}`
     return createElement('div', null,
+      selfCheck !== null ? createElement(SelfCheckCard, { sc: selfCheck as unknown as SelfCheckResult4, lang }) : null,
       createElement('div', { className: 'o4-sec' },
         createElement('div', { style: { display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '12px' } },
           createElement('div', { className: 'o4-shield' }, ic('shield')),

@@ -40,6 +40,9 @@ import { composeClick, composeCloseWindow, composeOpen, composeScreenshot, compo
 import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
 import { aggregateDaySums, diffSnapshots, renderDiffText } from './diffsnap.ts'
 import { authRiskClass, countStructuredItems, isChallengePage, type Receipt } from './parsers.ts'
+
+/** 本插件版本(package.json 同源,自检视图与更新检查用;bundle 内联,发布脚本管同步)。 */
+const PLUGIN_VERSION = '0.1.2'
 import { exportSnapshots } from './exportcsv.ts'
 import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
@@ -384,6 +387,8 @@ export class OpencliService extends TypertRemoteService {
 
   /** 重名让位记账(被跳过的工具名):status.conflicts / doctor ⚠ 行 / 宿主 warn 三处可见。 */
   private toolConflicts: string[] = []
+  /** 本插件成功注册的工具名(自检视图逐个点名:#9308 式'装上没效果'的可视化解药)。 */
+  private registeredToolNames: string[] = []
 
   /**
    * 重名防护:dsh 0.2.1 的 dsh-tools NamedEntries 对重名注册直接抛 "tool X is already
@@ -394,6 +399,7 @@ export class OpencliService extends TypertRemoteService {
   private registerToolSafe<S extends ParameterSchemaSpec, O extends ValueSchemaSpec>(def: DefineToolOptions<S, O>): void {
     try {
       this.ctx.tools.register(defineTool(def))
+      this.registeredToolNames.push(def.name)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       if (!/already registered/i.test(msg)) throw e
@@ -1963,6 +1969,68 @@ export class OpencliService extends TypertRemoteService {
    * 配置是用户显式动作,存不上必须让面板知道),同时回填 this.state——否则下一次
    * saveState 整文件重写会丢掉 notifyConfig 键(见 PluginState.notifyConfig 注释)。
    */
+  /**
+   * 插件自检(0.1.2 P0-6,#9308/#9261/#2582/BrowserSkill#554 四源交叉的'装上没效果'解药):
+   * 激活/工具注册点名/入口在线/宿主匹配——面板安全 tab 顶部自检卡 3 秒可见。
+   * update 段(0.1.2 P0-7,#10869 '有新版本无路可走'):npm registry dist-tag 对比当前版本,
+   * 有新版给出一键复制升级命令(不自动执行——升级是用户显式决策,#6971 教训)。
+   */
+  @Remote('self-check')
+  async selfCheck(): Promise<{
+    ok: boolean
+    activated: boolean
+    tools: Array<{ name: string; registered: boolean }>
+    conflicts: string[]
+    entries: Array<{ name: string; ok: boolean }>
+    currentVersion: string
+    latestVersion?: string
+    updateAvailable?: boolean
+    upgradeCmd?: string
+    error?: string
+  }> {
+    const currentVersion = PLUGIN_VERSION
+    const out: {
+      ok: boolean; activated: boolean
+      tools: Array<{ name: string; registered: boolean }>; conflicts: string[]
+      entries: Array<{ name: string; ok: boolean }>
+      currentVersion: string; latestVersion?: string; updateAvailable?: boolean; upgradeCmd?: string
+      error?: string
+    } = {
+      ok: true, activated: true,
+      tools: [], conflicts: [...this.toolConflicts], entries: [],
+      currentVersion,
+    }
+    // 工具点名:期望注册表(正主名,不含弃用别名)逐个核对
+    const expected = [...new Set(this.registeredToolNames.filter((n) => !n.startsWith('browser_')))]
+    for (const name of expected) {
+      const registered = this.registeredToolNames.includes(name)
+      out.tools.push({ name, registered })
+    }
+    // 入口在线:面板 RPC(本调用即证明)+ ctl 收件箱目录 + daemon
+    try {
+      out.entries.push({ name: 'panel-rpc', ok: true })
+      out.entries.push({ name: 'ctl-inbox', ok: existsSync(inboxDir()) })
+      const ds = await this.daemonStatus()
+      out.entries.push({ name: 'daemon', ok: ds !== null && ds.running === true })
+    } catch (e) {
+      out.entries.push({ name: 'daemon', ok: false })
+    }
+    // npm 更新检查(best-effort,5s 超时;失败静默——离线不是自检失败)
+    try {
+      const res = await fetch('https://registry.npmjs.org/@cold777%2Fdsh-opencli/latest', { signal: AbortSignal.timeout(5000) })
+      if (res.ok) {
+        const j = await res.json() as { version?: string }
+        const latest = typeof j.version === 'string' ? j.version : undefined
+        if (latest !== undefined && latest !== currentVersion) {
+          out.latestVersion = latest
+          out.updateAvailable = true
+          out.upgradeCmd = `npm install -g @cold777/dsh-opencli@${latest}`
+        }
+      }
+    } catch { /* 离线:更新检查跳过 */ }
+    return out
+  }
+
   @Remote('notify-config')
   async notifyConfig(request?: { channels?: unknown }): Promise<{ ok: boolean; config?: NotifyConfig; error?: string }> {
     // 网关对空 args 会传 undefined(真机复现,schedule-history 同款):request 可选链
