@@ -68,6 +68,7 @@ function buildIntent() {
       const src = flag('--source'); if (src !== undefined) intent.source = src
       const lvl = flag('--notify-level'); if (lvl !== undefined) intent.notifyLevel = lvl
       const qh = flag('--quiet-hours'); if (qh !== undefined) intent.quietHours = qh
+      if (flag('--no-jitter') !== undefined) intent.jitter = false
       return intent
     }
     if (sub === 'list') return { kind: 'schedule-list' }

@@ -137,7 +137,7 @@ describe('report-build RPC(定时快照→报告)', () => {
     await svc.scheduleAdd({ site: 'site zhihu hot', cron: '0 9 * * *' })
     const sch = (svc as unknown as { schedules: Array<{ id: string; site: string }> }).schedules.find(s => s.site === 'site zhihu hot')
     expect(sch).toBeDefined()
-    const dir = path.join(os.homedir(), '.dsh', 'opencli-snapshots', sch!.id)
+    const dir = path.join(process.env.DSH_OPENCLI_SNAPSHOTS_DIR!, sch!.id)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, '2026-10-05T09-00-00-000.json'), JSON.stringify({ at: '2026-10-05T09:00:00Z', site: 'site zhihu hot', bytes: 20, stdout: '1 热点A' }), 'utf8')
     const r = await R.reportBuild({ id: sch!.id })
@@ -155,7 +155,7 @@ describe('report-build RPC(定时快照→报告)', () => {
     const R = svc as unknown as { reportBuild: (r?: { id: string; summary?: boolean }) => Promise<{ ok: boolean; path?: string; error?: string }> }
     const add = await svc.scheduleAdd({ site: 'site zhihu hot', cron: '0 3 31 2 *' })
     expect(add.ok).toBe(true)
-    const dir = path.join(os.homedir(), '.dsh', 'opencli-snapshots', add.id!)
+    const dir = path.join(process.env.DSH_OPENCLI_SNAPSHOTS_DIR!, add.id!)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, '2026-10-06T09-00-00-000.json'), JSON.stringify({ at: '2026-10-06T09:00:00Z', site: 'site zhihu hot', bytes: 20, stdout: '1 热点甲 热度100' }), 'utf8')
     const r = await R.reportBuild({ id: add.id!, summary: true })

@@ -1,0 +1,606 @@
+<!doctype html>
+<!-- Plugin detail page template (design B). Tokens shared with template.html — keep the :root blocks in sync. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IKEASven69/dsh-opencli — dsh plugin · Browser &amp; Web</title>
+<meta name="description" content="Logged-in browser automation with 170+ site adapters as deterministic one-shot commands (requires the OpenCLI CLI, npm i -g @jackwener/opencli, and its…">
+<link rel="canonical" href="https://awesome-dsh-plugin.com/p/IKEASven69/dsh-opencli/">
+<link rel="alternate" hreflang="en" href="https://awesome-dsh-plugin.com/p/IKEASven69/dsh-opencli/">
+<link rel="alternate" hreflang="zh" href="https://awesome-dsh-plugin.com/zh/p/IKEASven69/dsh-opencli/">
+<link rel="alternate" hreflang="x-default" href="https://awesome-dsh-plugin.com/p/IKEASven69/dsh-opencli/">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f2ea">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#211d18">
+<meta name="color-scheme" content="light dark">
+<meta property="og:type" content="website">
+<meta property="og:title" content="IKEASven69/dsh-opencli — dsh plugin · Browser &amp; Web">
+<meta property="og:description" content="Logged-in browser automation with 170+ site adapters as deterministic one-shot commands (requires the OpenCLI CLI, npm i -g @jackwener/opencli, and its…">
+<meta property="og:url" content="https://awesome-dsh-plugin.com/p/IKEASven69/dsh-opencli/">
+<meta property="og:image" content="https://awesome-dsh-plugin.com/og-en.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preload" href="/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+<script type="application/ld+json">[{"@context":"https://schema.org","@type":"SoftwareApplication","name":"IKEASven69/dsh-opencli","url":"https://awesome-dsh-plugin.com/p/IKEASven69/dsh-opencli/","description":"Logged-in browser automation with 170+ site adapters as deterministic one-shot commands (requires the OpenCLI CLI, npm i -g @jackwener/opencli, and its BrowserBridge browser extension) — action-evidence verification (no silent failures), site knowledge & health cards, watch monitoring, trace replay, provenance reports, and a write-approval gate.","applicationCategory":"DeveloperApplication","operatingSystem":"DeepSeek Harness","sameAs":["https://github.com/IKEASven69/dsh-opencli","https://www.npmjs.com/package/@cold777/dsh-opencli"]},{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"All plugins","item":"https://awesome-dsh-plugin.com/"},{"@type":"ListItem","position":2,"name":"Browser & Web","item":"https://awesome-dsh-plugin.com/browser/"},{"@type":"ListItem","position":3,"name":"IKEASven69/dsh-opencli","item":"https://awesome-dsh-plugin.com/p/IKEASven69/dsh-opencli/"}]}]</script>
+<style>
+/* Self-hosted — see the note in site/template.html. Keep both files in sync. */
+@font-face{
+  font-family:'Archivo';
+  font-style:normal;
+  font-weight:500 900;
+  font-display:swap;
+  src:url(/archivo-latin.woff2) format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face{
+  font-family:'Archivo';
+  font-style:normal;
+  font-weight:500 900;
+  font-display:swap;
+  src:url(/archivo-latin-ext.woff2) format('woff2');
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+/* Metric-matched fallback. While Archivo is still in flight, headings render
+   in this Arial (size-adjusted to Archivo's weight-800 advances - the h1 is
+   what drives layout) instead of whatever system-ui resolves to, so the swap
+   changes glyphs, not geometry. On Windows the Segoe UI fallback re-wrapped
+   the hero and shifted the whole card grid below it - the top remaining CLS
+   source in field data once the counters were fixed.
+
+   The ratio is against Arial REGULAR: local('Arial') grabs only the regular
+   face, and the synthetic bold the browser applies at weight 800 does not
+   widen advances. Measured in-browser on heading-length samples: Archivo@800
+   / synthetic-bold-Arial = 111.1%; Archivo ascent 88 and descent 21 per
+   100px em, divided by size-adjust. Verified: identical wrap heights across
+   15 width x text combinations, residual width delta 0.7%. */
+@font-face{
+  font-family:'Archivo Fallback';
+  src:local('Arial');
+  size-adjust:111.1%;
+  ascent-override:79.2%;
+  descent-override:18.9%;
+  line-gap-override:0%;
+}
+:root{
+  --paper:#f6f2ea; --paper-2:#efe9dd; --card:#fffdf8; --line:#e0d8c8; --line-2:#cfc5b0;
+  --ink:#2b2620; --ink-2:#5f574a; --ink-3:#8b8172;
+  --cinnabar:#c0392b; --cinnabar-deep:#a12f22; --cinnabar-soft:#f7e5e2; --cinnabar-border:#e5c4be;
+  --on-cinnabar:#ffffff;
+  --sans:"Inter","SF Pro Text","PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;
+  --display:"Archivo","Archivo Fallback","Inter","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --paper:#211d18; --paper-2:#282218; --card:#2a2620; --line:#3b352c; --line-2:#4c4436;
+    --ink:#ece7de; --ink-2:#b5ac9e; --ink-3:#8f8678;
+    --cinnabar:#e06a52; --cinnabar-deep:#ea8069; --cinnabar-soft:rgba(224,106,82,.13); --cinnabar-border:rgba(224,106,82,.35);
+    --on-cinnabar:#211d18;
+  }
+}
+*{box-sizing:border-box;margin:0}
+::selection{background:var(--cinnabar-soft);color:var(--ink)}
+:focus-visible{outline:2px solid var(--cinnabar);outline-offset:2px}
+body{font-family:var(--sans);background:var(--paper);color:var(--ink);min-height:100vh;line-height:1.55;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none;touch-action:manipulation}
+button{touch-action:manipulation;-webkit-tap-highlight-color:transparent;font-family:inherit;cursor:pointer}
+.wrap{max-width:62rem;margin-inline:auto;padding-inline:clamp(1.25rem,4vw,2.5rem)}
+
+nav.top{position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--paper) 90%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.nav-in{display:flex;align-items:center;gap:1.4rem;height:3.6rem}
+.logo{display:flex;align-items:center;gap:.55rem;font-family:var(--display);font-weight:700;font-size:.95rem}
+.logo svg g{fill:var(--ink)}
+.logo svg .plug-block{fill:var(--cinnabar)}
+.nav-links{display:flex;gap:1.2rem;margin-left:auto;font-size:.86rem;color:var(--ink-2);align-items:center}
+.nav-links a:hover{color:var(--cinnabar)}
+.lang-btn{font-size:.82rem;color:var(--ink-3);border:1px solid var(--line);border-radius:8px;padding:.25rem .6rem}
+.lang-btn:hover{color:var(--ink);border-color:var(--line-2)}
+
+header.plate-wrap{
+  background-image:linear-gradient(var(--paper-2) 1px,transparent 1px),linear-gradient(90deg,var(--paper-2) 1px,transparent 1px);
+  background-size:28px 28px;border-bottom:1px solid var(--line);
+}
+.crumbs{display:flex;flex-wrap:wrap;gap:.4rem .7rem;align-items:center;
+  font-family:var(--mono);font-size:.74rem;color:var(--ink-3);padding-block:.9rem 0}
+.crumbs a{color:var(--cinnabar)}
+.crumbs a:hover{color:var(--cinnabar-deep)}
+.crumbs .sep{color:var(--line-2)}
+.plate{padding-block:1.4rem clamp(1.8rem,5vh,2.6rem)}
+.plate .kicker{font-family:var(--mono);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.plate h1{font-family:var(--display);font-weight:800;font-size:clamp(1.5rem,4vw,2.4rem);line-height:1.12;letter-spacing:-.02em;margin-top:.35rem;text-wrap:balance;overflow-wrap:anywhere}
+.plate h1 .owner{color:var(--ink-3);font-weight:600}
+.plate h1 .name{color:var(--cinnabar)}
+.specrow{display:flex;flex-wrap:wrap;gap:.5rem 2rem;font-family:var(--mono);font-size:.76rem;color:var(--ink-3);margin-top:1rem}
+.specrow b{color:var(--ink-2);font-weight:500}
+.specrow a{color:var(--cinnabar)}
+.specrow a:hover{color:var(--cinnabar-deep);text-decoration:underline;text-underline-offset:3px}
+
+main{padding-block:clamp(1.6rem,4vh,2.4rem)}
+.desc{font-size:clamp(.98rem,1.7vw,1.08rem);color:var(--ink-2);max-width:46rem;text-wrap:pretty}
+
+.panel{margin-block:clamp(1.6rem,4vh,2.4rem) 0;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:1.3rem 1.4rem}
+.panel h2{font-family:var(--display);font-size:1rem;font-weight:700;letter-spacing:-.01em;margin-bottom:.8rem}
+.cmd{display:flex;align-items:stretch;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;background:var(--paper)}
+.cmd pre{font-family:var(--mono);font-size:.82rem;line-height:1.9;color:var(--ink);padding:.55rem 1rem;overflow-x:auto;flex:1;margin:0}
+.cmd button{font-family:var(--mono);font-size:.7rem;color:var(--ink-3);background:var(--card);border:none;border-left:1px solid var(--line-2);padding:0 1rem;cursor:pointer;white-space:nowrap;transition:all .15s ease}
+.cmd button:hover,.cmd button.done{color:var(--on-cinnabar);background:var(--cinnabar)}
+.panel .note{font-size:.78rem;color:var(--ink-3);max-width:46rem;text-wrap:pretty}
+.panel .note+.cmd{margin-top:.2rem}
+.links{display:flex;flex-wrap:wrap;gap:.6rem}
+.links a{font-size:.82rem;font-weight:550;border:1px solid var(--line-2);border-radius:8px;padding:.45rem .95rem;color:var(--ink-2);transition:all .15s ease;background:var(--paper)}
+.links a:hover{color:var(--on-cinnabar);border-color:var(--cinnabar);background:var(--cinnabar)}
+
+ul.rel{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(17rem,1fr));gap:.8rem}
+ul.rel li{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:.85rem 1rem;transition:border-color .15s ease}
+ul.rel li:hover{border-color:var(--line-2)}
+ul.rel h3{font-weight:650;font-size:.9rem;display:flex;align-items:baseline;gap:.5rem}
+ul.rel h3 a{overflow-wrap:anywhere}
+ul.rel h3 a:hover{color:var(--cinnabar-deep)}
+ul.rel h3 .stars{margin-left:auto;flex:none;font-family:var(--mono);font-weight:400;font-size:.7rem;color:var(--ink-3)}
+ul.rel .desc-link{display:block}
+ul.rel p{color:var(--ink-2);font-size:.8rem;margin-top:.2rem;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;transition:color .15s ease}
+ul.rel .desc-link:hover p{color:var(--ink)}
+.morelink{display:inline-block;margin-top:1rem;font-size:.84rem;font-weight:550;color:var(--cinnabar)}
+.morelink:hover{color:var(--cinnabar-deep);text-decoration:underline;text-underline-offset:3px}
+
+/* Comment provider is never loaded until the visitor chooses to load it. */
+.comments-load{display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin-top:.9rem;border:1px solid var(--cinnabar);border-radius:8px;padding:.55rem .95rem;background:var(--cinnabar);color:var(--on-cinnabar);font-size:.82rem;font-weight:650;transition:background .15s ease,border-color .15s ease}
+.comments-load:hover{background:var(--cinnabar-deep);border-color:var(--cinnabar-deep)}
+.comments-status{min-height:1.55em;margin-top:.65rem;color:var(--ink-3);font-size:.78rem}
+.comments-mount{margin-top:.7rem;min-height:0;overflow:hidden}
+.comments-mount:empty,.comments-mount:has(iframe){min-height:12rem}
+.comments-status:empty{display:none}
+.comments-mount iframe{width:100%;border:0}
+
+/* rendered README content */
+.md{font-size:.9rem;color:var(--ink-2);overflow-wrap:break-word}
+.md h2,.md h3,.md h4,.md h5,.md h6{color:var(--ink);font-weight:700;margin:1.4em 0 .5em;letter-spacing:-.01em;line-height:1.3}
+.md h2{font-size:1.1rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}
+.md h3{font-size:1rem}
+.md h4,.md h5,.md h6{font-size:.92rem}
+.md p,.md ul,.md ol,.md blockquote,.md table,.md pre{margin-block:.7em}
+.md ul,.md ol{padding-left:1.4em}
+.md li+li{margin-top:.25em}
+.md a{color:var(--cinnabar)}
+.md a:hover{color:var(--cinnabar-deep);text-decoration:underline;text-underline-offset:3px}
+.md code{font-family:var(--mono);font-size:.85em;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:.1em .35em}
+.md pre{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;overflow-x:auto}
+.md pre code{background:none;border:none;padding:0;font-size:.8rem;line-height:1.7}
+.md img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line)}
+.md blockquote{border-left:3px solid var(--line-2);padding-left:1em;color:var(--ink-3)}
+.md table{border-collapse:collapse;display:block;overflow-x:auto;font-size:.84rem}
+.md th,.md td{border:1px solid var(--line);padding:.35rem .7rem;text-align:left}
+.md th{background:var(--paper);color:var(--ink)}
+.md hr{border:none;border-top:1px solid var(--line);margin-block:1.2em}
+.panel.readme .note{margin-top:1rem;border-top:1px solid var(--line);padding-top:.8rem}
+.panel.readme .note a{color:var(--ink-3)}
+.panel.readme .note a:hover{color:var(--cinnabar)}
+
+footer{padding-block:1.8rem 2.8rem;border-top:1px solid var(--line);margin-top:clamp(2rem,6vh,3rem);color:var(--ink-3);font-size:.78rem}
+footer a{color:var(--ink-2)}
+footer a:hover{color:var(--cinnabar)}
+footer p+p{margin-top:.5rem}
+@media (max-width:640px){
+  .cmd{flex-direction:column}
+  .cmd button{border-left:none;border-top:1px solid var(--line-2);padding:.5rem}
+}
+</style>
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8176276536851769" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<nav class="top"><div class="wrap nav-in">
+  <a class="logo" href="/" translate="no">
+    <svg width="20" height="20" viewBox="76 42 400 400" aria-hidden="true"><g><rect x="112" y="112" width="88" height="88" rx="14"/><rect x="212" y="112" width="88" height="88" rx="14"/><rect x="112" y="212" width="88" height="88" rx="14"/><rect x="212" y="212" width="88" height="88" rx="14"/><rect x="112" y="312" width="88" height="88" rx="14"/><rect x="212" y="312" width="88" height="88" rx="14"/><rect x="312" y="212" width="88" height="88" rx="14"/><rect x="312" y="312" width="88" height="88" rx="14"/></g><rect class="plug-block" x="346" y="78" width="88" height="88" rx="14" transform="rotate(9 390 122)"/></svg>
+    awesome-dsh-plugin
+  </a>
+  <div class="nav-links">
+    <a class="lang-btn" href="/zh/p/IKEASven69/dsh-opencli/" hreflang="zh" rel="alternate">中文</a>
+    <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin" rel="noopener">GitHub ↗</a>
+  </div>
+</div></nav>
+
+<header class="plate-wrap">
+  <div class="wrap">
+    <nav class="crumbs" aria-label="breadcrumb">
+      <a href="/">All plugins</a>
+      <span class="sep">/</span>
+      <a href="/browser/">Browser & Web</a>
+      <span class="sep">/</span>
+      <span translate="no">dsh-opencli</span>
+    </nav>
+    <div class="plate">
+      <p class="kicker">DeepSeek Harness Plugin</p>
+      <h1 translate="no"><span class="owner">IKEASven69/</span><wbr><span class="name">dsh-opencli</span></h1>
+      <div class="specrow">
+        <span>Stars <b>★ 5</b></span>
+        <span>Downloads (30d) <b translate="no">178</b></span>
+        <span>Category <a href="/browser/">Browser & Web</a></span>
+        <span>Added <b>2026-08-30</b></span>
+        <span>npm <a href="https://www.npmjs.com/package/@cold777/dsh-opencli" rel="noopener" translate="no">@cold777/dsh-opencli</a></span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="desc">Logged-in browser automation with 170+ site adapters as deterministic one-shot commands (requires the OpenCLI CLI, npm i -g @jackwener/opencli, and its BrowserBridge browser extension) — action-evidence verification (no silent failures), site knowledge &amp; health cards, watch monitoring, trace replay, provenance reports, and a write-approval gate.</p>
+
+  <section class="panel">
+    <h2>Install</h2>
+    <p class="note" style="margin:.2rem 0 .45rem"># from npm (prebuilt)</p>
+    <div class="cmd"><pre translate="no">dsh plugin --profile web add @cold777/dsh-opencli</pre><button type="button" data-cmd="dsh plugin --profile web add @cold777/dsh-opencli" aria-label="Copy install command">copy install</button></div>
+    <p class="note" style="margin:.2rem 0 .45rem"># from a prebuilt release tarball</p>
+    <div class="cmd"><pre translate="no">dsh plugin --profile web add &quot;https://github.com/IKEASven69/dsh-opencli/releases/latest/download/dsh-opencli.tgz&quot;</pre><button type="button" data-cmd="dsh plugin --profile web add &quot;https://github.com/IKEASven69/dsh-opencli/releases/latest/download/dsh-opencli.tgz&quot;" aria-label="Copy install command">copy install</button></div>
+    <p class="note" style="margin:.2rem 0 .45rem"># from GitHub (first run asks for allowBuilds approval — follow the hint, retry)</p>
+    <div class="cmd"><pre translate="no">dsh plugin --profile web add github:IKEASven69/dsh-opencli</pre><button type="button" data-cmd="dsh plugin --profile web add github:IKEASven69/dsh-opencli" aria-label="Copy install command">copy install</button></div>
+    <p class="note" style="margin-top:.7rem">Any plugin you install runs third-party code with your own permissions — it can read your files, use your credentials, and reach the network, and tool approvals don’t sandbox it. GitHub-sourced plugins also run build scripts at install time — pnpm blocks those until you allow them, so an install can stop with <code translate="no">ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED</code> or <code translate="no">ERR_PNPM_IGNORED_BUILDS</code>; dsh prints the exact key to add under <code translate="no">allowBuilds</code> in your profile’s <code translate="no">pnpm-workspace.yaml</code>, and the install works on the next run. Allowing a build is a trust decision: only install sources you trust, and pin a commit (<code translate="no">github:owner/repo#sha</code>).</p>
+  </section>
+
+  <section class="panel readme">
+    <h2>README</h2>
+    <div class="md" lang="en" translate="no">
+<p>English | <a href="https://github.com/IKEASven69/dsh-opencli/blob/HEAD/README.zh.md">简体中文</a></p>
+<p><strong>A dsh plugin: a logged-in-browser data engine.</strong> Drives your everyday browser (Chrome/Edge) through the <a href="https://github.com/jackwener/OpenCLI">OpenCLI</a> daemon + BrowserBridge extension, providing one-step structured commands for 170 sites, logged-in web primitives, scheduled collection, execution-authenticity verification, push notifications, and replayable run history. dsh&#39;s built-in web tools target anonymous retrieval; this plugin covers the account-side half — all data comes from sessions you are already logged into, and all write operations pass a human approval gate.</p>
+<ul>
+<li>For users: installation and panel walkthrough in <a href="#getting-started">Getting Started</a>; full capability list in <a href="#feature-matrix">Feature Matrix</a></li>
+<li>For agents: SKILL.md ships with the package for in-session discovery; CLI entry point is <code>dsh-opencli-ctl</code></li>
+<li>For contributors: design docs, research, and acceptance records under <a href="https://github.com/IKEASven69/dsh-opencli/blob/HEAD/docs/">docs/</a></li>
+</ul>
+<h3>How It Works</h3>
+<pre><code>dsh agent ─┬─ tool calls (site / opencli_* / canvas_*) ──┐
+dsh panel ─┼─ panel RPC (schedules / notify / canvas / audit) ───┤
+any shell ─┴─ dsh-opencli-ctl (inbox intents) ───────────┤
+                                                         ▼
+                          dsh-opencli plugin (approval gate · authenticity · snapshots · traces)
+                                                         │
+                                  OpenCLI daemon + BrowserBridge extension
+                                                         │
+                                              your real browser (logged-in)
+</code></pre>
+<p>Every execution path converges on one plugin service: write operations pass an approval gate (fail-closed), collected results pass authenticity verification (exit 0 does not mean valid data), and every run leaves snapshots and traces for replay.</p>
+<h3>Getting Started</h3>
+<pre><code class="language-sh"># ① OpenCLI runtime (skip if already installed)
+npm i -g @jackwener/opencli &amp;&amp; opencli daemon restart
+
+# ② BrowserBridge extension: https://github.com/jackwener/OpenCLI/releases
+#    Download opencli-extension-*.zip, load unpacked in your browser, log in to your usual sites
+
+# ③ This plugin
+npm i -g @cold777/dsh-opencli          # npm (includes dsh-opencli-ctl CLI)
+# or
+dsh plugin add IKEASven69/dsh-opencli   # GitHub tarball
+</code></pre>
+<p>Restart dsh, then open <strong>Settings → Browser Agent</strong>: five tabs: Overview / Commands / Automation / Security / Canvas.</p>
+<h3>Core Capabilities</h3>
+<h4>Scheduled Collection → Push</h4>
+<p>Persistent cron tasks run real collection through your logged-in browser: failures retry ×3 automatically, successes land as structured snapshots (50 kept). Watch keywords or content changes (added/removed/moved) push to Feishu/DingTalk/WeCom/Telegram with a diff summary against the previous run.</p>
+<h4>Execution Authenticity</h4>
+<p><code>exit 0</code> does not mean valid data. Two-layer verification (deterministic rules + sub-second decision model) flags empty results, anti-bot walls, and login pages as &quot;suspected silent failure&quot; — unattended tasks retry on failure. Every snapshot traces back to the command and time that produced it.</p>
+<h4>Structured Site Commands</h4>
+<p>170 sites / 1,200+ commands in a precompiled catalog, distilled into systemPrompt so agents pick the right command on the first try — no trial and error. Each site ships a knowledge card (known pitfalls + failure-signature recovery table). Multi-site parallel collection via <code>site_batch</code>.</p>
+<h4>Web Primitives &amp; Canvas Bitmaps</h4>
+<p>For pages without adapters: logged-in primitives (open/click/fill/extract/screenshot and more); the eval family goes over a direct daemon transport for millisecond round trips. Canvas bitmap surfaces (charts/games/whiteboards) get a three-tool set: discover, read (bitmap auto-archived into the canvas view), click (write-gated).</p>
+<h4>Run Replay</h4>
+<p>Every browser and scheduled execution lands as JSONL traces; the canvas view aggregates traces, evidence, and snapshots into a pannable, zoomable card flow — click a card to replay each step (command/screenshot/duration). Failed steps include output excerpts: no guessing why the last run failed.</p>
+<h4>Write Approval Gate</h4>
+<p>Posting, deleting, and other write commands pop an approval prompt by default; execution requires explicit allow, with before/after screenshots archived as evidence. Unclear permission is treated as write (fail-closed). attack table of 22 rows (incl. 5 read-only controls) + 3 independent side-channels, each covered by a dedicated regression test, plus 200 reproducible fuzz iterations, invariant: <strong>every allow ⟹ read-only intent</strong> (see <a href="#security-invariants">Security Invariants</a>).</p>
+<h3>Feature Matrix</h3>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Capability</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Site adapters</td>
+<td>170 sites / 1,200+ commands; <code>site_batch</code> multi-site parallel; distilled catalog injected into systemPrompt</td>
+</tr>
+<tr>
+<td>Scheduled collection</td>
+<td>Persistent cron; retry ×3; structured snapshots (50 kept)</td>
+</tr>
+<tr>
+<td>Watch push</td>
+<td>Keyword hits / content changes → Feishu/DingTalk/WeCom/Telegram/panel event stream</td>
+</tr>
+<tr>
+<td>Sourced reports</td>
+<td>Each section = command + time + snapshot path; zero model rewriting</td>
+</tr>
+<tr>
+<td>Canvas replay</td>
+<td>Traces/evidence/snapshots as a pannable, zoomable card flow with per-step replay</td>
+</tr>
+<tr>
+<td>Canvas bitmap ops</td>
+<td>discover/read/click for DOM-less bitmap surfaces; read bitmaps auto-archived into the canvas view</td>
+</tr>
+<tr>
+<td>Authenticity</td>
+<td>Deterministic rules + sub-second decision model; silent-failure flags and retries</td>
+</tr>
+<tr>
+<td>Write approval</td>
+<td>Tool-layer fail-closed gate; evidence pack (100 kept)</td>
+</tr>
+<tr>
+<td>Execution traces</td>
+<td>JSONL per execution; panel replay view</td>
+</tr>
+<tr>
+<td>Smoke benchmark</td>
+<td>Default 5-site read-only smoke; success rate / authenticity P / latency / direct-transport comparison</td>
+</tr>
+<tr>
+<td>Automation modes</td>
+<td>read-only / standard / autonomous / unrestricted</td>
+</tr>
+<tr>
+<td>Site health</td>
+<td>Upstream-issue-driven degraded-site flags; canary top-20 read-only drift checks</td>
+</tr>
+<tr>
+<td>MCP Resources</td>
+<td>Site knowledge at <code>opencli://sites/{site}/knowledge</code> (dsh 0.2+)</td>
+</tr>
+<tr>
+<td>Login diagnostics/bridge</td>
+<td>Per-site cookie-level status; one-click bridge for dsh&#39;s official Browser Use</td>
+</tr>
+<tr>
+<td>Interception audit</td>
+<td>Approval-gate records (7-day counts + details)</td>
+</tr>
+<tr>
+<td>Rate limits</td>
+<td>usagePolicy + 429/5xx backoff; authProfile scoped login</td>
+</tr>
+<tr>
+<td>Bilingual panel</td>
+<td>EN/zh toggle</td>
+</tr>
+</tbody></table>
+<h3>For Agents</h3>
+<ul>
+<li><strong>CLI agent sessions</strong> (dsh CLI or other host CLIs): <code>site</code>, <code>opencli_*</code>, <code>canvas_*</code>, and <code>so_*</code> tools register with the plugin; SKILL.md ships in the package for discovery</li>
+<li><strong>Panel chat sessions</strong>: dsh&#39;s preset scoping does not register plugin tools there — agents use shell to call <code>dsh-opencli-ctl</code> (ships with the npm package): <code>schedule add/list/run/remove</code>, <code>notify set/test</code>, <code>report build/export</code>, <code>status</code>; intents are executed by the plugin via the inbox, pass allowlist closed-set validation, and return JSON results</li>
+<li><strong>Example</strong>: <code>dsh-opencli-ctl schedule add --site &quot;site juejin hot&quot; --cron &quot;0 9 * * *&quot; --watch &quot;AI&quot;</code></li>
+</ul>
+<h3>Installation Notes</h3>
+<ul>
+<li>opencli ≤1.8.8 running <code>npm install</code> inside the plugin directory silently replaces the host link (<a href="https://github.com/jackwener/opencli/issues/2555">#2555</a>, fixed in 2.0) — on 1.8.x, install dependencies outside the repo</li>
+<li>Before upgrading dsh to 0.2, check your profile <code>cordis.patch.yml</code> for references to uninstalled bundles — 0.2 exits silently on them</li>
+<li>Panel chat sessions not listing plugin agent tools is dsh&#39;s preset-scoping architecture — see <a href="https://github.com/IKEASven69/dsh-opencli/blob/HEAD/docs/RESEARCH-20261030-dsh-preset-and-env.md">docs/RESEARCH-20261030-dsh-preset-and-env.md</a></li>
+</ul>
+<h3>Configuration</h3>
+<p>Zero-config out of the box; fine-tuning:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Via</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>opencli binary path</td>
+<td>Env <code>DSH_OPENCLI_BIN</code></td>
+<td><code>opencli</code> (global)</td>
+</tr>
+<tr>
+<td>Write approval gate</td>
+<td>Panel toggle</td>
+<td>on</td>
+</tr>
+<tr>
+<td>Automation mode</td>
+<td>Panel four-mode selector</td>
+<td>standard</td>
+</tr>
+<tr>
+<td>Rate limits</td>
+<td><code>usagePolicy</code> (minDelay 750ms / concurrency 2 / burst 3 / cooldown 30s)</td>
+<td>see left</td>
+</tr>
+<tr>
+<td>Scoped login</td>
+<td><code>authProfiles</code> (<code>allowedDomains</code>/<code>storageStatePath</code>)</td>
+<td>none</td>
+</tr>
+</tbody></table>
+<h3>Security Invariants</h3>
+<p>The write approval gate is fail-closed: unclear permission is treated as write. attack table of 22 rows (incl. 5 read-only controls) + 3 independent side-channels, each covered by a dedicated regression test, plus 200 reproducible fuzz iterations, invariant: <strong>every allow ⟹ read-only intent</strong>. Sample shapes:</p>
+<table>
+<thead>
+<tr>
+<th>Attack shape</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Prototype-chain names (<code>constructor</code>) / path forms (<code>../etc passwd</code>) / NUL truncation</td>
+<td>Approval prompt</td>
+</tr>
+<tr>
+<td>Trailing-space permission-query bypass (<code>&quot;zhihu &quot;</code>)</td>
+<td>Approval prompt</td>
+</tr>
+<tr>
+<td>Generic gateway <code>opencli_run</code> carrying write shapes</td>
+<td>Approval prompt (no gateway exemption)</td>
+</tr>
+<tr>
+<td><code>site_batch</code> mixing write commands</td>
+<td>Whole batch rejected, zero shell calls</td>
+</tr>
+<tr>
+<td>benchmark / canary side-channel write commands</td>
+<td>Built-in read-only gates</td>
+</tr>
+</tbody></table>
+<p>All tool output is truncated and truncated and noise-stripped to prevent context pollution; rate limits + automatic backoff; scoped login rejects cross-domain.</p>
+<h3>Tests &amp; Verification</h3>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Method</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Unit/regression</td>
+<td>vitest 450+ cases: approval invariant attack table + 200 fuzz / cron regression / direct transport / snapshot diff / export format / pre-submit gate</td>
+</tr>
+<tr>
+<td>Full review suite</td>
+<td>22 checks on a live environment covering rendering / real execution / state reconciliation / RPC ground truth (<code>full-review.cjs</code>); results record the host dsh version</td>
+</tr>
+<tr>
+<td>Full feature matrix</td>
+<td>26 end-to-end checks spanning session / direct transport / push / export / ctl full chain (<code>full-matrix.cjs</code>)</td>
+</tr>
+<tr>
+<td>UI walkthrough</td>
+<td>9-scene, 26-assertion pass with real browser mouse/keyboard (<code>ui-walkthrough.cjs</code>)</td>
+</tr>
+<tr>
+<td>Real-model E2E</td>
+<td>Session-driven site commands / write rejection / NL intent mapping loop</td>
+</tr>
+</tbody></table>
+<h3>Documentation</h3>
+<ul>
+<li><a href="https://github.com/IKEASven69/dsh-opencli/blob/HEAD/CHANGELOG.md">CHANGELOG</a> · <a href="https://github.com/IKEASven69/dsh-opencli/blob/HEAD/SKILL.md">SKILL.md</a> (agent handbook) · <a href="https://github.com/IKEASven69/dsh-opencli/blob/HEAD/AGENT_INSTALL.md">AGENT_INSTALL.md</a> (agent self-install)</li>
+<li>Development docs: <a href="https://github.com/IKEASven69/dsh-opencli/blob/HEAD/docs/">docs/</a> — design notes, research, acceptance records, internal conventions</li>
+</ul>
+<h3>Scope</h3>
+<ul>
+<li>Not a replacement for OpenCLIApp/daemon/extension — that is the engine layer; this plugin is the data cockpit inside dsh</li>
+<li>Not a replacement for dsh&#39;s built-in web_search/web_fetch — those cover anonymous retrieval; this plugin covers your logged-in data</li>
+<li>Not suitable for machines with no real browser</li>
+</ul>
+<p>MIT License.</p>
+
+    </div>
+    <p class="note"><a href="https://github.com/IKEASven69/dsh-opencli/blob/HEAD/README.en.md" rel="noopener">Content from the project README on GitHub ↗</a></p>
+  </section>
+
+  <section class="panel">
+    <h2>Links</h2>
+    <div class="links">
+      <a href="https://github.com/IKEASven69/dsh-opencli" rel="noopener">GitHub repository ↗</a>
+      <a href="https://www.npmjs.com/package/@cold777/dsh-opencli" rel="noopener">npm package ↗</a>
+      <a href="https://github.com/dsh-market/dsh-market" rel="noopener">Install via dsh-market ↗</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>More in this category</h2>
+    <ul class="rel">
+      <li><h3><a href="/p/Tencent/BrowserSkill--packages-dsh-plugin-browserskill/" translate="no">Tencent/BrowserSkill#dsh-plugin-browserskill</a><span class="stars" translate="no">★ 9929</span></h3><a class="desc-link" href="/p/Tencent/BrowserSkill--packages-dsh-plugin-browserskill/" tabindex="-1"><p>BrowserSkill bridge for controlling visible Chrome and Edge Agent Windows from DeepSeek Harness, with native browser tools, accessibility and VOM observations, screenshots, owned multi-session control, and a live Web UI overlay.</p></a></li>
+      <li><h3><a href="/p/omdsh-dev/dsh-browser--packages-browser-bridge-browser/" translate="no">omdsh-dev/dsh-browser#packages/browser/bridge-browser</a><span class="stars" translate="no">★ 966</span></h3><a class="desc-link" href="/p/omdsh-dev/dsh-browser--packages-browser-bridge-browser/" tabindex="-1"><p>Chrome sidebar extension that lets DSH operate your browser directly, no vision capabilities required.</p></a></li>
+      <li><h3><a href="/p/liustack/modsearch/" translate="no">liustack/modsearch</a><span class="stars" translate="no">★ 911</span></h3><a class="desc-link" href="/p/liustack/modsearch/" tabindex="-1"><p>Web search bridge for text-only agents: ask the web or X, get structured JSON evidence (search, fetch, citations).</p></a></li>
+      <li><h3><a href="/p/DDDMUC/dsh-free-search/" translate="no">DDDMUC/dsh-free-search</a><span class="stars" translate="no">★ 817</span></h3><a class="desc-link" href="/p/DDDMUC/dsh-free-search/" tabindex="-1"><p>Free, keyless web search for DSH: 7 engines (DuckDuckGo/Bing/SearXNG free + Exa/Perplexity/DeepSeek paid), auto-failover, settings-page UI with API key inputs and official links, web_fetch, and an engine test tool.</p></a></li>
+      <li><h3><a href="/p/Fisfzy/dsh-ego-browser/" translate="no">Fisfzy/dsh-ego-browser</a><span class="stars" translate="no">★ 395</span></h3><a class="desc-link" href="/p/Fisfzy/dsh-ego-browser/" tabindex="-1"><p>Drive a real Chrome/Chromium browser from DeepSeek Harness with 35 structured tools for navigation, snapshots, clicks, forms, JavaScript/CDP, screenshots, downloads and tabs; a live sidebar mirrors the page and accepts mouse and keyboard input. It ships a managed CDP runtime, keeps login state across calls, and can import cookies from your everyday Chrome through a companion extension.</p></a></li>
+      <li><h3><a href="/p/wqty123/dsh-browser/" translate="no">wqty123/dsh-browser</a><span class="stars" translate="no">★ 162</span></h3><a class="desc-link" href="/p/wqty123/dsh-browser/" tabindex="-1"><p>Shared real browser for DSH: a native Electron window the human can watch and take over, driven by the agent over CDP with 20 browser_* tools (open/snapshot/execute/fill/screenshot/download/auth), per-task session isolation, cookie persistence, CAPTCHA detection; self-hosts on plain dsh web without a desktop shell.</p></a></li>
+    </ul>
+    <a class="morelink" href="/browser/">View the whole category →</a>
+  </section>
+
+  <section class="panel comments" aria-labelledby="comments-IKEASven69-dsh-opencli-title">
+    <h2 id="comments-IKEASven69-dsh-opencli-title">Community comments</h2>
+    <p class="note">Comments are public GitHub Discussions. Loading them connects to GitHub and Giscus; a GitHub account is required to post.</p>
+    <p class="comments-status" role="status" aria-live="polite"></p>
+    <div class="comments-mount giscus" id="comments-IKEASven69-dsh-opencli-mount" data-comments="{&quot;repo&quot;:&quot;awesome-dsh-plugin/awesome-dsh-plugin&quot;,&quot;repoId&quot;:&quot;R_kgDOT3ajCQ&quot;,&quot;category&quot;:&quot;Plugins&quot;,&quot;categoryId&quot;:&quot;DIC_kwDOT3ajCc4DES8_&quot;,&quot;term&quot;:&quot;plugin:IKEASven69/dsh-opencli&quot;,&quot;lang&quot;:&quot;en&quot;}" data-loading="Loading comments…" data-ready="Comments loaded." data-error="Comments could not be loaded. Check your connection, or read the discussion on GitHub." data-retry="Try again"></div>
+    <noscript><p class="note"><a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/discussions" rel="noopener">Open community comments on GitHub ↗</a></p></noscript>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p>Plugins are developed by their respective authors; listing is not an endorsement. Installing runs third-party code — review the source and proceed at your own risk.</p>
+  <p>© 2026 awesome-dsh-plugin · <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin" rel="noopener">GitHub</a> · <a href="/privacy/">Privacy</a> · Not affiliated with DeepSeek</p>
+</footer>
+
+<script>
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.cmd button');
+  if (!btn) return;
+  try { await navigator.clipboard.writeText(btn.dataset.cmd); } catch {}
+  btn.classList.add('done');
+  const old = btn.textContent;
+  btn.textContent = '✓';
+  setTimeout(() => { btn.classList.remove('done'); btn.textContent = old; }, 1200);
+});
+
+// Comments load on their own — arriving on the page is the request. They are
+// still deferred until the section is close to the viewport, because giscus is
+// a third-party iframe and most visitors never scroll past the README: paying
+// for that connection on every page view would slow down the common case to
+// serve the rare one. The button below only ever appears after a failure.
+;(() => {
+  const mount = document.querySelector('.comments-mount');
+  if (!mount) return;
+  const status = document.querySelector('.comments-status');
+  const d = mount.dataset;
+  let config;
+  try { config = JSON.parse(d.comments); } catch { status.textContent = d.error; return; }
+
+  const load = () => {
+    status.textContent = d.loading;
+    mount.setAttribute('aria-busy', 'true');
+    const script = document.createElement('script');
+    script.src = 'https://giscus.app/client.js';
+    script.async = true;
+    script.crossOrigin = 'anonymous';
+    Object.assign(script.dataset, {
+      repo: config.repo,
+      repoId: config.repoId,
+      category: config.category,
+      categoryId: config.categoryId,
+      mapping: 'specific',
+      term: config.term,
+      strict: '1',
+      reactionsEnabled: '1',
+      emitMetadata: '0',
+      inputPosition: 'bottom',
+      theme: 'preferred_color_scheme',
+      lang: config.lang,
+      loading: 'lazy',
+    });
+    script.onload = () => {
+      mount.removeAttribute('aria-busy');
+      // Sighted readers can see the thread arrive, so the confirmation is only
+      // here to be announced; leaving it on screen is a line of noise stapled
+      // under every plugin page forever.
+      status.textContent = d.ready;
+      setTimeout(() => { if (status.textContent === d.ready) status.textContent = ''; }, 2500);
+    };
+    script.onerror = () => {
+      mount.removeAttribute('aria-busy');
+      script.remove();
+      status.textContent = d.error;
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'comments-load';
+      retry.textContent = d.retry;
+      retry.addEventListener('click', () => { retry.remove(); load(); }, { once: true });
+      status.after(retry);
+    };
+    mount.append(script);
+  };
+
+  if (!('IntersectionObserver' in window)) { load(); return; }
+  const io = new IntersectionObserver((entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    io.disconnect();
+    load();
+  }, { rootMargin: '400px' });
+  io.observe(mount);
+})();
+</script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "7723c30caf6949b6b95780fb3ed9f6ac"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

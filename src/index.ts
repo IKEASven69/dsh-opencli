@@ -39,6 +39,7 @@ import { directCapability, directProbe, directExec } from './direct.ts'
 import { composeClick, composeCloseWindow, composeOpen, composeScreenshot, composeScroll, composeState, composeTabs, setCliDistDir, type CliEnvelope } from './direct-compose.ts'
 import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
 import { aggregateDaySums, diffSnapshots, renderDiffText } from './diffsnap.ts'
+import { authRiskClass, countStructuredItems, isChallengePage, type Receipt } from './parsers.ts'
 import { exportSnapshots } from './exportcsv.ts'
 import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
@@ -251,8 +252,12 @@ export class OpencliService extends TypertRemoteService {
     id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string
     source?: string; notifyLevel?: string; retry?: number; notify?: boolean; watch?: string
     quietHours?: string; pendingNotify?: QuietPendingItem[]
+    /** 拟人限速(0.1.2 P0-1):默认 true——精确 cron 时刻是指纹,首跑前随机延迟打散 */
+    jitter?: boolean
   }> = []
-  private runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string }>> = {}
+  private runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string; receipt?: Receipt }>> = {}
+  /** 快照根目录(DSH_OPENCLI_SNAPSHOTS_DIR 可覆盖,测试隔离用;与 traceDir 同款约定)。 */
+  private readonly snapshotsBase = process.env.DSH_OPENCLI_SNAPSHOTS_DIR !== undefined && process.env.DSH_OPENCLI_SNAPSHOTS_DIR.length > 0 ? process.env.DSH_OPENCLI_SNAPSHOTS_DIR : join(homedir(), '.dsh', 'opencli-snapshots')
   private automationMode: 'read-only' | 'standard' | 'autonomous' | 'unrestricted' = 'standard'
   private rulePacks: Array<{ matches: string[]; initScriptPath: string; initScriptSha256: string; steps: unknown[] }> = []
   private automationAssets = { persistenceMode: 'suggest' as const, activationMode: 'manual' as const }
@@ -1579,7 +1584,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (request === undefined) request = {} as never
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
@@ -1622,6 +1627,7 @@ export class OpencliService extends TypertRemoteService {
       if ((request.notifyLevel === 'quiet' || request.notifyLevel === 'all') && dup.notifyLevel !== request.notifyLevel) { dup.notifyLevel = request.notifyLevel; await this.saveState() }
       if (quietClear && dup.quietHours !== undefined) { delete dup.quietHours; await this.saveState() }
       else if (quietHours !== undefined && dup.quietHours !== quietHours) { dup.quietHours = quietHours; await this.saveState() }
+      if (typeof request.jitter === 'boolean' && dup.jitter !== request.jitter) { dup.jitter = request.jitter; await this.saveState() }
       return { ok: true, id: dup.id }
     }
     const id = String(Date.now())
@@ -1633,6 +1639,7 @@ export class OpencliService extends TypertRemoteService {
     if (typeof request.notify === 'boolean') entry.notify = request.notify
     if (watch !== undefined) entry.watch = watch
     if (quietHours !== undefined) entry.quietHours = quietHours
+    if (typeof request.jitter === 'boolean') entry.jitter = request.jitter
     this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
@@ -1877,7 +1884,7 @@ export class OpencliService extends TypertRemoteService {
     const id = String((p ?? { id: ''}).id ?? '')
     let snapshots: Array<{ at: string; bytes: number; file: string }> | undefined
     try {
-      const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+      const dir = join(this.snapshotsBase, id)
       snapshots = readdirSync(dir).slice(-50).map((f) => {
         // 文件名=ISO 全 [:.] 换 '-':2026-10-05T15-36-53-123.json → 还原时日期分隔符不能再全量替换(修复 2026:10:05 错乱)
         const stem = f.slice(0, f.length - 5)
@@ -1900,7 +1907,7 @@ export class OpencliService extends TypertRemoteService {
     const id = String((p ?? { id: '' }).id ?? '')
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     try {
-      const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+      const dir = join(this.snapshotsBase, id)
       let files: string[] = []
       try { files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-21) } catch { return { ok: true, days: [] } } // 目录不存在=零采集任务,空时间线而非 ENOENT
       if (files.length < 2) return { ok: true, days: [] }
@@ -1932,7 +1939,7 @@ export class OpencliService extends TypertRemoteService {
     const id = String((p ?? { id: '' }).id ?? '')
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     try {
-      const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+      const dir = join(this.snapshotsBase, id)
       const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-50)
       if (files.length === 0) return { ok: false, error: '该任务暂无快照' }
       const snapshots = files.map((f) => {
@@ -1977,7 +1984,7 @@ export class OpencliService extends TypertRemoteService {
     const id = String(request?.id ?? '')
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     const sch = this.schedules.find((s) => s.id === id)
-    const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+    const dir = join(this.snapshotsBase, id)
     let files: string[] = []
     try { files = readdirSync(dir).slice(-5) } catch { return { ok: false, error: '该任务暂无快照——先运行一次采集' } }
     if (files.length === 0) return { ok: false, error: '该任务暂无快照' }
@@ -3463,7 +3470,7 @@ export class OpencliService extends TypertRemoteService {
   /** 执行器桥(inbox-intent 与收件箱轮询共用;意图 → 既有 RPC 同源方法,一套逻辑两个入口)。 */
   private inboxExecutor(): IntentExecutor {
     return {
-      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}) }),
+      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}), ...((i as { jitter?: boolean }).jitter !== undefined ? { jitter: (i as { jitter?: boolean }).jitter } : {}) }),
       scheduleRemove: async (id) => this.scheduleRemove({ id }),
       scheduleRun: async (id) => this.scheduleRunNow({ id }),
       scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
@@ -3547,6 +3554,18 @@ export class OpencliService extends TypertRemoteService {
     let lastOk = false
     let lastSummary = ''
     let lastOut = ''
+    let lastRaw = ''
+    // 拟人限速(0.1.2 P0-1):精确 cron 时刻本身是指纹——首跑前随机延迟打散命中时间
+    // (重试链已有风控感知退避;任务级 jitter:false 可关;DSH_OPENCLI_JITTER_MAX_MS 调上限/置 0 关)
+    if (sch?.jitter !== false) {
+      const raw = Number(process.env.DSH_OPENCLI_JITTER_MAX_MS ?? 90_000)
+      const hi = Number.isFinite(raw) && raw > 0 ? Math.min(Math.round(raw), 600_000) : 0
+      if (hi > 0) {
+        const lo = Math.min(15_000, hi)
+        await new Promise((res) => setTimeout(res, Math.round(lo + Math.random() * (hi - lo))))
+      }
+    }
+    let bonusUsed = false
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         const started = Date.now()
@@ -3557,6 +3576,8 @@ export class OpencliService extends TypertRemoteService {
         lastOk = r.exitCode === 0
         lastSummary = lastOk ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
         lastOut = lastOk ? r.stdout : ''
+        lastRaw = `${r.stdout}
+${r.stderr}`
         if (lastOk) {
           // 无人值守防线:规则命中或 noul 强失效(P<0.35)→ 按失败重试;noul 可疑(0.35-0.7)只标注不重试
           const v = await this.verifyResult(sSite, sCmd, r.stdout)
@@ -3575,6 +3596,16 @@ export class OpencliService extends TypertRemoteService {
       }
       hist.unshift({ at: new Date().toISOString(), ok: lastOk, summary: attempts > 1 ? `#${attempt}/${attempts} ${lastSummary}` : lastSummary })
       if (lastOk) break
+      // 挑战自解等待(0.1.2 P0-1):验证码/人机验证常在数十秒内自解(上游 #2045 已采纳同方向)——
+      // 首次命中额外赠一次尝试(不占 attempts 预算);DSH_OPENCLI_CHALLENGE_WAIT_MS 调等待时长
+      if (attempt >= attempts && !bonusUsed && isChallengePage(lastRaw || lastSummary)) {
+        bonusUsed = true
+        const waitRaw = Number(process.env.DSH_OPENCLI_CHALLENGE_WAIT_MS ?? 45_000)
+        const waitMs = Number.isFinite(waitRaw) && waitRaw > 0 ? Math.min(waitRaw, 300_000) : 0
+        if (waitMs > 0) await new Promise((res) => setTimeout(res, waitMs))
+        attempt--
+        continue
+      }
       if (attempt < attempts) {
         // 风控感知退避:撞登录/风控墙时 15s 固定重试等于往枪口上撞(小红书封号是中文圈最真实恐惧,
         // PM 调研 2026-09-25),改等 2 分钟让软封禁冷却;其他失败维持 15s。
@@ -3582,16 +3613,26 @@ export class OpencliService extends TypertRemoteService {
         await new Promise((res) => setTimeout(res, riskWall ? 120_000 : 15_000))
       }
     }
+    // 采集回执(0.1.2 P0-2):auth 状态/条目数/空结果——对齐上游 missing≠zero 语义(#2699/#2708):
+    // 空数组≠没数据(可能是登录后空壳页),必须显式标注而不是假装成功
+    const itemCount = lastOk ? countStructuredItems(lastOut) : null
+    const receipt: Receipt = {
+      auth_state: lastOk ? (authRiskClass(lastOut) ?? 'ok') : (authRiskClass(lastRaw || lastSummary) ?? 'unknown'),
+      ...(lastOk && itemCount !== null ? { items: itemCount } : {}),
+      bytes: lastOut.length,
+      ...(lastOk && itemCount === 0 ? { empty: true } : {}),
+    }
+    if (hist[0] !== undefined) (hist[0] as { receipt?: Receipt }).receipt = receipt
     this.runHistory[id] = hist.slice(0, 5)
     // 采集结构化落盘(主线 B):成功执行的完整输出存快照,时间线/diff/趋势的数据源。
     // 文件即真相:~/.dsh/opencli-snapshots/<任务id>/<时间戳>.json,保留最近 50 份自动轮转。
     if (lastOk && lastOut.length > 0) {
       try {
-        const dir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+        const dir = join(this.snapshotsBase, id)
         await mkdir(dir, { recursive: true })
         const stamp = new Date().toISOString().replace(/[:.]/g, '-')
         await writeFile(join(dir, `${stamp}.json`), JSON.stringify({
-          at: new Date().toISOString(), site: siteCmd, bytes: lastOut.length, stdout: lastOut,
+          at: new Date().toISOString(), site: siteCmd, bytes: lastOut.length, stdout: lastOut, receipt,
         }), 'utf8')
         const olds = readdirSync(dir).sort() // 字典序=时间序
         if (olds.length > 50) for (const f of olds.slice(0, olds.length - 50)) { try { unlinkSync(join(dir, f)) } catch { /* ignore */ } }
@@ -3602,7 +3643,7 @@ export class OpencliService extends TypertRemoteService {
     let diffText = ''
     if (lastOk && lastOut.length > 0) {
       try {
-        const sdir = join(homedir(), '.dsh', 'opencli-snapshots', id)
+        const sdir = join(this.snapshotsBase, id)
         const olds = readdirSync(sdir).filter((f) => f.endsWith('.json')).sort()
         const prevFile = olds.length >= 2 ? olds[olds.length - 2] : undefined  // 刚写入的当前份是最后一份
         if (prevFile !== undefined) {
@@ -3651,7 +3692,7 @@ export class OpencliService extends TypertRemoteService {
         sch.pendingNotify = pend.slice(-20)
         await this.saveState()
       } else {
-        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours)
+        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours, receipt)
         if ((sch?.pendingNotify?.length ?? 0) > 0) { sch!.pendingNotify = []; await this.saveState() }
       }
     }
@@ -3670,7 +3711,7 @@ export class OpencliService extends TypertRemoteService {
    * 例行结果与关键词命中。sendViaChannels 并发群发且单通道失败不抛;这里再兜一层:
    * 装配阶段的意外(坏配置形状等)也绝不反噬调度主链,通知永远是旁路。
    */
-  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string): Promise<void> {
+  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string, receipt?: Receipt): Promise<void> {
     try {
       const config = this.state.notifyConfig
       if (config === undefined) return
@@ -3683,7 +3724,8 @@ export class OpencliService extends TypertRemoteService {
       const head = watchHits.length > 0 ? `🔔 Watch 命中\n` : diffText.length > 0 ? `📊 变化\n` : ''
 const diffSeg = diffText.length > 0 ? `\n📊 与上次相比:${diffText}` : ''
 const quietSeg = renderQuietDigest(pending, quietHours)
-await sendViaChannels(channels, title, head + body + diffSeg + quietSeg)
+const receiptSeg = receipt !== undefined ? `\n🧾 回执:auth=${receipt.auth_state}${receipt.items !== undefined ? ` · ${receipt.items} 条` : ''} · ${receipt.bytes}B${receipt.empty === true ? ' · ⚠ 空结果' : ''}` : ''
+await sendViaChannels(channels, title, head + body + diffSeg + quietSeg + receiptSeg)
     } catch { /* 通知旁路:全静默降级 */ }
   }
 

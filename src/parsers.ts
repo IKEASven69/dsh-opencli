@@ -196,3 +196,49 @@ export function approvalDecision(
   if (access === 'read') return 'allow'
   return 'ask-unknown'
 }
+
+
+// ---------------------------------------------------------------------------
+// 无人值守可靠性(0.1.2 P0):采集回执与挑战识别(与 verifyResult 规则层同语义口径)
+// ---------------------------------------------------------------------------
+
+/** 采集回执:每次定时采集的"真话三件套"——auth 状态/条目数/空结果(对齐上游 missing≠zero 语义)。 */
+export interface Receipt {
+  /** auth_wall=撞登录墙 risk_wall=撞风控/挑战 ok=正常 unknown=失败且无法归类 */
+  auth_state: 'auth_wall' | 'risk_wall' | 'ok' | 'unknown'
+  /** 结构化条目数(非结构化输出=null,不臆造) */
+  items?: number
+  /** 原始输出字节数 */
+  bytes: number
+  /** 成功但零条目——明确标注(missing≠zero:空数组≠没数据,可能是登录后空壳页) */
+  empty?: true
+}
+
+/** auth/风控分类(receipt 用;语义与 verifyResult 规则层一致,导出为单一口径)。 */
+export function authRiskClass(text: string): 'auth_wall' | 'risk_wall' | null {
+  if (/请先登录|未登录|登录已过期|扫码登录|AUTH_REQUIRED|NOT_LOGGED_IN/i.test(text)) return 'auth_wall'
+  if (/验证码|人机验证|captcha|challenge|安全验证|滑动验证|just a moment|verifying your browser|access denied|anubis/i.test(text)) return 'risk_wall'
+  return null
+}
+
+/** 结构化条目计数(回执用):数组/常见包装→条数;非结构化→null(不臆造)。 */
+export function countStructuredItems(text: string): number | null {
+  const s = text.trim()
+  if (s.length === 0) return 0
+  try {
+    const j = JSON.parse(s) as unknown
+    if (Array.isArray(j)) return j.length
+    if (j !== null && typeof j === 'object') {
+      for (const k of ['data', 'items', 'list', 'results']) {
+        const v = (j as Record<string, unknown>)[k]
+        if (Array.isArray(v)) return v.length
+      }
+    }
+    return null
+  } catch { return null }
+}
+
+/** 挑战页识别(挑战自解等待的触发器):验证码/人机验证类——常在数十秒内自解,等它而不是立即烧完重试。 */
+export function isChallengePage(text: string): boolean {
+  return /验证码|人机验证|请完成验证|请通过验证|安全验证|滑动验证|captcha|challenge|just a moment|verifying your browser|anubis/i.test(text)
+}

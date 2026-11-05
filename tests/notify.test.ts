@@ -467,7 +467,7 @@ describe('任务 E 集成:定时任务 → 通知通道(桩 shell + 桩 fetch,�
   const addSchedule = async (site: string, watch?: string): Promise<string> => {
     const r = await svc.scheduleAdd({ site, cron: NEVER_CRON, ...(watch !== undefined ? { watch } : {}) })
     expect(r.ok).toBe(true)
-    snapshotDirs.push(join(homedir(), '.dsh', 'opencli-snapshots', r.id!))
+    snapshotDirs.push(join(process.env.DSH_OPENCLI_SNAPSHOTS_DIR!, r.id!))
     return r.id!
   }
 

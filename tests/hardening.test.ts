@@ -154,7 +154,7 @@ describe('低4b:快照时间戳还原(日期分隔符不再错乱)', () => {
     const os = await import('node:os')
     const path = await import('node:path')
     const S = svc as unknown as { scheduleHistory: (p: { id: string }) => Promise<{ snapshots?: Array<{ at: string; file: string }> }> }
-    const dir = path.join(os.homedir(), '.dsh', 'opencli-snapshots', 'ts-fix-test')
+    const dir = path.join(process.env.DSH_OPENCLI_SNAPSHOTS_DIR!, 'ts-fix-test')
     fs.mkdirSync(dir, { recursive: true })
     const fname = '2026-10-05T15-36-53-123.json'
     fs.writeFileSync(path.join(dir, fname), JSON.stringify({ at: 'x', site: 's', bytes: 10, stdout: '' }), 'utf8')
