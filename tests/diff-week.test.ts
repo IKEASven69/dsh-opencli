@@ -1,7 +1,7 @@
 // 七天聚合与 CSV diff 列(0.4.7 B1):diffItemMarks 完整标记(不受 entries 20 条截断)、
 // aggregateDaySums 按日求和、exportSnapshots 的 _diff 列按身份键回配。
 import { describe, expect, it } from 'vitest'
-import { aggregateDaySums, diffItemMarks } from '../src/diffsnap.ts'
+import { aggregateDaySums, detectDrift, diffItemMarks } from '../src/diffsnap.ts'
 import { exportSnapshots } from '../src/exportcsv.ts'
 
 const list = (items: Array<{ t: string }>): string => JSON.stringify(items)
@@ -29,6 +29,28 @@ describe('diffItemMarks(逐条标记,完整无截断)', () => {
     expect(m.size).toBe(80)
     expect([...m.values()].filter((v) => v === 'new').length).toBe(40)
     expect([...m.values()].filter((v) => v === 'gone').length).toBe(40)
+  })
+})
+
+describe('detectDrift(适配器漂移:连续 3 次同向结构突变才报)', () => {
+  it('连续 3 次骤降 → 报;骤降=新值≤旧值一半(0→0 是空页不算);结构翻转 3 次同向也报', () => {
+    expect(detectDrift([{ items: 100, structured: true }, { items: 40, structured: true }, { items: 15, structured: true }, { items: 5, structured: true }])).toBe(true)
+    // 50→30 跌幅不到一半(>25),打断连续性
+    expect(detectDrift([{ items: 50, structured: true }, { items: 30, structured: true }, { items: 12, structured: true }, { items: 5, structured: true }])).toBe(false)
+    expect(detectDrift([{ items: 10, structured: true }, { items: 0, structured: true }, { items: 0, structured: true }, { items: 0, structured: true }])).toBe(false)
+    // 结构翻转(数组→对象/解析失败):structured true→false 连续 3 次迁移
+    expect(detectDrift([{ items: 80, structured: true }, { items: null, structured: false }, { items: null, structured: false }, { items: null, structured: false }])).toBe(true)
+  })
+  it('单次骤降不报(防单次抖动);样本不足 3 次迁移不报', () => {
+    expect(detectDrift([{ items: 100, structured: true }, { items: 30, structured: true }])).toBe(false)
+    expect(detectDrift([{ items: 100, structured: true }, { items: 30, structured: true }, { items: 10, structured: true }])).toBe(false) // 仅 2 次迁移
+    // 3 次迁移但中间恢复打断,尾部不构成连续 3 次同向
+    expect(detectDrift([{ items: 100, structured: true }, { items: 30, structured: true }, { items: 100, structured: true }, { items: 30, structured: true }])).toBe(false)
+  })
+  it('恢复不报:尾部任一次迁移恢复(条目回升/重新结构化)即不报', () => {
+    expect(detectDrift([{ items: 100, structured: true }, { items: 40, structured: true }, { items: 15, structured: true }, { items: 90, structured: true }])).toBe(false)
+    // 翻转 2 次后恢复结构化
+    expect(detectDrift([{ items: 50, structured: true }, { items: null, structured: false }, { items: null, structured: false }, { items: 48, structured: true }])).toBe(false)
   })
 })
 

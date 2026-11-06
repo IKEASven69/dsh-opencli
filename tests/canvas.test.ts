@@ -1,19 +1,27 @@
 /**
  * 画布数据层(任务 G)单测:buildCanvasData 纯函数直测。
  * 照 parsers.test.ts 先例直引 src/canvas.ts(canvas 尚未接线进 index.ts 的捆绑,
- * 纯函数层无需服务装配)——不构造 OpencliService,故无 STATE/TRACE/SHOTS 目录隔离需求。
+ * 纯函数层无需服务装配)——主体用例不构造 OpencliService,无 STATE/TRACE/SHOTS 目录隔离需求。
  * 覆盖:三源正确聚合(含快照让位去重)/ 相邻同键步骤合并(browser session、schedule 重试)/
  * 分页(默认 50 与 offset)/ 时间过滤(显式窗口、空值=最近 24h、非法值回落)/
  * 空数据返回空数组 / 脏行防御 / 入参零改动(纯函数契约)。
  * 任务 H+I+J 追加:src/client.ts 导出的画布渲染纯函数(状态色档/站点过滤/步骤合成显示/
  * 渲染门槛/缩放步进)——组件渲染部分 client 侧无测试基建,留给 GUI 人工验收
  * (shouldShowOnboarding 先例,见 tests/onboarding.test.ts)。
+ * 画布 P1 追加:evidence-get RPC 一条(伪造证据文件→结构化字段)——最小 harness 直实例化
+ * 服务(cdp.test.ts 先例,不走 plugin init),evidenceDir 独立临时目录隔离。
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
 import { buildCanvasData, CANVAS_PAGE_DEFAULT, type CanvasCard, type CanvasTraceLine, type SnapshotMeta } from '../src/canvas.ts'
-import type { EvidenceRecord } from '../src/evidence.ts'
+import { buildEvidence, saveEvidence, type EvidenceRecord } from '../src/evidence.ts'
 // 画布渲染纯函数在 client.ts(任务 H+I+J):直引先例=tests/onboarding.test.ts
 import { CANVAS_SUSPECT_P, canvasCardTone, cardsForSite, nextZoom, shouldRenderCanvasFlow, stepsOfCard } from '../src/client.ts'
+// evidence-get RPC 跑在构建产物上(与 evidence.test.ts / trace.test.ts 同口径):build:local 先行
+import { OpencliService } from '../lib/index.js'
 
 /** 固定时间轴(2026-10-20 UTC):所有确定性用例共用,排序/窗口断言不受真实时钟影响。 */
 const T = (h: number, m: number, s = 0): string => new Date(Date.UTC(2026, 9, 20, h, m, s)).toISOString()
@@ -380,5 +388,87 @@ describe('nextZoom(缩放步进)', () => {
     let w = 0.5
     for (let i = 0; i < 15; i++) w = nextZoom(w, 1)
     expect(w).toBe(2)
+  })
+})
+
+/* ── evidence-get RPC(画布 P1,canvas 证据卡数据源):伪造证据文件 → 结构化字段。
+     最小 harness 直实例化服务(cdp.test.ts 先例:不走 plugin init,无 shell/tools 桩)——
+     evidenceDir 是构造期字段初始器读 env,env 必须先于 new 设好(trace.test.ts 调
+     svc.traceShot({path}) 同款直调约定)。 */
+
+describe('evidence-get RPC(伪造证据文件→结构化字段)', () => {
+  let ctx: InstanceType<typeof Context>
+  let svc: Record<string, any>
+  let evdDir: string
+
+  beforeAll(async () => {
+    evdDir = path.join(os.tmpdir(), `dsh-opencli-test-evidence-canvas-${process.pid}-${Date.now()}`)
+    process.env.DSH_OPENCLI_EVIDENCE_DIR = evdDir
+    ctx = new Context()
+    svc = new (OpencliService as unknown as { new (c: InstanceType<typeof Context>): Record<string, any> })(ctx)
+    // 三包覆盖 verdict 三值:放行(双截图+免责行)/被拒(无截图)/失败(exit=2)
+    await saveEvidence(evdDir, buildEvidence({
+      at: '2026-10-20T10:03:10.000Z', command: 'site zhihu comment', argv: ['zhihu', 'comment', 'hi'],
+      approval: { mode: 'on', reason: null }, beforeShot: 'D:/s/before.png', afterShot: 'D:/s/after.png',
+      result: { exitCode: 0, head: 'posted-ok' }, site: 'zhihu',
+    }))
+    await saveEvidence(evdDir, buildEvidence({
+      at: '2026-10-20T10:03:15.000Z', command: 'site weibo post', argv: ['weibo', 'post'],
+      approval: { mode: 'on', reason: 'blocked' }, beforeShot: null, afterShot: null,
+      result: { exitCode: -1, head: 'the user rejected tool "site"' }, site: 'weibo',
+    }))
+    await saveEvidence(evdDir, buildEvidence({
+      at: '2026-10-20T10:03:20.000Z', command: 'site tieba reply', argv: ['tieba', 'reply'],
+      approval: { mode: 'off', reason: null }, beforeShot: null, afterShot: null,
+      result: { exitCode: 2, head: 'AUTH_REQUIRED' }, site: 'tieba',
+    }))
+    // 半截 JSON(合法文件名,时间戳放最旧):读全文路径必须跳过,不炸整表;
+    // 不占 limit 窗口——文件名切片在解析前(evidence-list 同位),脏文件排最新会吃掉 limit 名额
+    fs.writeFileSync(path.join(evdDir, '2026-10-20T10-03-05-000Z-ghost.json'), '{broken', 'utf8')
+  })
+
+  afterAll(async () => {
+    const c = ctx as unknown as { stop?: () => Promise<void>; dispose?: () => Promise<void> }
+    await (c.stop ?? c.dispose ?? (async () => {}))()
+    fs.rmSync(evdDir, { recursive: true, force: true })
+  })
+
+  it('读全文出结构化字段:新→旧、verdict 三值映射、双截图/免责行透传、可选字段省键、limit 钳制、脏文件跳过、目录缺失回空表', async () => {
+    const r = await svc.evidenceGet()
+    expect(r.ok).toBe(true)
+    // ghost(半截 JSON)被跳过:恰三包;新→旧 = tieba(fail)→ weibo(blocked)→ zhihu(ok)
+    expect(r.items.map((x: { adapter: string }) => x.adapter)).toEqual(['tieba', 'weibo', 'zhihu'])
+    expect(r.items.map((x: { verdict: string }) => x.verdict)).toEqual(['fail', 'blocked', 'ok'])
+    const [tieba, weibo, zhihu] = r.items
+    // 公共字段:file 绝对路径存在、at 从文件名还原、command 逐字透传
+    for (const x of [tieba, weibo, zhihu]) {
+      expect(fs.existsSync(x.file)).toBe(true)
+      expect(Number.isNaN(Date.parse(x.at))).toBe(false)
+      expect(typeof x.command).toBe('string')
+    }
+    expect(zhihu.command).toBe('site zhihu comment')
+    // 放行包:双截图透传 + 免责行(buildEvidence 的近似取证声明)
+    expect(zhihu.beforeShot).toBe('D:/s/before.png')
+    expect(zhihu.afterShot).toBe('D:/s/after.png')
+    expect(zhihu.note).toContain('近似取证')
+    // 被拒包:无截图可言,可选字段省键(note 也省——buildEvidence 无截图时 shotNote=null)
+    expect(weibo.approval).toBeUndefined() // 投影不带 approval 原文
+    expect('beforeShot' in weibo).toBe(false)
+    expect('afterShot' in weibo).toBe(false)
+    expect('note' in weibo).toBe(false)
+    // 失败包:无截图,verdict=fail
+    expect('beforeShot' in tieba).toBe(false)
+    // limit:只取最新 N;limit=0/NaN 回落默认(不回空表)
+    const two = await svc.evidenceGet({ limit: 2 })
+    expect(two.items.map((x: { adapter: string }) => x.adapter)).toEqual(['tieba', 'weibo'])
+    expect((await svc.evidenceGet({ limit: 0 })).items).toHaveLength(3)
+    // 目录缺失(还没跑过写命令):空表而非错误(evidence-list 同款)
+    const real = svc.evidenceDir as string
+    svc.evidenceDir = path.join(os.tmpdir(), `dsh-opencli-test-evidence-canvas-none-${process.pid}-${Date.now()}`)
+    try {
+      const none = await svc.evidenceGet()
+      expect(none.ok).toBe(true)
+      expect(none.items).toEqual([])
+    } finally { svc.evidenceDir = real }
   })
 })

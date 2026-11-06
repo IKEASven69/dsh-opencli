@@ -190,3 +190,34 @@ export function renderDiffText(d: SnapshotDiff): string {
   if (d.moved > 0) parts.push(`位移 ${d.moved} 条${moves.length > 0 ? ':' + moves.slice(0, 3).map((e) => `#${e.from}→#${e.to} ${e.title}`).join('、') : ''}`)
   return parts.join('\n')
 }
+
+/** 一次采集的结构签名(适配器漂移预警用):与 countStructuredItems 的计数口径一致。 */
+export interface DriftSample {
+  /** 结构化条目数;null=非结构化/解析失败 */
+  items: number | null
+  /** 是否结构化输出(数组/常见包装) */
+  structured: boolean
+}
+
+/** 单次骤降:新值≤旧值一半且旧值>0(0→0 是空页不是骤降;回升不是)。 */
+function isShrink(a: DriftSample, b: DriftSample): boolean {
+  return a.items !== null && b.items !== null && a.items > 0 && b.items <= a.items / 2
+}
+
+/**
+ * 适配器漂移判定:快照 diff 反向用于故障发现——同一任务连续 3 次**同向**结果结构突变才报,
+ * 防单次抖动。history 为按时间旧→新的结构签名环形缓冲(调用方存最近 5 次),样本 <4 不报。
+ * 两种突变口径不同:骤降按迁移看(尾部 3 次迁移逐次腰斩——每次相对上次再腰斩才算连续,
+ * 回升即断);翻转按状态看(尾部 3 个样本全非结构化=坏结构持续,每次运行都在确认漂移;
+ * 且缓冲里它们之前须有结构化基线——从未输出过 JSON 的任务不是漂移,是本来就不结构化)。
+ * 尾部一旦恢复(条目回升/重新结构化)立即不报。
+ */
+export function detectDrift(history: DriftSample[]): boolean {
+  if (history.length < 4) return false
+  const n = history.length
+  if (isShrink(history[n - 4]!, history[n - 3]!) && isShrink(history[n - 3]!, history[n - 2]!) && isShrink(history[n - 2]!, history[n - 1]!)) return true
+  if (!history[n - 1]!.structured && !history[n - 2]!.structured && !history[n - 3]!.structured) {
+    return history.slice(0, n - 3).some((s) => s.structured)
+  }
+  return false
+}

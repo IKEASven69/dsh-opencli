@@ -42,7 +42,7 @@ function usage() {
   console.log(`dsh-opencli-ctl — dsh-opencli 插件的本机命令面(写意图到 ${INBOX},插件执行并回写结果)
 
 用法:
-  dsh-opencli-ctl schedule add --site "site juejin hot" --cron "0 9 * * *" [--watch "AI,大模型"] [--notify true] [--retry 3] [--notify-level quiet] [--quiet-hours 23:00-07:00]
+  dsh-opencli-ctl schedule add --site "site juejin hot" --cron "0 9 * * *" [--watch "AI,大模型"] [--notify true] [--retry 3] [--notify-level quiet] [--quiet-hours 23:00-07:00] [--preflight]
   dsh-opencli-ctl schedule list
   dsh-opencli-ctl schedule run --id <id>
   dsh-opencli-ctl schedule remove --id <id>
@@ -69,6 +69,7 @@ function buildIntent() {
       const lvl = flag('--notify-level'); if (lvl !== undefined) intent.notifyLevel = lvl
       const qh = flag('--quiet-hours'); if (qh !== undefined) intent.quietHours = qh
       if (has('--no-jitter')) intent.jitter = false // has():布尔旗标无参数值,flag() 取下一 token 在末位时失效(审查 P1-1)
+      if (has('--preflight')) intent.preflight = true // 登录态预检:每 tick 采集前 whoami 快检,未登录跳过本 tick
       return intent
     }
     if (sub === 'list') return { kind: 'schedule-list' }

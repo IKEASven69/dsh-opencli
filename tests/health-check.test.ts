@@ -187,4 +187,34 @@ describe('任务健康预检+断线恢复+版本翻转(P0-3)', () => {
     delete S.runHistory[id]
     S.schedules.splice(S.schedules.findIndex((s) => s.id === id), 1)
   })
+
+  it('认证预检:whoami 快检未登录 → ⏸ 跳过本 tick(AUTH 类失败,任务保留)', async () => {
+    const S = svc()
+    stubDs([{ running: true, version: '2.0.2', extension: 'connected' }])
+    // loginCheck 方法桩(whoami 池入口,与上方 daemonStatus 桩同 seam):站 hc-p 在池内但未登录
+    const Sv = S as unknown as { loginCheck: () => Promise<unknown> }
+    const origLc = Sv.loginCheck
+    Sv.loginCheck = async () => ({ ok: true, checkedAt: new Date().toISOString(), results: [{ site: 'hc-p', ok: false, timedOut: false, detail: 'AUTH_REQUIRED' }] })
+    const id = `hc-p-${Date.now()}`
+    S.schedules.push({ id, site: 'site hc-p hot', cron: '0 9 * * *', createdAt: new Date().toISOString(), enabled: true, retry: 1, preflight: true })
+    try {
+      const before = S.ingestEventList.length
+      await S.runSiteCommand('site hc-p hot', id)
+      // 跳过本 tick:schedule-skipped 事件 + ⏸ history 行(按 AUTH 类失败记,receipt=auth_wall)
+      expect(S.ingestEventList.length).toBe(before + 1)
+      expect(S.ingestEventList[0]!.kind).toBe('schedule-skipped')
+      expect(S.ingestEventList[0]!.text).toContain('未登录')
+      const rows = S.runHistory[id] ?? []
+      expect(rows.length).toBe(1) // 未进采集链(ShellStub 默认输出必成功,多出即漏跳)
+      expect(rows[0]!.ok).toBe(false)
+      expect(rows[0]!.summary).toContain('⏸')
+      expect(rows[0]!.receipt?.auth_state).toBe('auth_wall')
+      // 任务保留(跳过≠删除)
+      expect(S.schedules.some((s) => s.id === id)).toBe(true)
+    } finally {
+      Sv.loginCheck = origLc // 还原:proxy 是同一实例,不还原会污染后续用例
+    }
+    delete S.runHistory[id]
+    S.schedules.splice(S.schedules.findIndex((s) => s.id === id), 1)
+  })
 })

@@ -172,3 +172,31 @@ export interface LoginCheckResult {
   results: LoginCheckItem[]
   error?: string
 }
+
+/** evidence-get RPC 单项(写操作证据包全文的结构化投影,画布证据卡数据源)。
+ *  evidence-list 只回文件名元数据,面板证据卡要 command/verdict/双截图/免责行——本形状
+ *  是宿主读全文后的投影;可选字段省键(与画布数据层"省字段"契约同款)。 */
+export interface EvidenceGetItem {
+  /** 证据 JSON 绝对路径 */
+  file: string
+  /** ISO 时间戳(文件名时间戳段还原) */
+  at: string
+  /** 站点适配器名(落盘 site 字段) */
+  adapter: string
+  /** 完整命令行(如 site zhihu comment) */
+  command: string
+  /** 三值结论:blocked=审批拒绝(命令从未执行)> fail=放行但退出码非 0 > ok=放行且成功 */
+  verdict: 'ok' | 'fail' | 'blocked'
+  /** 执行前截图绝对路径(无则省键) */
+  beforeShot?: string
+  /** 执行后截图绝对路径(无则省键) */
+  afterShot?: string
+  /** 截图局限免责声明(落盘 shotNote;近似取证说明,无则省键) */
+  note?: string
+}
+
+/** evidence-get RPC 结果(新→旧;目录不存在=空表,不是错误)。 */
+export interface EvidenceGetResult {
+  ok: boolean
+  items: EvidenceGetItem[]
+}

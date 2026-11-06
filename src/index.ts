@@ -23,8 +23,8 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type {
   AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
-  AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, DaemonStartResult, IngestEvent,
-  LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult, TraceLine, TraceListResult,
+  AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, DaemonStartResult, EvidenceGetResult,
+  IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult, TraceLine, TraceListResult,
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, extractJsonObject, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
@@ -32,13 +32,13 @@ import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, know
 import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, renderTransportBenchmark, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
-import { EVIDENCE_FILE_RE, buildEvidence, parseEvidenceFileName, saveEvidence } from './evidence.ts'
+import { EVIDENCE_FILE_RE, EVIDENCE_KEEP, buildEvidence, parseEvidenceFileName, saveEvidence, type EvidenceRecord } from './evidence.ts'
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, inQuietHours, parseQuietHours, renderQuietDigest, type NotifyConfig, type QuietPendingItem } from './notify.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
 import { composeClick, composeCloseWindow, composeOpen, composeScreenshot, composeScroll, composeState, composeTabs, setCliDistDir, type CliEnvelope } from './direct-compose.ts'
 import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
-import { aggregateDaySums, diffSnapshots, renderDiffText } from './diffsnap.ts'
+import { aggregateDaySums, detectDrift, diffSnapshots, renderDiffText, type DriftSample } from './diffsnap.ts'
 import { authRiskClass, countStructuredItems, isChallengePage, looksTruncated, type Receipt } from './parsers.ts'
 
 /** 本插件版本(package.json 同源,自检视图与更新检查用;bundle 内联,发布脚本管同步)。 */
@@ -214,6 +214,8 @@ export class OpencliService extends TypertRemoteService {
   private state: PluginState = { approval: 'on', disabled: [], schedules: [], runHistory: {}, audit: [] }
   /** 面板通知事件(调度失败等;内存态,最近 30 条) */
   private ingestEventList: IngestEvent[] = []
+  /** 每任务结构签名环形缓冲(适配器漂移预警;内存态,任务 id → 最近 5 次 {items,structured}) */
+  private driftHistory = new Map<string, DriftSample[]>()
   /** 当前构建 sha256(懒计算) */
   private sha256Cache: string | null = null
   // 状态路径可用 DSH_OPENCLI_STATE 覆盖(单测隔离用):否则单测会把定时任务/审计写进真实用户状态文件
@@ -257,6 +259,8 @@ export class OpencliService extends TypertRemoteService {
     quietHours?: string; pendingNotify?: QuietPendingItem[]
     /** 拟人限速(0.1.2 P0-1):默认 true——精确 cron 时刻是指纹,首跑前随机延迟打散 */
     jitter?: boolean
+    /** 登录态预检(0.1.2 认证预检):默认 false——开启时每 tick 采集前跑 whoami 快检,未登录跳过本 tick */
+    preflight?: boolean
   }> = []
   private runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string; receipt?: Receipt }>> = {}
   /** 快照根目录(DSH_OPENCLI_SNAPSHOTS_DIR 可覆盖,测试隔离用;与 traceDir 同款约定)。 */
@@ -1592,7 +1596,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (request === undefined) request = {} as never
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
@@ -1636,6 +1640,7 @@ export class OpencliService extends TypertRemoteService {
       if (quietClear && dup.quietHours !== undefined) { delete dup.quietHours; await this.saveState() }
       else if (quietHours !== undefined && dup.quietHours !== quietHours) { dup.quietHours = quietHours; await this.saveState() }
       if (typeof request.jitter === 'boolean' && dup.jitter !== request.jitter) { dup.jitter = request.jitter; await this.saveState() }
+      if (typeof request.preflight === 'boolean' && dup.preflight !== request.preflight) { dup.preflight = request.preflight; await this.saveState() }
       return { ok: true, id: dup.id }
     }
     const id = String(Date.now())
@@ -1648,6 +1653,7 @@ export class OpencliService extends TypertRemoteService {
     if (watch !== undefined) entry.watch = watch
     if (quietHours !== undefined) entry.quietHours = quietHours
     if (typeof request.jitter === 'boolean') entry.jitter = request.jitter
+    if (typeof request.preflight === 'boolean') entry.preflight = request.preflight
     this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
@@ -2811,6 +2817,45 @@ export class OpencliService extends TypertRemoteService {
     }
   }
 
+  /**
+   * 证据包读侧全字段(画布证据卡,evidence-list 的读全文版):文件名只给 时间/站点,
+   * 面板证据卡要 command/结论/双截图/免责行——读 JSON 全文出结构化投影(types.ts 的
+   * EvidenceGetItem)。verdict 三值映射:approval.reason='blocked' 最优先(命令从未执行,
+   * 不许被 exit 码改写成失败),其次 exitCode===0 → ok,其余 → fail。
+   * 半截/已删的脏文件跳过不炸整表;目录不存在回空表(evidence-list 同款)。
+   */
+  @Remote('evidence-get')
+  async evidenceGet(request?: { limit?: number }): Promise<EvidenceGetResult> {
+    try {
+      // 网关对空 args 会传 undefined(trace-list 同款):可选链 + 钳制,上限 EVIDENCE_KEEP(再多目录里也没有)
+      const limit = Math.max(1, Math.min(EVIDENCE_KEEP, Math.floor(Number(request?.limit ?? 20)) || 20))
+      const names = readdirSync(this.evidenceDir).filter((f) => EVIDENCE_FILE_RE.test(f)).sort().reverse().slice(0, limit)
+      const items: EvidenceGetResult['items'] = []
+      for (const f of names) {
+        const meta = parseEvidenceFileName(f)
+        if (meta === null) continue
+        let rec: EvidenceRecord
+        try { rec = JSON.parse(readFileSync(join(this.evidenceDir, f), 'utf8')) as EvidenceRecord } catch { continue /* 竞态已删/半截 JSON:宁缺毋炸 */ }
+        const verdict = rec.approval?.reason === 'blocked' ? 'blocked' as const : (Number(rec.result?.exitCode) === 0 ? 'ok' as const : 'fail' as const)
+        items.push({
+          file: join(this.evidenceDir, f),
+          at: meta.at,
+          adapter: meta.site,
+          command: String(rec.command ?? ''),
+          verdict,
+          // 可选字段省键(与画布数据层"省字段"契约同款):无截图/null 不给空串占位
+          ...(typeof rec.beforeShot === 'string' && rec.beforeShot.length > 0 ? { beforeShot: rec.beforeShot } : {}),
+          ...(typeof rec.afterShot === 'string' && rec.afterShot.length > 0 ? { afterShot: rec.afterShot } : {}),
+          ...(typeof rec.shotNote === 'string' && rec.shotNote.length > 0 ? { note: rec.shotNote } : {}),
+        })
+      }
+      return { ok: true, items }
+    } catch {
+      // 目录不存在(还没跑过写命令):空表(evidence-list 同款),不是错误
+      return { ok: true, items: [] }
+    }
+  }
+
   // ── 基础设施 ──────────────────────────────────────────────
 
   private async acquireGovernor(): Promise<void> {
@@ -3540,7 +3585,7 @@ export class OpencliService extends TypertRemoteService {
   /** 执行器桥(inbox-intent 与收件箱轮询共用;意图 → 既有 RPC 同源方法,一套逻辑两个入口)。 */
   private inboxExecutor(): IntentExecutor {
     return {
-      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}), ...((i as { jitter?: boolean }).jitter !== undefined ? { jitter: (i as { jitter?: boolean }).jitter } : {}) }),
+      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}), ...((i as { jitter?: boolean }).jitter !== undefined ? { jitter: (i as { jitter?: boolean }).jitter } : {}), ...(i.preflight !== undefined ? { preflight: i.preflight } : {}) }),
       scheduleRemove: async (id) => this.scheduleRemove({ id }),
       scheduleRun: async (id) => this.scheduleRunNow({ id }),
       scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
@@ -3691,6 +3736,31 @@ export class OpencliService extends TypertRemoteService {
     }
     const cmdLine = norm.length > 0 ? norm : siteCmd
     const [sSite = '', sCmd = ''] = cmdLine.split(/\s+/)
+    // 认证预检(USER-NEEDS #1882/#1883/#2568/#2758:cookie 过期=false AUTH 失败,烧满重试链才暴露):
+    // 任务级开关(默认关,scheduleAdd preflight / 收件箱 / ctl --preflight),canary 例外已在上方 return。
+    // 开启时每次采集前跑 whoami 快检(loginCheck 池,10min TTL 缓存——多任务同分钟共享一次探测);
+    // 未登录 → 按 AUTH 类失败记 history 行并跳过本 tick(与扩展断连跳过同款 ⏸ 语义,任务保留)。
+    // fail-open 纪律与 taskHealthCheck 同源:loginCheck 异常/站点不在 whoami 池 → 放行,
+    // 预检自身故障不能变成任务死因。放在拟人限速之前:跳过就别再付 15-90s jitter 等待。
+    if (sch?.preflight === true) {
+      try {
+        const lc = await this.loginCheck()
+        if (lc.ok) {
+          const item = lc.results.find((r) => r.site.toLowerCase() === sSite.toLowerCase())
+          if (item !== undefined && item.ok !== true) {
+            const detail = item.detail !== null && item.detail.length > 0 ? `:${item.detail}` : ''
+            const note = `${sSite} 未登录(AUTH 预检未过${detail})`
+            const hist0 = this.runHistory[id] ?? []
+            hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${note}(先 site ${sSite} login;任务保留,下 tick 再检)`, receipt: { auth_state: 'auth_wall', bytes: 0 } })
+            this.runHistory[id] = hist0.slice(0, 5)
+            await this.saveState()
+            this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'schedule-skipped', text: `⏸ ${siteCmd} 本 tick 跳过:登录态预检未过——${note}` })
+            this.ingestEventList = this.ingestEventList.slice(0, 30)
+            return
+          }
+        }
+      } catch { /* 体检旁路:预检异常 → 放行 */ }
+    }
     let lastOk = false
     let lastSummary = ''
     let lastOut = ''
@@ -3798,6 +3868,21 @@ ${r.stderr}`
           }
         }
       } catch { /* diff 旁路:失败不影响主流程 */ }
+    }
+    // 适配器漂移预警:快照 diff 反向用于故障发现——同一任务连续 3 次结果结构突变
+    // (条目骤降 ≥50% 或 结构翻转:数组→对象/解析失败)→ ingest 事件 adapter-drift。
+    // 判定纯函数 detectDrift(diffsnap):连续 3 次同向突变才报,防单次抖动;缓冲存最近 5 次
+    // (items 复用上方回执的 countStructuredItems 口径,structured=null 即解析失败)。
+    // 只在成功采集时记签名:命令整体失败走 schedule-failed,不混入结构序列。
+    if (lastOk && lastOut.length > 0) {
+      const sig = this.driftHistory.get(id) ?? []
+      sig.push({ items: itemCount, structured: itemCount !== null })
+      if (sig.length > 5) sig.splice(0, sig.length - 5)
+      this.driftHistory.set(id, sig)
+      if (detectDrift(sig)) {
+        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'adapter-drift', text: `⚠ ${siteCmd} 疑似适配器坏/灰度漂移:连续 3 次结果结构突变(条目骤降/结构翻转),建议 browser_* 兜底` })
+        this.ingestEventList = this.ingestEventList.slice(0, 30)
+      }
     }
     // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)。
     // 命中词带出到下方 dispatchScheduleNotify:面板时间线与外部通知通道同一份命中事实

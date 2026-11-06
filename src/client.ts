@@ -11,7 +11,7 @@ import { createElement, useEffect, useRef, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
-  AuditListResult, DaemonStartResult, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
+  AuditListResult, DaemonStartResult, EvidenceGetItem, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
   TraceLine, TraceListResult,
 } from './types.ts'
 import { siteIconOf } from './site-icons.ts'
@@ -71,12 +71,14 @@ const STR = {
     canvasZoomIn: '放大', canvasZoomOut: '缩小', canvasReplay: '步骤回放', canvasMore: '加载更多',
     canvasCardsN: (n: number) => `${n} 张卡`, canvasNoShot: '无截图', canvasSuspect: '低分通过',
     canvasSuspectTip: '判定分低(0.7≤P<0.8),建议复核', cvTypeSite: '写操作', cvTypeBrowser: '浏览器', cvTypeSchedule: '定时采集',
+    // 证据卡(canvas P1):写操作证据包卡——verdict 徽标 + before/after 双图 + 免责行
+    cvTypeEvidence: '证据', evdOk: '执行成功', evdFail: '执行失败', evdBlocked: '审批拒绝', evdBefore: '前', evdAfter: '后',
     healthDegraded: '已知受损', healthNotice: '注意', healthIssueT: (d: string) => `上游 issue 实测(${d});点击行展开命令,受损命令优先用 opencli_* 兜底`,
     disable: '禁用', enable: '启用', commandsN: (n: number) => `${n} 命令`,
     autoT: '定时任务', autoNew: '新建', autoSub: '持久化到 dsh.schedule,重启不丢 · 失败按策略重试并通知',
     depDaemon: 'daemon 未运行——定时任务暂停执行,恢复后自动补跑', fix: '一键修复',
     last: '上次', next: '下次', retryN: (n: number) => `重试 ×${n}`, notifyOn: '通知 开', notifyOff: '通知 关',
-    runNow: '立即跑', running2: '执行中…', del: '删', create: '创建',
+    runNow: '立即跑', running2: '执行中…', del: '删', create: '创建', batchSelect: '全选/取消全选', batchEnable: '启用所选', batchDisable: '停用所选', batchFilter: '来源',
     recT: '录制回放', recSub: '录制 site / opencli 步骤,一键回放', recStart: '开始录制', recStop: '停止录制',
     recName: '录制名,如:每日知识采集', recStep: '一条步骤,如:site zhihu hot', recAdd: '+ 加步骤', replay: '回放',
     traceT: '运行轨迹', traceSub: '每条 browser 命令逐步落盘(~/.dsh/opencli-traces),复盘"上次为什么失败"', traceEmpty: '暂无轨迹——跑一条 browser 命令后这里会长出来',
@@ -157,12 +159,14 @@ const STR = {
     canvasZoomIn: 'Zoom in', canvasZoomOut: 'Zoom out', canvasReplay: 'Step replay', canvasMore: 'Load more',
     canvasCardsN: (n: number) => `${n} cards`, canvasNoShot: 'no screenshot', canvasSuspect: 'weak pass',
     canvasSuspectTip: 'low verification score (0.7≤P<0.8), worth a review', cvTypeSite: 'write', cvTypeBrowser: 'browser', cvTypeSchedule: 'schedule',
+    // Evidence cards (canvas P1): write-evidence pack cards — verdict badge + before/after shots + caveat row
+    cvTypeEvidence: 'evidence', evdOk: 'ran ok', evdFail: 'failed', evdBlocked: 'blocked', evdBefore: 'before', evdAfter: 'after',
     healthDegraded: 'degraded', healthNotice: 'notice', healthIssueT: (d: string) => `confirmed upstream issues (${d}); expand the row, prefer opencli_* fallback for broken commands`,
     disable: 'Disable', enable: 'Enable', commandsN: (n: number) => `${n} cmds`,
     autoT: 'Schedules', autoNew: 'New', autoSub: 'Persisted to dsh.schedule, survives restart · retries then notifies on failure',
     depDaemon: 'daemon not running — schedules paused, will catch up when it returns', fix: 'Fix',
     last: 'last', next: 'next', retryN: (n: number) => `retry ×${n}`, notifyOn: 'notify on', notifyOff: 'notify off',
-    runNow: 'Run now', running2: 'running…', del: 'Del', create: 'Create',
+    runNow: 'Run now', running2: 'running…', del: 'Del', create: 'Create', batchSelect: 'Select all / none', batchEnable: 'Enable selected', batchDisable: 'Disable selected', batchFilter: 'source',
     recT: 'Record & replay', recSub: 'Record site / opencli steps, replay in one click', recStart: 'Record', recStop: 'Stop',
     recName: 'name, e.g. daily knowledge', recStep: 'one step, e.g. site zhihu hot', recAdd: '+ add step', replay: 'Replay',
     traceT: 'Run trace', traceSub: 'every browser command logged to ~/.dsh/opencli-traces — replay why the last run failed', traceEmpty: 'No traces yet — they appear after the first browser command',
@@ -608,6 +612,10 @@ function Panel(): ReturnType<typeof createElement> {
   const [schedWatch, setSchedWatch] = useState('')
   const [schedQuiet, setSchedQuiet] = useState('')
   const [schedBusy, setSchedBusy] = useState(false)
+  // 批量管理:选中任务 id 集 + 来源过滤 + 批量操作进行中
+  const [schedSel, setSchedSel] = useState<Set<string>>(new Set())
+  const [schedSrc, setSchedSrc] = useState<'all' | 'agent' | 'chat' | 'panel' | 'ctl'>('all')
+  const [schedBatchBusy, setSchedBatchBusy] = useState(false)
   const [recordings, setRecordings] = useState<Recording[]>(() => {
     try { return JSON.parse(localStorage.getItem('dsh-opencli-recordings') ?? '[]') as Recording[] } catch { return [] }
   })
@@ -808,7 +816,7 @@ function Panel(): ReturnType<typeof createElement> {
     setSchedBusy(true)
     const watch = schedWatch.trim()
     const qh = schedQuiet.trim()
-    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}) } } as unknown as Record<string, unknown>)
+    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, source: 'panel', ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}) } } as unknown as Record<string, unknown>)
     setSchedBusy(false)
     if (r.ok) { setSchedSite(''); setSchedWatch(''); setSchedQuiet(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
   }
@@ -853,6 +861,28 @@ function Panel(): ReturnType<typeof createElement> {
   const removeSchedule = async (id: string): Promise<void> => {
     const r = await rpc('schedule-remove', { request: { id } } as unknown as Record<string, unknown>)
     if (r.ok) void loadSchedules()
+  }
+  // 批量启停:循环既有 schedule-toggle,不新增 RPC;全部完成后一次刷新(单条 toggle 每次都刷,n 条会刷 n 遍)
+  const batchToggle = async (enabled: boolean): Promise<void> => {
+    if (schedBatchBusy || schedSel.size === 0) return
+    setSchedBatchBusy(true)
+    let fail = 0
+    for (const id of schedSel) {
+      // r.ok 是网关信封(恒 true);业务失败要看 value.ok(如 toggle 不存在的 id 返回 {ok:false,error})
+      const r = await rpc<{ ok?: boolean; value?: { ok?: boolean } }>('schedule-toggle', { request: { id, enabled } } as unknown as Record<string, unknown>)
+      if (!r.ok || r.value?.ok === false) fail += 1
+    }
+    setSchedBatchBusy(false)
+    setSchedSel(new Set())
+    void loadSchedules()
+    if (fail > 0) showToast(t2('errReq'), false)
+  }
+  const toggleSel = (id: string): void => {
+    setSchedSel((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) { next.delete(id) } else { next.add(id) }
+      return next
+    })
   }
   const exportKnowledge = async (): Promise<void> => {
     showToast(t2('knowExpDo'), true)
@@ -1209,6 +1239,17 @@ function Panel(): ReturnType<typeof createElement> {
 
   /* ── 自动化 ── */
   const renderAutomation = (): ReturnType<typeof createElement> => {
+    // 批量管理:来源过滤只作用于显示(列表与全选范围),不动选中集本身
+    const filteredSchedules = schedSrc === 'all' ? schedules : schedules.filter((s) => s.source === schedSrc)
+    const allSel = filteredSchedules.length > 0 && filteredSchedules.every((s) => schedSel.has(s.id))
+    // 全选/反选:未全中→全选可见项;已全中→整组反选(清空)
+    const toggleSelAll = (): void => {
+      setSchedSel((prev) => {
+        const next = new Set(prev)
+        for (const s of filteredSchedules) { if (allSel) { next.delete(s.id) } else { next.add(s.id) } }
+        return next
+      })
+    }
     return createElement('div', null,
       createElement('div', { className: 'o4-card' },
         createElement('div', { className: 'o4-h3' },
@@ -1232,9 +1273,19 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('button', { className: 'o4-btn sm', disabled: nfBusy || nfUrl.trim().length === 0, onClick: () => { void saveNotify() } }, t2('nfSave')),
           createElement('button', { className: 'o4-btn ghost sm', disabled: nfBusy, onClick: () => { void testNotify() } }, t2('nfTest')),
         ),
+        // 批量操作条:全选/反选 + 来源过滤常驻;批量启用/停用仅在有选中(>0)时出现
+        createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', alignItems: 'center', flexWrap: 'wrap' } },
+          createElement('input', { type: 'checkbox', title: t2('batchSelect'), checked: allSel, onChange: toggleSelAll, style: { accentColor: '#4A9EFF', cursor: 'pointer', margin: '0', flex: 'none' } }),
+          createElement('select', { className: 'o4-in', style: { maxWidth: '132px', flex: 'none', padding: '4px 8px', fontSize: '11.5px' }, title: t2('batchFilter'), value: schedSrc, onChange: (e: { target: { value: string } }) => { setSchedSrc(e.target.value as typeof schedSrc); setSchedSel(new Set()) } },
+            createElement('option', { value: 'all' }, `${t2('batchFilter')}:${t2('nfLevelAll')}`),
+            ...(['agent', 'chat', 'panel', 'ctl'] as const).map((src) => createElement('option', { key: src, value: src }, `${t2('batchFilter')}:${src}`))),
+          schedSel.size > 0 ? createElement('span', { className: 'o4-bdg b' }, String(schedSel.size)) : null,
+          schedSel.size > 0 ? createElement('button', { className: 'o4-btn ghost sm', disabled: schedBatchBusy, onClick: () => { void batchToggle(true) } }, t2('batchEnable')) : null,
+          schedSel.size > 0 ? createElement('button', { className: 'o4-btn ghost sm', disabled: schedBatchBusy, onClick: () => { void batchToggle(false) } }, t2('batchDisable')) : null,
+        ),
         createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-          schedules.length === 0 ? createElement('div', { className: 'o4-load' }, '—') : null,
-          schedules.map((s) => {
+          filteredSchedules.length === 0 ? createElement('div', { className: 'o4-load' }, '—') : null,
+          filteredSchedules.map((s) => {
             const hist = s.history ?? []
             const dots = [0, 1, 2, 3, 4].map((i) => {
               const h = hist[i]
@@ -1244,6 +1295,7 @@ function Panel(): ReturnType<typeof createElement> {
             })
             const okN = hist.filter((h) => h.ok).length
             return createElement('div', { key: s.id, className: 'o4-row' },
+              createElement('input', { type: 'checkbox', checked: schedSel.has(s.id), onChange: () => toggleSel(s.id), style: { accentColor: '#4A9EFF', cursor: 'pointer', margin: '0', flex: 'none' } }),
               ava(s.site.replace('site ', '').split(/\s+/)[0]),
               createElement('div', { className: 'grow', style: { minWidth: '140px' } },
                 createElement('div', { className: 'o4-tt' }, s.site),
@@ -1857,8 +1909,9 @@ const canvasStamp = (iso: string): string => {
  * 画布页装配:现有 RPC 拼 buildCanvasData(任务 G 纯数据层)的三源之二——
  * trace-list(轨迹,含步骤截图路径)+ schedule-list × schedule-history(列目录 zip 出
  * SnapshotMeta:目录项给 at/bytes/file,站点命令原文来自任务行,canvas.ts 头注约定的拼法)。
- * 证据源缺席:evidence-list 只回文件元数据(无 command/exit/截图),臆造 ok 会给写操作卡
- * 假染色——宁缺毋假;宿主侧 canvas RPC 接线后此处一处换成单 RPC 即全源。
+ * 证据源走 evidence-get 单独成卡(fetchEvidenceCards):evidence-list 只有文件元数据,
+ * 而 CanvasCard 装不下双截图+免责行(数据层一卡一代表截图),硬塞会丢审计信息——
+ * 证据卡在面板侧渲染全字段,不进 buildCanvasData。
  * 全防御:rpc 永不 reject、buildCanvasData 脏输入不抛,本函数恒出数组(空页=翻页到底,非错误)。
  */
 async function fetchCanvasPage(offset: number): Promise<CanvasCard[]> {
@@ -1884,6 +1937,17 @@ async function fetchCanvasPage(offset: number): Promise<CanvasCard[]> {
 }
 
 /**
+ * 证据包全字段页(evidence-get,画布证据卡数据源):宿主读证据 JSON 全文出结构化投影
+ * (command/verdict/before+after 截图/免责行),截图本体仍走 trace-shot 的 data URL 通道
+ * (ShotThumb 现成链路,绝不内联 base64)。20 条封顶:写操作频率低,够一次复盘;rpc 永不
+ * reject、脏响应恒出空数组(不渲染证据卡,与 fetchCanvasPage 同口径)。
+ */
+async function fetchEvidenceCards(limit = 20): Promise<EvidenceGetItem[]> {
+  const r = await rpc<{ ok: boolean; items?: EvidenceGetItem[] }>('evidence-get', { request: { limit } })
+  return r.ok && r.value?.ok === true && Array.isArray(r.value.items) ? r.value.items : []
+}
+
+/**
  * 画布面板(第五个 tab):全活动卡片流。
  * 平移:viewport overflow:auto,拖拽改 scrollLeft/scrollTop(不走 transform——每帧重排
  *   全部卡片,卡片多了肉眼可见地卡);
@@ -1894,12 +1958,17 @@ async function fetchCanvasPage(offset: number): Promise<CanvasCard[]> {
  *   渲染批次恒 ≤50),截图缩略图复用 shotCache(ShotThumb 现成链路);
  * 展开:点卡片展开完整步骤序列(stepsOfCard),再点收起;拖拽位移 >3px 后的 click 视为
  *   拖拽不吃点击(movedRef 判定);展开态 zIndex 提升盖住邻卡。
+ * 证据卡(canvas P1):evidence-get 单独拉取(20 条封顶,与画布卡分源不混数据),按时间
+ *   倒序与画布卡混排成一条流;before/after 双图并排(ShotThumb 现成 trace-shot 通道)+
+ *   shotNote 免责行(o4-note),卡面即全量信息,不参与展开/翻页。
  */
 function CanvasPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
   const { lang } = props
   // 模块级组件拿不到 Panel 内部的 t2/lang——经 props 自建同款查表(TimelinePanel 先例)
   const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
   const [cards, setCards] = useState<CanvasCard[] | null>(null)
+  // 证据包全字段(null=加载中);与画布卡分源:CanvasCard 装不下双截图+免责行,渲染也各是各的卡
+  const [evd, setEvd] = useState<EvidenceGetItem[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [offset, setOffset] = useState(0)
   const [zoom, setZoom] = useState(1)
@@ -1929,6 +1998,9 @@ function CanvasPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
   }
 
   useEffect(() => { void loadPage(0, false) }, [])
+  // 证据源独立拉取:脏响应 fetchEvidenceCards 恒出空数组,失败不拖垮画布卡流
+  const loadEvd = async (): Promise<void> => { setEvd(await fetchEvidenceCards()) }
+  useEffect(() => { void loadEvd() }, [])
   useEffect(() => {
     const el = wrapRef.current
     if (el === null) return
@@ -2015,15 +2087,66 @@ function CanvasPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
     )
   }
 
+  // ── 证据卡(canvas P1):写操作证据包的卡面投影,复用 o4-cvcard 样式 ──
+  // verdict→色调:ok 绿 / fail 红 / blocked 黄(命令从未执行,与"执行了但失败"区分开)
+  const evdTone = (v: EvidenceGetItem['verdict']): 'g' | 'r' | 'y' => (v === 'ok' ? 'g' : (v === 'blocked' ? 'y' : 'r'))
+  // 双图列:标签 + 缩略图(缺侧占位色块,title 同 canvasNoShot;图片走 ShotThumb 的 trace-shot 通道)
+  const evdShotCol = (label: string, path: string | undefined): ReturnType<typeof createElement> =>
+    createElement('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', flex: '1', minWidth: '0' } },
+      path !== undefined && path.length > 0
+        ? createElement(ShotThumb, { path, px: zt })
+        : createElement('span', { title: tt('canvasNoShot'), style: { width: `${zt}px`, height: `${zt}px`, borderRadius: '6px', background: 'rgba(255,255,255,.05)', flex: 'none' } }),
+      createElement('span', { style: { fontSize: '9.5px', color: '#5F6873', flex: 'none' } }, label),
+    )
+  const evdCardEl = (e: EvidenceGetItem): ReturnType<typeof createElement> => {
+    const tone = evdTone(e.verdict)
+    return createElement('div', {
+      key: `evd-${e.file}`,
+      className: 'o4-cvcard',
+      style: { width: `${zw}px`, borderColor: tone === 'g' ? 'rgba(52,199,89,.5)' : (tone === 'r' ? 'rgba(255,69,58,.55)' : 'rgba(255,159,10,.55)'), cursor: 'default' },
+      title: `${e.command}\n${e.at}`,
+    },
+      // 卡头:证据徽章 + 站点 + 本地时间(命令全句进 title,同画布卡)
+      createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '5px' } },
+        createElement('span', { className: 'o4-bdg' }, tt('cvTypeEvidence')),
+        e.adapter.length > 0 ? createElement('span', { style: { fontSize: '10.5px', color: 'rgba(249,250,251,.6)' } }, e.adapter) : null,
+        createElement('span', { style: { marginLeft: 'auto', fontSize: '10px', color: '#5F6873', fontFamily: 'ui-monospace,Consolas,monospace', flex: 'none' } }, canvasStamp(e.at)),
+      ),
+      // before/after 双图并排(被拒包双侧占位:命令从未执行,无截图可言——占位是诚实不是缺席)
+      createElement('div', { style: { display: 'flex', gap: '7px', alignItems: 'flex-start' } },
+        evdShotCol(tt('evdBefore'), e.beforeShot),
+        evdShotCol(tt('evdAfter'), e.afterShot),
+      ),
+      // 命令(三行截断,全句进 title,与画布卡同款样式)
+      createElement('span', { style: { fontSize: '10.5px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.78)', wordBreak: 'break-all', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' } }, e.command),
+      // shotNote 免责行:近似取证声明原样透出(o4-note 的 ※ 前缀自带)
+      e.note !== undefined ? createElement('div', { className: 'o4-note', style: { marginTop: '0' } }, e.note) : null,
+      // 卡脚:verdict 点 + 文案(被拒黄点,失败红点,成功绿点)
+      createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '10px', color: '#5F6873' } },
+        createElement('span', { className: `o4-dot ${tone}` }),
+        tt(e.verdict === 'ok' ? 'evdOk' : (e.verdict === 'blocked' ? 'evdBlocked' : 'evdFail')),
+      ),
+    )
+  }
+  // 混排:画布卡(已新→旧)与证据卡(RPC 倒序)二路按起始时间归并,统一一条时间线;
+  // at 解析不出的脏行(两源上游都已防御,理论不达)按 0 沉底,绝不炸排序
+  const flowEls = (cs: CanvasCard[], es: EvidenceGetItem[]): Array<ReturnType<typeof createElement>> => {
+    const msOf = (iso: string): number => { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : t }
+    return [
+      ...cs.map((c) => ({ t: msOf(c.at), el: cardEl(c) })),
+      ...es.map((e) => ({ t: msOf(e.at), el: evdCardEl(e) })),
+    ].sort((a, b) => b.t - a.t).map((x) => x.el)
+  }
+
   return createElement('div', { className: 'o4-card' },
     createElement('div', { className: 'o4-h3' },
       createElement('span', { className: 'o4-miniico' }, ic('layers', true)), tt('canvasT'),
       createElement('span', { className: 'rt' },
-        createElement('span', { style: { fontSize: '11px', color: '#5F6873', marginRight: '4px' } }, tt('canvasCardsN')(cards?.length ?? 0)),
+        createElement('span', { style: { fontSize: '11px', color: '#5F6873', marginRight: '4px' } }, tt('canvasCardsN')((cards?.length ?? 0) + (evd?.length ?? 0))),
         createElement('button', { className: 'o4-btn ghost sm', title: tt('canvasZoomOut'), disabled: zoom <= 0.5, onClick: () => setZoom(nextZoom(zoom, -1)) }, '-'),
         createElement('span', { style: { fontSize: '11px', color: '#5F6873', margin: '0 2px', minWidth: '34px', textAlign: 'center' } }, `${Math.round(zoom * 100)}%`),
         createElement('button', { className: 'o4-btn ghost sm', title: tt('canvasZoomIn'), disabled: zoom >= 2, onClick: () => setZoom(nextZoom(zoom, 1)) }, '+'),
-        createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { setOffset(0); void loadPage(0, false) } }, ic('refresh', true), busy ? tt('checking') : tt('recheck')),
+        createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { setOffset(0); void loadPage(0, false); void loadEvd() } }, ic('refresh', true), busy ? tt('checking') : tt('recheck')),
       ),
     ),
     createElement('div', { className: 'o4-sub' }, tt('canvasSub')),
@@ -2033,13 +2156,13 @@ function CanvasPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
       style: { height: '340px', userSelect: 'none' },
       onMouseDown, onMouseMove, onMouseUp: endDrag, onMouseLeave: endDrag,
     },
-      cards === null
+      cards === null || evd === null
         ? createElement('div', { style: { padding: '12px', width: '70%' } },
             createElement('div', { className: 'o4-load' }, tt('loading')),
             createElement('div', { className: 'o4-skel' }), createElement('div', { className: 'o4-skel', style: { width: '70%' } }),
           )
-        : shouldRenderCanvasFlow(cards)
-          ? createElement('div', { className: 'o4-cvflow' }, ...cards.map(cardEl))
+        : shouldRenderCanvasFlow(cards) || evd.length > 0
+          ? createElement('div', { className: 'o4-cvflow' }, ...flowEls(cards, evd))
           : createElement('div', { className: 'o4-load', style: { padding: '14px' } }, tt('canvasEmpty')),
     ),
     more
