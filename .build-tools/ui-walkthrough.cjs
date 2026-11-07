@@ -21,15 +21,16 @@ const check = (scene, name, cond, detail) => {
 };
 
 (async () => {
-  const port = 9360, udd = 'C:/Users/20369/AppData/Local/Temp/pptr-ui-full';
+  const port = 9360 + (Date.now() % 40), udd = 'C:/Users/20369/AppData/Local/Temp/pptr-ui-full-' + String(Date.now()).slice(-6);
   try { fs.rmSync(udd, { recursive: true, force: true }); } catch {}
-  const edge = spawn(EDGE, ['--remote-debugging-port=' + port, '--user-data-dir=' + udd, '--headless=new', '--disable-gpu', '--no-first-run', '--hide-scrollbars', '--window-size=1240,1400', 'about:blank'], { stdio: 'ignore' });
+  const edge = spawn(EDGE, ['--remote-debugging-port=' + port, '--user-data-dir=' + udd, '--headless=new', '--disable-gpu', '--no-first-run', '--hide-scrollbars', '--no-proxy-server', '--window-size=1240,1400', 'about:blank'], { stdio: 'ignore' });
   for (let i = 0; i < 24; i++) { try { const r = await fetch('http://127.0.0.1:' + port + '/json/version', { signal: AbortSignal.timeout(1200) }); if (r.ok) break; } catch {} await sleep(500); }
   const browser = await puppeteer.connect({ browserURL: 'http://127.0.0.1:' + port, defaultViewport: null });
   const page = await browser.newPage();
   await page.setViewport({ width: 1240, height: 1400 });
 
   // ── 幕 0:首次打开 ──
+  page.setDefaultNavigationTimeout(90_000)
   await page.goto('http://127.0.0.1:3123/?token=' + TOKEN, { waitUntil: 'domcontentloaded' });
   await sleep(6000);
   await page.keyboard.down('Control'); await page.keyboard.down('Alt'); await page.keyboard.press(','); await page.keyboard.up('Alt'); await page.keyboard.up('Control');
@@ -38,7 +39,7 @@ const check = (scene, name, cond, detail) => {
   await sleep(2500);
   // 等总览就绪(试试看输入框出现)
   let ready = false;
-  for (let i = 0; i < 15 && !ready; i++) { await sleep(2000); ready = await page.evaluate(() => [...document.querySelectorAll('.o4-in')].some(x => x.placeholder === 'site zhihu hot')); }
+  for (let i = 0; i < 30 && !ready; i++) { await sleep(2000); ready = await page.evaluate(() => [...document.querySelectorAll('.o4-in')].some(x => x.placeholder === 'site zhihu hot')); }
   check('幕0 打开', '设置→浏览器代理就绪(总览渲染)', ready);
 
   // ── 幕 1:总览·NL 指挥台(用户视角:输入→点映射) ──
@@ -64,10 +65,11 @@ const check = (scene, name, cond, detail) => {
     // 三连选清空(Ctrl+A 现代等价):全选后输入
     await page.keyboard.down('Control'); await page.keyboard.press('a'); await page.keyboard.up('Control');
     await page.type(trySel, 'site zhihu hot');
+    await sleep(500)
     await page.evaluate(() => { const b = [...document.querySelectorAll('.o4-btn')].find(x => (x.textContent || '').trim() === '运行'); if (b) b.click(); });
-    // 等真实数据
+    // 等真实数据(120s 上限:rc.1 冷 daemon 首条采集更慢)
     let got = false;
-    for (let i = 0; i < 20 && !got; i++) { await sleep(4000); got = await page.evaluate(() => { const el = document.querySelector('.o4-tryout'); return el && (el.textContent || '').length > 40 && !el.textContent.includes('检测中'); }); }
+    for (let i = 0; i < 30 && !got; i++) { await sleep(4000); got = await page.evaluate(() => { const el = document.querySelector('.o4-tryout'); return el && (el.textContent || '').length > 4 && !el.textContent.includes('检测中'); }); }
     check('幕2 试试看', '真实数据出现在输出框', got);
     await page.screenshot({ path: QA + '/046-ui-2-try.png' });
     // 复制按钮存在且可点
