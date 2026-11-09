@@ -186,11 +186,12 @@ export function handleJsonRpc(message: unknown, deps: McpToolDeps): JsonRpcRespo
   const reply = (result: unknown): JsonRpcResponse | null => (msg.id === undefined ? null : { jsonrpc: '2.0', id: msg.id, result })
   switch (msg.method) {
     case 'initialize': {
-      // 协议版本:客户端带字符串版本就原样回显(Streamable-HTTP 允许服务端确认客户端版本)
+      // 协议版本:客户端声明的版本认识就确认,不认识的钳回服务端唯一支持的版本
+      //(MCP 规范:响应里的版本是服务端声明「我按这个说」,回显未支持版本等于假兼容;复核 low)
       const p = (msg.params ?? {}) as Record<string, unknown>
       const requested = typeof p.protocolVersion === 'string' && p.protocolVersion.length > 0 ? p.protocolVersion : MCP_PROTOCOL_VERSION
       return reply({
-        protocolVersion: requested,
+        protocolVersion: requested === MCP_PROTOCOL_VERSION ? requested : MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'dsh-opencli', title: 'dsh-opencli 站点知识', version: PLUGIN_VERSION },
         instructions: '站点知识读侧:knowledge_list 看全部站点健康度与已知坑,knowledge_get 取单站知识卡(命令目录+坑+健康度+失败签名恢复表)。只读,无写工具。',
@@ -319,7 +320,13 @@ export function makeRequestHandler(depsProvider: () => McpToolDeps, expectedToke
           }
         }
         if (Array.isArray(parsed)) {
-          const replies = parsed.slice(0, 20).map(dispatch).filter((r): r is JsonRpcResponse => r !== null)
+          // 批上限 20:超出的条目逐条回 -32603 越界错(不静默吞——静默截断会让等这些 id 的客户端挂到超时,复核 low)
+          const OVER = 20
+          const replies = parsed.slice(0, OVER).map(dispatch).filter((r): r is JsonRpcResponse => r !== null)
+          for (let k = OVER; k < parsed.length; k++) {
+            const id = (parsed[k] as { id?: unknown } | null)?.id
+            if (id !== undefined) replies.push({ jsonrpc: '2.0', id, error: { code: -32603, message: `批请求超 ${OVER} 条上限,本条未处理` } })
+          }
           if (replies.length === 0) { res.writeHead(202).end(); return }
           writeJson(res, 200, replies)
           return
@@ -344,7 +351,7 @@ export interface McpSelfhostHandle {
   port: number
   url: string
   token: string
-  tokenSource: 'env' | 'generated'
+  tokenSource: 'explicit' | 'env' | 'generated'
   tools: Array<{ name: string; description: string }>
   stop(): Promise<void>
 }
@@ -376,7 +383,8 @@ function authPayload(url: string, port: number, token: string, tokenSource: stri
  */
 export async function startMcpSelfhost(opts: McpSelfhostOptions = {}): Promise<McpSelfhostStart> {
   const port = opts.port ?? mcpPort()
-  const tokenSource: 'env' | 'generated' = (opts.token ?? mcpTokenFromEnv()) !== undefined ? 'env' : 'generated'
+  // 来源三值如实:显式传参=explicit(env 同义混标会让字段名与取值不符,复核 low);生产路径不传 opts.token,恒为 env/generated
+  const tokenSource: 'explicit' | 'env' | 'generated' = opts.token !== undefined ? 'explicit' : mcpTokenFromEnv() !== undefined ? 'env' : 'generated'
   const token = opts.token ?? mcpTokenFromEnv() ?? randomBytes(24).toString('base64url')
   const authFile = opts.authFile ?? mcpAuthFile()
   const log = opts.log

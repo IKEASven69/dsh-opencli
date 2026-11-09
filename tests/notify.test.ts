@@ -482,7 +482,9 @@ describe('任务 E 集成:定时任务 → 通知通道(桩 shell + 桩 fetch,�
     const orig = S.runOpencli.bind(svc)
     S.runOpencli = async (...args: unknown[]) => {
       const a0 = Array.isArray(args[0]) ? (args[0] as string[])[0] : args[0]
-      if (a0 === 'daemon') return { exitCode: 0, stdout: 'Daemon: running" + BSN + "Version: 2.0.2" + BSN + "Extension: connected" + BSN + "Port: 19825" + BSN + "n', stderr: '' }
+      // daemon status 桩:2.0.x JSON 信封(0.1.3 C② 同款形状;此前该行是损坏的字面量——
+      // '" + BSN + "' 拼接表达式被写进单引号串,靠未锚定正则侥幸可用,复核 low 修)
+      if (a0 === 'daemon') return { exitCode: 0, stdout: '{"ok":true,"data":{"ok":true,"pid":19616,"uptime":3600.5,"daemonVersion":"2.0.2","extensionConnected":true,"extensionVersion":"1.0.26","port":19825,"running":true,"stale":false}}', stderr: '' }
       return { exitCode: 0, stdout, stderr: '' }
     }
     try { await fn() } finally { S.runOpencli = orig }

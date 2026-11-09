@@ -16,11 +16,11 @@ const ENTRIES = [
 ]
 
 describe('handleJsonRpc(JSON-RPC 纯函数层,三链路)', () => {
-  it('initialize:回显客户端协议版本,serverInfo/capabilities 齐全', () => {
+  it('initialize:客户端版本不认识→钳回服务端支持版本(不假兼容),serverInfo/capabilities 齐全', () => {
     const r = handleJsonRpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', clientInfo: { name: 'test' } } }, { entries: ENTRIES }) as { jsonrpc: string; id: number; result: Record<string, unknown> }
     expect(r.jsonrpc).toBe('2.0')
     expect(r.id).toBe(1)
-    expect(r.result.protocolVersion).toBe('2025-03-26') // 客户端带版本→原样回显
+    expect(r.result.protocolVersion).toBe('2025-06-18') // 未支持版本钳回 MCP_PROTOCOL_VERSION(复核 low:回显未实现版本=假兼容)
     const caps = r.result.capabilities as { tools: Record<string, unknown> }
     expect(caps.tools).toBeDefined()
     const info = r.result.serverInfo as { name: string; version: string }
@@ -174,7 +174,7 @@ describe('HTTP 层:三链路+token 门+白名单', () => {
     expect(auth.url).toBe(BASE)
     expect(auth.port).toBe(started.handle.port)
     expect(auth.token).toBe(TOKEN)
-    expect(auth.tokenSource).toBe('env') // 显式 opts.token 视同 env 提供态
+    expect(auth.tokenSource).toBe('explicit') // 显式 opts.token 如实标 explicit(与 env 提供态区分,复核 low)
     await started.handle.stop()
     handles.length = 0
     await expect(readFile(join(TMP, 'auth.json'), 'utf8')).rejects.toThrow()

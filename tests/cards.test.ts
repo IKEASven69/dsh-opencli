@@ -15,7 +15,8 @@ class StubShell extends Service {
   resolve(req: unknown): unknown { return req }
   async run(spec: { command: string }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
     const cmd = Array.isArray(spec.command) ? spec.command.join(' ') : spec.command // array 形态优先后回落路径传 argv 数组,归一回串判别
-    if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: 'Daemon: running\n' }, stderr: { text: '' } }
+    // daemon status 桩:2.0.x JSON 信封(与 health-check C② 同款实测形状;此前的 1.x 单行文本是桩保真残留,复核 low 修)
+    if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: '{"ok":true,"data":{"ok":true,"pid":19616,"uptime":3600.5,"daemonVersion":"2.0.2","extensionConnected":true,"extensionVersion":"1.0.26","port":19825,"running":true,"stale":false}}' }, stderr: { text: '' } }
     if (cmd.includes('list --format json')) return { exitCode: 0, stdout: { text: '[]' }, stderr: { text: '' } }
     // site execute 判定标注流转用:loginwall=exit 0 但内容是登录墙(规则层必中);oksite=正常列表文本
     if (cmd.includes('loginwall hot')) return { exitCode: 0, stdout: { text: '请先登录后再继续操作,或运行 opencli loginwall login\n' }, stderr: { text: '' } }

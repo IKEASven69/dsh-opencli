@@ -2036,7 +2036,8 @@ export class OpencliService extends TypertRemoteService {
     const norm = (s: string): string => (process.platform === 'win32' ? s.toLowerCase() : s)
     const root = resolve(this.snapshotsBase)
     const p = resolve(this.snapshotsBase, id)
-    if (norm(p) !== norm(root) && !norm(p).startsWith(norm(root) + sep)) return null
+    if (norm(p) === norm(root)) return null // '.'/'./' 同样落到根,与空 id 同防(整目录列举)
+    if (!norm(p).startsWith(norm(root) + sep)) return null
     return p
   }
 
@@ -4415,11 +4416,14 @@ ${r.stderr}`
     // ④补强:notifyLevel==='quiet' 只推有价值信号(watch 命中/有变化/失败),高频任务不再刷屏
     const quiet = sch?.notifyLevel === 'quiet'
     const worthPushing = !lastOk || watchHits.length > 0 || diffText.length > 0
+    const inWin = sch?.quietHours !== undefined && inQuietHours(sch.quietHours)
+    // quiet 任务出窗后若暂存非空,本条即使为例行成功也要进合并清空(否则暂存滞留到下次有价值推送,复核 low)
+    const pendingFlush = (sch?.pendingNotify?.length ?? 0) > 0 && !inWin
     // 熔断短路(circuitSkipped)不外送:开窗任务的通知已发过一次,窗内任务不再逐任务推送
-    if (sch?.notify !== false && !circuitSkipped && (!quiet || worthPushing)) {
+    if (sch?.notify !== false && !circuitSkipped && (!quiet || worthPushing || pendingFlush)) {
       // 静默时段(0.4.7 B2):窗内暂存(上限 20 条,防长窗爆内存;随任务落盘重启不丢),
       // 出窗首跑把暂存合并进正文一次推送后清空。窗解析失败按未配置处理(fail-open 多推不吞)。
-      if (sch?.quietHours !== undefined && inQuietHours(sch.quietHours)) {
+      if (inWin) {
         const pend = sch.pendingNotify ?? []
         pend.push({ at: new Date().toISOString(), ok: lastOk, summary: lastSummary.slice(0, 200), hits: watchHits.length, diff: diffText.length > 0 })
         sch.pendingNotify = pend.slice(-20)
