@@ -14,7 +14,7 @@ class StubShell extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
   resolve(req: unknown): unknown { return req }
   async run(spec: { command: string }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
-    const cmd = spec.command
+    const cmd = Array.isArray(spec.command) ? spec.command.join(' ') : spec.command // array 形态优先后回落路径传 argv 数组,归一回串判别
     if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: 'Daemon: running\n' }, stderr: { text: '' } }
     if (cmd.includes('list --format json')) return { exitCode: 0, stdout: { text: '[]' }, stderr: { text: '' } }
     // site execute 判定标注流转用:loginwall=exit 0 但内容是登录墙(规则层必中);oksite=正常列表文本

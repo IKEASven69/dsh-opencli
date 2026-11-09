@@ -1,11 +1,11 @@
 /**
- * canvas VOM 纯函数层(任务 N):eval 桥——把"发现 / 读像素 / 坐标点击"编译成在页面
+ * canvas VOM 纯函数层:eval 桥——把"发现 / 读像素 / 坐标点击"编译成在页面
  * 上下文执行的 JS 字符串,经 `opencli browser eval` 单一通道下发。
  *
- * 为什么用 eval 桥:上游 browser 交互族全部 selector-first(DESIGN-canvas-vom.md §1.1
- * 实测,2026-10-21),canvas 是一张位图——内部无 DOM/AX 目标,click 无处可点;screenshot
- * 无区域参数;而 browser eval 是唯一能触及 canvas 数据面的通道(同文档能力矩阵 #2/#6)。
- * CDP 直连方案(同文档 §3 的 Input.dispatchMouseEvent / captureScreenshot clip)是后续
+ * 为什么用 eval 桥:上游 browser 交互族全部 selector-first(2026-10-21 实测),
+ * canvas 是一张位图——内部无 DOM/AX 目标,click 无处可点;screenshot
+ * 无区域参数;而 browser eval 是唯一能触及 canvas 数据面的通道(上游能力清单 #2/#6)。
+ * CDP 直连方案(Input.dispatchMouseEvent / captureScreenshot clip)是后续
  * 里程碑,本层刻意只产出"字符串",不触碰 RPC/宿主/文件系统——工具接线与审批门在
  * src/index.ts(registerVomTools)。
  *
@@ -36,7 +36,7 @@ export function buildCanvasDiscoveryJs(): string {
  * 读取指定 canvas 内容:返回一段页面 JS,求值结果为
  * {"index":i,"w":画布宽,"h":画布高,"b64":"PNG base64"} JSON 字符串。
  * w/h 取 canvas.width/height(后端缓冲分辨率,与 CSS 矩形是两套数——DPR>1 时缓冲大于
- * 显示尺寸,DESIGN-canvas-vom.md §1.3 #325 的坑位),给模型对图做尺度判断用。
+ * 显示尺寸,上游 #325 反馈的 DPR 坑位),给模型对图做尺度判断用。
  * 脏索引(非有限数/负数)折成错误表达式而不是默认读 0 号:静默改目标=读错画布还拉
  * 全量 base64,比明确失败更糟。
  */

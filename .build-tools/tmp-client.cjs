@@ -284,6 +284,17 @@ function healthOf(site) {
   } : null;
 }
 
+// .build-tools/tmp-src/parsers.js
+function isDecorativeStep(step) {
+  const toks = step.trim().split(/\s+/);
+  const head = toks[0] ?? "";
+  const verb = head.startsWith("opencli_") ? head.slice("opencli_".length) : head.startsWith("browser_") ? head.slice("browser_".length) : head === "browser" ? toks[2] ?? "" : "";
+  return verb === "scroll" || verb === "hover";
+}
+
+// .build-tools/tmp-src/version.js
+var PLUGIN_VERSION = "0.1.2";
+
 // .build-tools/tmp-src/canvas.js
 var CANVAS_PAGE_DEFAULT = 50;
 var SNAPSHOT_MERGE_WINDOW_MS = 12e4;
@@ -606,7 +617,7 @@ var STR = {
     tlN: (n) => `${n} \u4EFD\u5FEB\u7167`,
     tlTotal: "\u7D2F\u8BA1",
     tlFlow: "\u753B\u5E03\u5361\u7247\u6D41(\u672C\u7AD9\u8FD1 24h,\u66FF\u4EE3\u8FD0\u884C\u53F2\u6587\u672C)",
-    // 画布(任务 H+I+J):全活动卡片流;文案与色调口径见 canvasCardTone/CANVAS_SUSPECT_P
+    // 画布:全活动卡片流;文案与色调口径见 canvasCardTone/CANVAS_SUSPECT_P
     canvasT: "\u6D3B\u52A8\u753B\u5E03",
     canvasSub: "\u8F68\u8FF9 / \u5199\u64CD\u4F5C / \u5B9A\u65F6\u91C7\u96C6\u805A\u5408\u4E3A\u5361\u7247 \xB7 \u70B9\u5361\u7247\u5C55\u5F00\u6B65\u9AA4\u56DE\u653E \xB7 \u62D6\u62FD\u5E73\u79FB,\u6EDA\u8F6E\u7F29\u653E \xB7 canvas_read \u8BFB\u5230\u7684\u7F51\u9875\u753B\u5E03\u4F4D\u56FE\u4F1A\u4EE5\u56FE\u7247\u6B65\u9AA4\u51FA\u73B0\u5728\u5361\u7247\u91CC",
     canvasEmpty: "\u6682\u65E0\u6D3B\u52A8\u2014\u2014\u8DD1\u4E00\u6761\u547D\u4EE4\u6216\u5230\u70B9\u91C7\u96C6\u540E,\u8FD9\u91CC\u4F1A\u957F\u51FA\u5361\u7247",
@@ -621,7 +632,7 @@ var STR = {
     cvTypeSite: "\u5199\u64CD\u4F5C",
     cvTypeBrowser: "\u6D4F\u89C8\u5668",
     cvTypeSchedule: "\u5B9A\u65F6\u91C7\u96C6",
-    // 证据卡(canvas P1):写操作证据包卡——verdict 徽标 + before/after 双图 + 免责行
+    // 证据卡:写操作证据包卡——verdict 徽标 + before/after 双图 + 免责行
     cvTypeEvidence: "\u8BC1\u636E",
     evdOk: "\u6267\u884C\u6210\u529F",
     evdFail: "\u6267\u884C\u5931\u8D25",
@@ -663,6 +674,18 @@ var STR = {
     traceT: "\u8FD0\u884C\u8F68\u8FF9",
     traceSub: '\u6BCF\u6761 browser \u547D\u4EE4\u9010\u6B65\u843D\u76D8(~/.dsh/opencli-traces),\u590D\u76D8"\u4E0A\u6B21\u4E3A\u4EC0\u4E48\u5931\u8D25"',
     traceEmpty: "\u6682\u65E0\u8F68\u8FF9\u2014\u2014\u8DD1\u4E00\u6761 browser \u547D\u4EE4\u540E\u8FD9\u91CC\u4F1A\u957F\u51FA\u6765",
+    // 事件历史:ingest 事件追加落盘 ~/.dsh/opencli-events.jsonl,events-get 读回;重启不丢
+    evT: "\u4E8B\u4EF6\u5386\u53F2",
+    evSub: "\u901A\u77E5\u4E8B\u4EF6\u8DE8\u4F1A\u8BDD\u53EF\u56DE\u770B(~/.dsh/opencli-events.jsonl):watch \u547D\u4E2D / \u6F02\u79FB\u4E0E\u515C\u5E95 / daemon \u7FFB\u8F6C / \u7194\u65AD / \u81EA\u6108,\u91CD\u542F\u4E0D\u4E22",
+    evEmpty: "\u6682\u65E0\u5386\u53F2\u4E8B\u4EF6\u2014\u2014\u5B9A\u65F6\u4EFB\u52A1\u8DD1\u8D77\u6765\u540E,\u547D\u4E2D/\u5931\u8D25/\u6F02\u79FB\u4F1A\u8BB0\u5728\u8FD9\u91CC",
+    // 多账号登录态隔离:上游 OpenCLI 2.0.3 原生 --profile/contextId 路由(CLI 2.0.3 dist 读源与 doctor 探针核实)
+    profPh: "\u{1F464} profile(\u53EF\u9009)",
+    profTitle: "\u6D4F\u89C8\u5668 profile \u522B\u540D\u6216 contextId(opencli profile list \u53EF\u67E5)\u2014\u2014\u591A\u8D26\u53F7\u767B\u5F55\u6001\u9694\u79BB:\u7ECF\u4E0A\u6E38 OpenCLI \u539F\u751F --profile \u8DEF\u7531,\u4E0D\u540C profile \u5373\u4E0D\u540C Chrome \u6863\u6848,cookie/\u5B58\u50A8\u5404\u81EA\u72EC\u7ACB;\u987B\u5148\u6253\u5F00\u8BE5 Chrome \u6863\u6848\u5E76\u542F\u7528 OpenCLI \u6269\u5C55,\u672A\u8FDE\u63A5\u65F6\u4EFB\u52A1\u5982\u5B9E\u5931\u8D25,\u4E0D\u56DE\u843D\u5230\u522B\u7684\u8D26\u53F7",
+    profTip: (p) => `\u672C\u4EFB\u52A1\u7ECF OPENCLI_PROFILE=${p} \u8DEF\u7531\u5230\u8BE5\u6D4F\u89C8\u5668 profile(\u4E0A\u6E38\u539F\u751F\u9694\u79BB)`,
+    // #59 补完:装饰步(只改视觉的 scroll/hover)回放可跳过
+    skipDecor: "\u8DF3\u8FC7\u88C5\u9970\u6B65",
+    skipDecorTip: "\u56DE\u653E\u65F6\u8DF3\u8FC7\u53EA\u6539\u89C6\u89C9\u7684 scroll/hover \u6B65\u9AA4;\u6570\u636E\u8BFB\u5199\u6B65\u9AA4\u7167\u5E38\u6267\u884C",
+    decoTag: "\u88C5\u9970",
     assetT: "\u8D44\u4EA7\u5E93",
     assetSub: "\u811A\u672C / \u914D\u65B9 / \u89C4\u5219\u5305",
     assetSearch: "\u641C\u8D44\u4EA7(\u5982:arxiv)",
@@ -699,7 +722,7 @@ var STR = {
     obCliFix: "\u590D\u5236\u5B89\u88C5\u547D\u4EE4",
     obBridgeHint: "\u4ECE GitHub Releases \u4E0B\u8F7D BrowserBridge \u6269\u5C55,\u5230 Chrome \u6269\u5C55\u9875\u5F00\u53D1\u8005\u6A21\u5F0F\u52A0\u8F7D,\u518D\u56DE\u9762\u677F\u91CD\u5DE1\u68C0",
     obRelBtn: "\u6253\u5F00 Releases",
-    // 零配置降级可用面(设计 §2.2-2):无扩展时的黄色状态行——向导不再只有"装扩展"一种结局
+    // 零配置降级可用面:无扩展时的黄色状态行——向导不再只有"装扩展"一种结局
     obZeroCfgN: (n) => `\u964D\u7EA7\u53EF\u7528\u9762:${n} \u4E2A\u7AD9\u7684\u53EA\u8BFB\u547D\u4EE4\u65E0\u6269\u5C55\u4E5F\u80FD\u8DD1(\u533F\u540D);opencli_*/chrome_* \u6682\u4E0D\u53EF\u7528`,
     obZeroCfgNa: "\u964D\u7EA7\u53EF\u7528\u9762:\u90E8\u5206\u53EA\u8BFB\u547D\u4EE4\u65E0\u6269\u5C55\u4E5F\u80FD\u8DD1(\u533F\u540D);opencli_*/chrome_* \u6682\u4E0D\u53EF\u7528",
     obLoginOk: "\u767B\u5F55\u6001\u6B63\u5E38",
@@ -872,7 +895,7 @@ var STR = {
     cvTypeSite: "write",
     cvTypeBrowser: "browser",
     cvTypeSchedule: "schedule",
-    // Evidence cards (canvas P1): write-evidence pack cards — verdict badge + before/after shots + caveat row
+    // Evidence cards: write-evidence pack cards — verdict badge + before/after shots + caveat row
     cvTypeEvidence: "evidence",
     evdOk: "ran ok",
     evdFail: "failed",
@@ -914,6 +937,18 @@ var STR = {
     traceT: "Run trace",
     traceSub: "every browser command logged to ~/.dsh/opencli-traces \u2014 replay why the last run failed",
     traceEmpty: "No traces yet \u2014 they appear after the first browser command",
+    // Event history : ingest events appended to ~/.dsh/opencli-events.jsonl, read back via events-get; survives restarts
+    evT: "Event history",
+    evSub: "Notification events kept across sessions (~/.dsh/opencli-events.jsonl): watch hits / drift & fallback / daemon flips / circuit breaks / self-heal \u2014 survives restarts",
+    evEmpty: "No events yet \u2014 hits, failures and drift are logged here once schedules run",
+    // Multi-account login isolation: native upstream OpenCLI 2.0.3 --profile/contextId routing
+    profPh: "\u{1F464} profile (optional)",
+    profTitle: "Browser profile alias or contextId (see opencli profile list) \u2014 multi-account login isolation via native upstream OpenCLI --profile routing: each profile is a separate Chrome profile with its own cookies/storage; open that Chrome profile with the OpenCLI extension enabled first \u2014 if it is not connected the run fails honestly instead of falling back to another account",
+    profTip: (p) => `Routed to browser profile via OPENCLI_PROFILE=${p} (native upstream isolation)`,
+    // #59 completion: decorative (visual-only scroll/hover) steps can be skipped on replay
+    skipDecor: "Skip decorative",
+    skipDecorTip: "Skip visual-only scroll/hover steps on replay; data read/write steps still run",
+    decoTag: "decorative",
     assetT: "Assets",
     assetSub: "scripts / recipes / rulepacks",
     assetSearch: "search assets (e.g. arxiv)",
@@ -1385,6 +1420,7 @@ function Panel() {
   const [schedCron, setSchedCron] = (0, import_react.useState)("0 9 * * *");
   const [schedWatch, setSchedWatch] = (0, import_react.useState)("");
   const [schedQuiet, setSchedQuiet] = (0, import_react.useState)("");
+  const [schedProfile, setSchedProfile] = (0, import_react.useState)("");
   const [schedBusy, setSchedBusy] = (0, import_react.useState)(false);
   const [schedSel, setSchedSel] = (0, import_react.useState)(/* @__PURE__ */ new Set());
   const [schedSrc, setSchedSrc] = (0, import_react.useState)("all");
@@ -1399,6 +1435,7 @@ function Panel() {
   const [isRec, setIsRec] = (0, import_react.useState)(false);
   const [recName, setRecName] = (0, import_react.useState)("");
   const [recSteps, setRecSteps] = (0, import_react.useState)([]);
+  const [skipDecor, setSkipDecor] = (0, import_react.useState)(false);
   const [assetHits, setAssetHits] = (0, import_react.useState)(null);
   const [assetBusy, setAssetBusy] = (0, import_react.useState)(false);
   const [scripts, setScripts] = (0, import_react.useState)(null);
@@ -1744,6 +1781,7 @@ function Panel() {
     setSchedBusy(true);
     const watch = schedWatch.trim();
     const qh = schedQuiet.trim();
+    const prof = schedProfile.trim();
     const r = await rpc("schedule-add", {
       request: {
         site: schedSite.trim(),
@@ -1756,6 +1794,9 @@ function Panel() {
         } : {},
         ...qh.length > 0 ? {
           quietHours: qh
+        } : {},
+        ...prof.length > 0 ? {
+          profile: prof
         } : {}
       }
     });
@@ -1764,6 +1805,7 @@ function Panel() {
       setSchedSite("");
       setSchedWatch("");
       setSchedQuiet("");
+      setSchedProfile("");
       void loadSchedules();
     } else showToast(r.error?.message ?? t2("errReq"), false);
   };
@@ -1913,7 +1955,10 @@ function Panel() {
       if (s.length === 0) continue;
       if (s.startsWith("opencli_") || s.startsWith("browser_")) await rpc("replay", {
         request: {
-          step: s
+          step: s,
+          ...skipDecor ? {
+            skipDecorative: true
+          } : {}
         }
       });
       else await rpc("try-run", {
@@ -2741,6 +2786,15 @@ ${c.description}`,
           title: t2("qhTitle"),
           value: schedQuiet,
           onChange: (e) => setSchedQuiet(e.target.value)
+        }), (0, import_react.createElement)("input", {
+          className: "o4-in mono",
+          style: {
+            maxWidth: "140px"
+          },
+          placeholder: t2("profPh"),
+          title: t2("profTitle"),
+          value: schedProfile,
+          onChange: (e) => setSchedProfile(e.target.value)
         }), (0, import_react.createElement)("button", {
           className: "o4-btn sm",
           disabled: schedBusy,
@@ -2942,7 +2996,7 @@ ${c.description}`,
               null,
               `${t2("last")} ${hist[0]?.at?.slice(5, 16) ?? "\u2014"}`,
               // verdict 真实着色:空史不挂符号;有失败全红 ✗;有成功绿 ✓——此前恒亮 ✓,
-              // 与时间线红失败行同屏自相矛盾(GUI 走查 2026-10-08)
+              // 与时间线红失败行同屏自相矛盾(2026-10-08 界面逐项检查发现)
               (0, import_react.createElement)("span", {
                 style: {
                   color: hist.length === 0 ? "inherit" : okN > 0 ? "#34C759" : "#FF6B63"
@@ -3009,6 +3063,12 @@ ${c.description}`,
                 title: t2("nfSrcTip")(s.source)
               }, s.source)
             ] : [],
+            ...s.profile !== void 0 ? [
+              (0, import_react.createElement)("span", {
+                className: "o4-bdg b",
+                title: t2("profTip")(s.profile)
+              }, `\u{1F464} ${s.profile}`)
+            ] : [],
             (0, import_react.createElement)("span", {
               style: {
                 flex: "1"
@@ -3053,6 +3113,10 @@ ${c.description}`,
       (0, import_react.createElement)(TracePanel, {
         lang
       }),
+      // 事件历史:events-get 跨会话历史面——内存 30 条 ingest 之外,重启后仍可回看
+      (0, import_react.createElement)(EventsPanel, {
+        lang
+      }),
       (0, import_react.createElement)("div", {
         style: {
           display: "grid",
@@ -3082,7 +3146,26 @@ ${c.description}`,
         className: "o4-tt"
       }, rec.name), (0, import_react.createElement)("div", {
         className: "o4-dd"
-      }, `${rec.steps.length} \u6B65 \xB7 ${rec.steps[0] ?? ""}`)), (0, import_react.createElement)("button", {
+      }, `${rec.steps.length} \u6B65 \xB7 ${rec.steps[0] ?? ""}`)), (0, import_react.createElement)("label", {
+        title: t2("skipDecorTip"),
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: "4px",
+          fontSize: "11px",
+          color: "#5F6873",
+          flex: "none",
+          cursor: "pointer"
+        }
+      }, (0, import_react.createElement)("input", {
+        type: "checkbox",
+        checked: skipDecor,
+        onChange: () => setSkipDecor(!skipDecor),
+        style: {
+          accentColor: "#4A9EFF",
+          margin: "0"
+        }
+      }), t2("skipDecor")), (0, import_react.createElement)("button", {
         className: "o4-btn ghost sm",
         onClick: () => {
           void replayRecording(rec.id);
@@ -3455,7 +3538,7 @@ ${c.description}`,
         fontSize: "11px",
         color: "#5F6873"
       }
-    }, `${t2("verNow")} v0.4.1 \xB7 ${t2("channel")} \xB7 ${t2("updMarket")}`)), (0, import_react.createElement)("span", {
+    }, `${t2("verNow")} v${PLUGIN_VERSION} \xB7 ${t2("channel")} \xB7 ${t2("updMarket")}`)), (0, import_react.createElement)("span", {
       className: "o4-bdg"
     }, typeof updState === "string" && updState !== "idle" && updState !== "checking" ? updState : t2("upToDate")), (0, import_react.createElement)("button", {
       className: "o4-btn ghost sm",
@@ -3575,7 +3658,7 @@ ${c.description}`,
       className: lang === "en" ? "on" : "",
       onClick: () => setLang("en")
     }, "EN")))),
-    // Tabs(第五个 tab「画布」:全活动卡片流,任务 H+I+J)
+    // Tabs(第五个 tab「画布」:全活动卡片流)
     (0, import_react.createElement)("div", {
       className: "o4-tabs"
     }, ...[
@@ -4193,67 +4276,86 @@ function TracePanel(props) {
       style: {
         display: "contents"
       }
-    }, (0, import_react.createElement)("div", {
-      className: "o4-qrow",
-      style: {
-        alignItems: "center"
-      },
-      title: `${r.cmd}
+    }, (0, import_react.createElement)(
+      "div",
+      {
+        className: "o4-qrow",
+        style: {
+          alignItems: "center"
+        },
+        title: `${r.cmd}
 ${r.at}`,
-      onClick: () => {
-        setOpenIdx(openIdx === i ? null : i);
-      }
-    }, (0, import_react.createElement)("span", {
-      className: `o4-dot ${r.exitCode === 0 ? "g" : "r"}`,
-      style: {
-        flex: "none"
-      }
-    }), (0, import_react.createElement)("span", {
-      style: {
-        flex: "none",
-        fontSize: "10.5px",
-        color: "#5F6873",
-        fontFamily: "ui-monospace,Consolas,monospace"
-      }
-    }, traceClock(r.at)), shot !== null ? (0, import_react.createElement)("span", {
-      title: "\u672C\u6B65\u81EA\u52A8\u622A\u56FE",
-      style: {
-        flex: "none",
-        fontSize: "10.5px",
-        color: "#8B9AFF",
-        fontFamily: "ui-monospace,Consolas,monospace"
-      }
-    }, "[\u56FE]") : null, shot !== null ? (0, import_react.createElement)(ShotThumb, {
-      path: shot
-    }) : null, (0, import_react.createElement)("span", {
-      style: {
-        flex: "1",
-        minWidth: "0",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        fontSize: "11px",
-        fontFamily: "ui-monospace,Consolas,monospace",
-        color: "rgba(249,250,251,.75)"
-      }
-    }, r.cmd), (0, import_react.createElement)("span", {
-      className: "o4-bdg",
-      style: {
-        flex: "none"
-      }
-    }, `exit ${r.exitCode}`), (0, import_react.createElement)("span", {
-      style: {
-        flex: "none",
-        fontSize: "10.5px",
-        color: "#5F6873"
-      }
-    }, `${r.ms}ms`), (0, import_react.createElement)("span", {
-      style: {
-        color: "#5F6873",
-        display: "flex",
-        flex: "none"
-      }
-    }, ic(openIdx === i ? "chev-d" : "chev-r", true))), openIdx === i ? (0, import_react.createElement)("div", {
+        onClick: () => {
+          setOpenIdx(openIdx === i ? null : i);
+        }
+      },
+      (0, import_react.createElement)("span", {
+        className: `o4-dot ${r.exitCode === 0 ? "g" : "r"}`,
+        style: {
+          flex: "none"
+        }
+      }),
+      (0, import_react.createElement)("span", {
+        style: {
+          flex: "none",
+          fontSize: "10.5px",
+          color: "#5F6873",
+          fontFamily: "ui-monospace,Consolas,monospace"
+        }
+      }, traceClock(r.at)),
+      shot !== null ? (0, import_react.createElement)("span", {
+        title: "\u672C\u6B65\u81EA\u52A8\u622A\u56FE",
+        style: {
+          flex: "none",
+          fontSize: "10.5px",
+          color: "#8B9AFF",
+          fontFamily: "ui-monospace,Consolas,monospace"
+        }
+      }, "[\u56FE]") : null,
+      shot !== null ? (0, import_react.createElement)(ShotThumb, {
+        path: shot
+      }) : null,
+      // #59:装饰步(只改视觉的 scroll/hover)标注,与 trace_replay 时间线〔装饰〕同一口径
+      isDecorativeStep(r.cmd) ? (0, import_react.createElement)("span", {
+        className: "o4-bdg",
+        title: tt("skipDecorTip"),
+        style: {
+          flex: "none"
+        }
+      }, tt("decoTag")) : null,
+      (0, import_react.createElement)("span", {
+        style: {
+          flex: "1",
+          minWidth: "0",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          fontSize: "11px",
+          fontFamily: "ui-monospace,Consolas,monospace",
+          color: "rgba(249,250,251,.75)"
+        }
+      }, r.cmd),
+      (0, import_react.createElement)("span", {
+        className: "o4-bdg",
+        style: {
+          flex: "none"
+        }
+      }, `exit ${r.exitCode}`),
+      (0, import_react.createElement)("span", {
+        style: {
+          flex: "none",
+          fontSize: "10.5px",
+          color: "#5F6873"
+        }
+      }, `${r.ms}ms`),
+      (0, import_react.createElement)("span", {
+        style: {
+          color: "#5F6873",
+          display: "flex",
+          flex: "none"
+        }
+      }, ic(openIdx === i ? "chev-d" : "chev-r", true))
+    ), openIdx === i ? (0, import_react.createElement)("div", {
       className: "o4-tryout",
       style: {
         marginTop: "-2px",
@@ -4261,6 +4363,104 @@ ${r.at}`,
       }
     }, r.outHead.length > 0 ? r.outHead : "\u2014") : null);
   })));
+}
+function EventsPanel(props) {
+  const { lang } = props;
+  const tt = (k) => STR[lang][k] ?? STR.zh[k];
+  const [rows, setRows] = (0, import_react.useState)(null);
+  const [err, setErr] = (0, import_react.useState)("");
+  const [busy, setBusy] = (0, import_react.useState)(false);
+  const load = async () => {
+    if (busy) return;
+    setBusy(true);
+    const r = await rpc("events-get", {
+      request: {
+        limit: 50
+      }
+    });
+    setBusy(false);
+    if (r.ok && r.value !== void 0 && r.value.ok && Array.isArray(r.value.events)) {
+      setRows(r.value.events);
+      setErr("");
+    } else setErr(r.ok ? r.value?.error ?? tt("errReq") : r.error?.message ?? tt("errReq"));
+  };
+  (0, import_react.useEffect)(() => {
+    let alive = true;
+    void (async () => {
+      const r = await rpc("events-get", {
+        request: {
+          limit: 50
+        }
+      });
+      if (!alive) return;
+      if (r.ok && r.value !== void 0 && r.value.ok && Array.isArray(r.value.events)) setRows(r.value.events);
+      else setErr(r.ok ? r.value?.error ?? tt("errReq") : r.error?.message ?? tt("errReq"));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const tone = (kind) => /failed|circuit|drift$/.test(kind) ? " r" : /skipped|flip|fallback/.test(kind) ? " w" : "";
+  return (0, import_react.createElement)("div", {
+    className: "o4-card"
+  }, (0, import_react.createElement)("div", {
+    className: "o4-h3"
+  }, (0, import_react.createElement)("span", {
+    className: "o4-miniico"
+  }, ic("activity", true)), tt("evT"), (0, import_react.createElement)("span", {
+    className: "rt"
+  }, (0, import_react.createElement)("button", {
+    className: "o4-btn ghost sm",
+    disabled: busy,
+    onClick: () => {
+      void load();
+    }
+  }, ic("refresh", true), busy ? tt("checking") : tt("recheck")))), (0, import_react.createElement)("div", {
+    className: "o4-sub"
+  }, tt("evSub")), err.length > 0 ? (0, import_react.createElement)("div", {
+    className: "o4-load"
+  }, err) : null, rows !== null && rows.length === 0 && err.length === 0 ? (0, import_react.createElement)("div", {
+    className: "o4-load"
+  }, tt("evEmpty")) : null, rows === null && err.length === 0 ? (0, import_react.createElement)("div", {
+    className: "o4-load"
+  }, tt("loading")) : null, (0, import_react.createElement)("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: "6px"
+    }
+  }, ...(rows ?? []).slice(0, 50).map((e, i) => (0, import_react.createElement)("div", {
+    key: `${e.at}-${i}`,
+    className: "o4-qrow",
+    style: {
+      alignItems: "center"
+    },
+    title: `${e.kind}
+${e.at}
+${e.text}`
+  }, (0, import_react.createElement)("span", {
+    style: {
+      flex: "none",
+      fontSize: "10.5px",
+      color: "#5F6873",
+      fontFamily: "ui-monospace,Consolas,monospace"
+    }
+  }, canvasStamp(e.at)), (0, import_react.createElement)("span", {
+    className: `o4-bdg${tone(e.kind)}`,
+    style: {
+      flex: "none"
+    }
+  }, e.kind), (0, import_react.createElement)("span", {
+    style: {
+      flex: "1",
+      minWidth: "0",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      fontSize: "11px",
+      color: "rgba(249,250,251,.75)"
+    }
+  }, e.text)))));
 }
 var CANVAS_SUSPECT_P = 0.8;
 function canvasCardTone(c) {
@@ -4844,7 +5044,7 @@ function OnboardingWizard(props) {
     !bridgeOn ? (0, import_react.createElement)("div", {
       className: "o4-note"
     }, tt("obBridgeHint")) : null,
-    // 降级可用面黄行(设计 §2.2-2):bridge 红时声明"现在还能跑什么",向导不再只有"装扩展"一种结局;
+    // 降级可用面黄行:bridge 红时声明"现在还能跑什么",向导不再只有"装扩展"一种结局;
     // 目录未载入时用无数字文案,不给猜出来的 N
     !bridgeOn && !extConnected ? row("zerocfg", "y", adapters !== null ? tt("obZeroCfgN")(readonlySiteCount(adapters)) : tt("obZeroCfgNa"), null) : null,
     row("login", loginDot, loginText, null),

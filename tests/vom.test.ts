@@ -190,6 +190,11 @@ let ctx: InstanceType<typeof Context>
 let shell: VomShell
 let traceDir = ''
 let shotsDir = ''
+/** beforeAll 改写的 env 键 → 改写前的值(afterAll 逐键还原;undefined=原本不存在→删键)。 */
+const envBeforeLoad: Record<string, string | undefined> = {
+  DSH_OPENCLI_BIN: undefined, DSH_OPENCLI_TRACE_DIR: undefined, DSH_OPENCLI_SHOTS_DIR: undefined,
+  DSH_OPENCLI_EVIDENCE_DIR: undefined, DSH_OPENCLI_STATE: undefined, DSH_OPENCLI_DIRECT: undefined,
+}
 
 const tool = (name: string): { execute: (a: unknown) => Promise<{ text: string }> } =>
   (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get(name)!
@@ -204,6 +209,7 @@ const dispatchPre = async (name: string, args: Record<string, unknown>): Promise
 beforeAll(async () => {
   // 隔离四件套先于插件装载设好(zerocfg 顶部约定:构造器读 env;共享键会被上一轮残留污染)
   const uniq = `${process.pid}-${Date.now()}`
+  for (const k of Object.keys(envBeforeLoad)) envBeforeLoad[k] = process.env[k] // afterAll 还原用
   process.env.DSH_OPENCLI_BIN = 'opencli'
   traceDir = path.join(os.tmpdir(), 'dsh-opencli-test-traces-f-vom-' + uniq)
   process.env.DSH_OPENCLI_TRACE_DIR = traceDir
@@ -238,7 +244,13 @@ afterEach(() => {
 
 afterAll(async () => {
   vi.unstubAllGlobals()
-  delete process.env.DSH_OPENCLI_BIN
+  // env 复位(0.1.3 C⑧):beforeAll 改写的隔离四件套与直连总闸逐个还原到装载前的值(多为 vitest
+  // config 注入的临时路径/缺省 '0')——删键会让 DSH_OPENCLI_STATE 等回落真实 ~/.dsh 默认路径,
+  // 比不复位更危险;跨文件目前只靠 vitest 默认 isolate 挡,不托付给缺省值
+  for (const [k, v] of Object.entries(envBeforeLoad)) {
+    if (v === undefined) delete process.env[k]
+    else process.env[k] = v
+  }
   const c = ctx as unknown as { stop?: () => Promise<void>; dispose?: () => Promise<void> }
   await (c.stop ?? c.dispose ?? (async () => {}))()
 })

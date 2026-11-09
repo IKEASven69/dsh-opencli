@@ -25,15 +25,16 @@ class CmShell extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
   resolve(req: unknown): unknown { return req }
   async run(spec: { command: unknown }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
-    const cmd = String(spec.command)
+    const cmd = String(Array.isArray(spec.command) ? spec.command.join(' ') : spec.command) // array 形态优先后回落路径传 argv 数组,归一回串判别
     this.calls.push(cmd)
     if (cmd.includes('--version')) {
       if (this.mode === 'throw') throw new Error('stub: daemon 冷启动,shell 抛错')
       if (this.mode === 'exit1') return { exitCode: 1, stdout: { text: '' }, stderr: { text: 'stub: 找到了但 --version 执行失败' } }
       return { exitCode: 0, stdout: { text: this.versionText }, stderr: { text: '' } }
     }
-    // daemon 桩用 advanced.test.ts 同款 1.x 文本(parseDaemonStatus 已知好形状)
-    if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: 'Daemon: running\nVersion: v1.8.7\nPort: 19825\n' }, stderr: { text: '' } }
+    // daemon 桩:2.0.x JSON 信封+尾部升级横幅(0.1.3 C②:本机 `opencli daemon status` 实测形状;
+    // 本文件不断言 daemon 字段,只需 parseDaemonStatus 能解出 running——旧 1.x 文本形状真实守护进程已不再产生)
+    if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: '{"ok":true,"data":{"ok":true,"pid":19616,"uptime":3600.5,"daemonVersion":"2.0.2","extensionConnected":true,"port":19825,"running":true,"stale":false}}\n\n  Extension update available: v1.0.26 → v1.0.27\n  Download: https://github.com/jackwener/opencli/releases\n' }, stderr: { text: '' } }
     if (cmd.includes('list')) return { exitCode: 0, stdout: { text: '[]' }, stderr: { text: '' } }
     return { exitCode: 0, stdout: { text: '{}\n' }, stderr: { text: '' } }
   }

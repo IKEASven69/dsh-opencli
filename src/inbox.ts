@@ -1,8 +1,8 @@
 /**
- * 命令收件箱(0.4.6 任务 F1):ctl 助手 → ~/.dsh/opencli-inbox/ 意图文件 → 插件消费执行。
+ * 命令收件箱:ctl 助手 → ~/.dsh/opencli-inbox/ 意图文件 → 插件消费执行。
  *
  * 为什么是收件箱而不是 RPC:面板聊天会话的 agent 有 shell(tool-pwsh)但没有本插件工具
- * (dsh 预设作用域,docs/RESEARCH-20261030)——文件收件箱让**任何**能跑命令的 dsh 会话
+ * (dsh 预设作用域架构所致)——文件收件箱让**任何**能跑命令的 dsh 会话
  * (面板/ZCode/任意插件的 agent)都能一句话驱动本插件,零鉴权(本机文件权限即边界),
  * 且天然跨进程(插件在网关进程内,ctl 在 agent 的 shell 里)。
  *
@@ -23,7 +23,7 @@ export const inboxDir = (): string => process.env.DSH_OPENCLI_INBOX_DIR ?? join(
 
 /** 意图(闭集):kind 与字段全部显式,多余字段=拒绝。 */
 export type Intent =
-  | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean }
+  | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string }
   | { kind: 'schedule-remove'; id: string }
   | { kind: 'schedule-run'; id: string }
   | { kind: 'schedule-list' }
@@ -69,17 +69,21 @@ export function parseIntent(raw: unknown): Intent | null {
   const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0
   switch (o.kind) {
     case 'schedule-add':
-      if (!allow(['kind', 'site', 'cron', 'watch', 'notify', 'retry', 'source', 'notifyLevel', 'quietHours', 'jitter', 'preflight'])) return null
+      if (!allow(['kind', 'site', 'cron', 'watch', 'notify', 'retry', 'source', 'notifyLevel', 'quietHours', 'jitter', 'preflight', 'keep', 'backoffMs', 'profile'])) return null
       if (!str(o.site) || !str(o.cron)) return null
       if (o.watch !== undefined && typeof o.watch !== 'string') return null
       if (o.notify !== undefined && typeof o.notify !== 'boolean') return null
       if (o.retry !== undefined && (typeof o.retry !== 'number' || !Number.isFinite(o.retry))) return null
       if (o.source !== undefined && (typeof o.source !== 'string' || !['agent', 'chat', 'panel', 'ctl'].includes(o.source))) return null
       if (o.notifyLevel !== undefined && o.notifyLevel !== 'quiet' && o.notifyLevel !== 'all') return null
-      if (o.jitter !== undefined && typeof o.jitter !== 'boolean') return null // P2-8:字符串 'false' 不得静默强转
+      if (o.jitter !== undefined && typeof o.jitter !== 'boolean') return null // 字符串 'false' 不得静默强转
       if (o.preflight !== undefined && typeof o.preflight !== 'boolean') return null
       if (o.quietHours !== undefined && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(String(o.quietHours)) && o.quietHours !== 'off') return null
-      return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}), ...(o.source !== undefined ? { source: o.source } : {}), ...(o.notifyLevel !== undefined ? { notifyLevel: o.notifyLevel } : {}), ...(o.quietHours !== undefined ? { quietHours: String(o.quietHours) } : {}), ...(o.jitter !== undefined ? { jitter: o.jitter === true } : {}), ...(o.preflight !== undefined ? { preflight: o.preflight === true } : {}) } as Intent
+      if (o.keep !== undefined && (typeof o.keep !== 'number' || !Number.isInteger(o.keep) || o.keep < 5 || o.keep > 500)) return null
+      if (o.backoffMs !== undefined && (typeof o.backoffMs !== 'number' || !Number.isFinite(o.backoffMs) || o.backoffMs < 0 || o.backoffMs > 600000)) return null
+      // 多账号隔离 profile:opencli 别名/contextId 安全字符集('off' 亦落在字符集内=清除,由 scheduleAdd 解释)
+      if (o.profile !== undefined && (typeof o.profile !== 'string' || !/^[\w.@-]{1,64}$/.test(o.profile))) return null
+      return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}), ...(o.source !== undefined ? { source: o.source } : {}), ...(o.notifyLevel !== undefined ? { notifyLevel: o.notifyLevel } : {}), ...(o.quietHours !== undefined ? { quietHours: String(o.quietHours) } : {}), ...(o.jitter !== undefined ? { jitter: o.jitter === true } : {}), ...(o.preflight !== undefined ? { preflight: o.preflight === true } : {}), ...(o.keep !== undefined ? { keep: o.keep } : {}), ...(o.backoffMs !== undefined ? { backoffMs: o.backoffMs } : {}), ...(o.profile !== undefined ? { profile: o.profile } : {}) } as Intent
     case 'schedule-remove':
       return allow(['kind', 'id']) && str(o.id) ? { kind: 'schedule-remove', id: o.id } : null
     case 'schedule-run':

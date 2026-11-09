@@ -400,9 +400,11 @@ describe('evidence-get RPC(伪造证据文件→结构化字段)', () => {
   let ctx: InstanceType<typeof Context>
   let svc: Record<string, any>
   let evdDir: string
+  let evdEnvBefore: string | undefined
 
   beforeAll(async () => {
     evdDir = path.join(os.tmpdir(), `dsh-opencli-test-evidence-canvas-${process.pid}-${Date.now()}`)
+    evdEnvBefore = process.env.DSH_OPENCLI_EVIDENCE_DIR
     process.env.DSH_OPENCLI_EVIDENCE_DIR = evdDir
     ctx = new Context()
     svc = new (OpencliService as unknown as { new (c: InstanceType<typeof Context>): Record<string, any> })(ctx)
@@ -431,6 +433,10 @@ describe('evidence-get RPC(伪造证据文件→结构化字段)', () => {
     const c = ctx as unknown as { stop?: () => Promise<void>; dispose?: () => Promise<void> }
     await (c.stop ?? c.dispose ?? (async () => {}))()
     fs.rmSync(evdDir, { recursive: true, force: true })
+    // env 复位(0.1.3 C⑧):beforeAll 改写的证据目录还原到装载前的值(原本不存在则删键)——
+    // 指向已删临时路径的 env 不能泄漏给同 worker 后续;跨文件目前只靠 vitest 默认 isolate 挡
+    if (evdEnvBefore === undefined) delete process.env.DSH_OPENCLI_EVIDENCE_DIR
+    else process.env.DSH_OPENCLI_EVIDENCE_DIR = evdEnvBefore
   })
 
   it('读全文出结构化字段:新→旧、verdict 三值映射、双截图/免责行透传、可选字段省键、limit 钳制、脏文件跳过、目录缺失回空表', async () => {

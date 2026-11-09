@@ -92,6 +92,8 @@ export function buildReport(title: string, sources: ReportSource[], genAt: strin
   for (const f of suspects) lines.push(`- 可疑:${f.site}——判定提示复核,使用前请人工确认`)
   if (sources.length === 0) lines.push('- 声明:本次无任何数据源(全部缺席),报告只有骨架。')
   lines.push('')
-  lines.push('> 生成于 dsh-opencli(登录态采集×出处可溯);每节围栏内为命令原始输出。')
+  // 出处声明与落盘事实对齐:快照落盘时 URL 凭据类查询参数的值已脱敏(token/code/sid 等,参数名保留),
+  // 其余文本仍是原始输出——"原始输出"的声明要把这唯一的变换写明,不许含糊
+  lines.push('> 生成于 dsh-opencli(登录态采集×出处可溯);每节围栏内为命令原始输出(URL 中 token/code/sid 等凭据类查询参数的值已脱敏)。')
   return lines.join('\n')
 }

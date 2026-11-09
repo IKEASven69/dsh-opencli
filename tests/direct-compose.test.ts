@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  composeClick, composeCloseWindow, composeScreenshot, composeScroll, composeState, composeTabs,
+  composeClick, composeCloseWindow, composeOpen, composeScreenshot, composeScroll, composeState, composeTabs,
   setCliDistDir, __composeResetForTest,
 } from '../src/direct-compose.ts'
 
@@ -203,6 +203,118 @@ describe('composeClick', () => {
   })
 })
 
+describe('composeOpen(上游 open 六要素链,0.1.3 C①补强)', () => {
+  /** 拦截 setTimeout 记录全部定时请求并 1ms 放行(composeOpen ③ 的 2s 落定等待不真等)。
+   *  记录里同时有 direct.ts 每个请求的 AbortController 超时定时器——其值即 composeOpen 给各步的
+   *  超时参数(捕获 15s/navigate 60s/拦截器 15s/URL 回读 10s),按序断言整串即锁住六要素次序。 */
+  const captureSleeps = (): { sleeps: number[]; restore: () => void } => {
+    const sleeps: number[] = []
+    const real = globalThis.setTimeout
+    const wrapped = ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+      sleeps.push(ms ?? 0)
+      return real(fn as never, 1, ...(rest as never[]))
+    }) as typeof setTimeout
+    vi.stubGlobal('setTimeout', wrapped)
+    return { sleeps, restore: () => vi.stubGlobal('setTimeout', real) }
+  }
+
+  it('六要素全链:①捕获启动(pattern 空)→② navigate→③ 2s 落定等待→⑤ URL 回读→信封 {url,page};捕获已开则不注入④拦截器', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const { sleeps, restore } = captureSleeps()
+    stubFetch(scripted((action, b) => {
+      bodies.push(b)
+      if (action === 'network-capture-start') return { ok: true, data: {} }
+      if (action === 'navigate') return { ok: true, data: {}, page: 'tgt-open' }
+      if (action === 'exec' && b.code === 'window.location.href') return { ok: true, data: 'https://final.example/' }
+      throw new Error('捕获已开不应注入拦截器: ' + JSON.stringify(b))
+    }))
+    const r = await composeOpen('sess-open', 'https://x.example/', undefined)
+    restore()
+    // 信封与页面身份
+    expect(r!.pageId).toBe('tgt-open')
+    expect(r!.env).toEqual({ exitCode: 0, stdout: JSON.stringify({ ok: true, data: { url: 'https://final.example/', page: 'tgt-open' } }), stderr: '' })
+    // 请求次序与形状:捕获→navigate→URL 回读;无拦截器 exec
+    expect(bodies.map((b) => String(b.action))).toEqual(['network-capture-start', 'navigate', 'exec'])
+    expect(bodies[0]).toMatchObject({ session: 'sess-open', surface: 'browser', pattern: '' })
+    expect(bodies[1]).toMatchObject({ session: 'sess-open', surface: 'browser', url: 'https://x.example/' })
+    expect(bodies[2]).toMatchObject({ session: 'sess-open', page: 'tgt-open', code: 'window.location.href' })
+    // ③ 落定等待恰一次 2000ms,夹在 navigate 与 URL 回读之间(上游 page.wait(2) 是刻意的页面稳定语义):
+    // 定时器序列 = 捕获超时 15s → navigate 超时 60s → 落定 2s → URL 回读超时 10s
+    expect(sleeps).toEqual([15_000, 60_000, 2000, 10_000])
+  })
+
+  it('旧扩展容忍:捕获启动报 unknown action + network-capture → 静默跳过并注入④拦截器(拦截器失败 non-fatal)', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const { sleeps, restore } = captureSleeps()
+    stubFetch(scripted((action, b) => {
+      bodies.push(b)
+      if (action === 'network-capture-start') return { ok: false, errorCode: 'unknown action: network-capture-start', error: 'extension 1.0.20 not support' }
+      if (action === 'navigate') return { ok: true, data: {}, page: 'tgt-cap2' }
+      if (action === 'exec' && String(b.code).startsWith('INTERCEPTOR_JS')) return { ok: false, errorCode: 'eval_failed', error: 'blocked' }
+      if (action === 'exec' && b.code === 'window.location.href') return { ok: true, data: 'https://x.example/' }
+      throw new Error('不该有更多请求: ' + JSON.stringify(b))
+    }))
+    const r = await composeOpen('sess-cap2', 'https://x.example/', undefined)
+    restore()
+    expect(r!.pageId).toBe('tgt-cap2')
+    // ④ 拦截器兜底:无会话捕获时注入(打在 navigate 回传的 page 身份上),失败不影响信封
+    const inj = bodies.find((b) => String(b.code).startsWith('INTERCEPTOR_JS'))
+    expect(inj).toBeDefined()
+    expect(inj!.page).toBe('tgt-cap2')
+    // 次序:捕获 15s → navigate 60s → 落定 2s → ④拦截器 15s → URL 回读 10s(拦截器在落定之后)
+    expect(sleeps).toEqual([15_000, 60_000, 2000, 15_000, 10_000])
+  })
+
+  it('捕获启动其他失败(非 unknown-action)→ undefined 回 CLI,navigate 不发起', async () => {
+    stubFetch(scripted((action) => {
+      if (action === 'network-capture-start') return { ok: false, errorCode: 'HTTP 500', error: 'daemon busy' }
+      throw new Error('捕获失败后不应继续: ' + action)
+    }))
+    expect(await composeOpen('sess-fail', 'https://x.example/', undefined)).toBeUndefined()
+  })
+
+  it('② stale 页身份: navigate 报 page/stale 类错误 → 清缓存不带 page 重试一次,重试成功继续', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const { restore } = captureSleeps()
+    stubFetch(scripted((action, b) => {
+      bodies.push(b)
+      if (action === 'network-capture-start') return { ok: true, data: {} }
+      if (action === 'navigate') return bodies.length === 2
+        ? { ok: false, errorCode: 'page_not_found', error: 'stale page identity' }
+        : { ok: true, data: {}, page: 'tgt-retry' }
+      if (action === 'exec' && b.code === 'window.location.href') return { ok: true, data: 'https://x.example/' }
+      throw new Error('不该有更多请求: ' + JSON.stringify(b))
+    }))
+    const r = await composeOpen('sess-stale', 'https://x.example/', 'old-tgt')
+    restore()
+    expect(r!.pageId).toBe('tgt-retry')
+    const navs = bodies.filter((b) => b.action === 'navigate')
+    expect(navs).toHaveLength(2)
+    expect(navs[0]).toMatchObject({ page: 'old-tgt', url: 'https://x.example/' })
+    expect(navs[1]!.page).toBeUndefined() // 重试不带 stale 的 page,让 daemon 重解析会话活页
+    expect(navs[1]).toMatchObject({ url: 'https://x.example/' })
+  })
+
+  it('⑤ 已知 URL 进会话缓存:open 后 composeState 免 URL exec(信封 url 取 open 回读值)', async () => {
+    const codes: string[] = []
+    const { restore } = captureSleeps()
+    stubFetch(scripted((action, b) => {
+      if (action === 'network-capture-start') return { ok: true, data: {} }
+      if (action === 'navigate') return { ok: true, data: {}, page: 'tgt-url' }
+      if (action === 'exec') { codes.push(String(b.code)); return String(b.code) === 'window.location.href' ? { ok: true, data: 'https://opened.example/' } : { ok: true, data: '[1] link A' } }
+      throw new Error('不该有更多请求: ' + action)
+    }))
+    await composeOpen('sess-url', 'https://opened-base.example/', undefined)
+    restore()
+    codes.length = 0 // 只看 state 阶段的 exec(open 自己的 ⑤ URL 回读不算)
+    const env = await composeState('sess-url', 'tgt-url')
+    // state 的 exec 里没有 window.location.href:URL 取自 open 的会话缓存
+    expect(codes).not.toContain('window.location.href')
+    expect(codes).toContain('window.__opencli_prev_hashes')
+    expect(env!.stdout).toBe(JSON.stringify({ ok: true, data: { url: 'https://opened.example/', snapshot: '[1] link A' } }))
+  })
+})
+
 describe('composeScreenshot / composeCloseWindow / composeTabs', () => {
   it('截图返回 base64+信封;非字符串 data → undefined', async () => {
     stubFetch(scripted(() => ({ ok: true, data: 'aGVsbG8=' })))
@@ -234,5 +346,25 @@ describe('composeScreenshot / composeCloseWindow / composeTabs', () => {
     expect(cl!.closedPage).toBe('dead-tgt')
     stubFetch(scripted((action, b) => ({ ok: true, data: {} })))
     expect(await composeTabs('dsh', 'close', {}, undefined)).toBeUndefined()
+  })
+
+  it('tab select 按序号:请求 op select+index,信封 {selected:"<n>"},pageId 取响应 page(0.1.3 C①补强)', async () => {
+    let body: Record<string, unknown> | null = null
+    stubFetch(scripted((_a, b) => { body = b; return { ok: true, data: {}, page: 'sel-tgt' } }))
+    const r = await composeTabs('sess-tab', 'select', { index: 2 }, undefined)
+    expect(body).toMatchObject({ action: 'tabs', session: 'sess-tab', surface: 'browser', op: 'select', index: 2 })
+    expect(r!.env.stdout).toBe(JSON.stringify({ ok: true, data: { selected: '2' } }))
+    expect(r!.pageId).toBe('sel-tgt')
+  })
+
+  it('tab select 按 page 身份:目标透传 page 参数;响应缺 page → undefined 回 CLI 出权威结果', async () => {
+    let body: Record<string, unknown> | null = null
+    stubFetch(scripted((_a, b) => { body = b; return { ok: true, data: {}, page: 'sel-tgt2' } }))
+    const r = await composeTabs('sess-tab', 'select', { page: 'tgt-9' }, undefined)
+    expect(body).toMatchObject({ action: 'tabs', op: 'select', page: 'tgt-9' })
+    expect(r!.env.stdout).toBe(JSON.stringify({ ok: true, data: { selected: 'tgt-9' } }))
+    expect(r!.pageId).toBe('sel-tgt2')
+    stubFetch(scripted(() => ({ ok: true, data: {} })))
+    expect(await composeTabs('dsh', 'select', { page: 'tgt-9' }, undefined)).toBeUndefined()
   })
 })

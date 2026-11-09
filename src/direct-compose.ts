@@ -85,6 +85,18 @@ const stateHashes = new Map<string, string | null>()
 /** 会话最近已知 URL(与上游 page._lastUrl 同义:composeOpen 导航后即知,state 免一次 exec)。 */
 const lastUrl = new Map<string, string>()
 
+/** 会话级缓存上限(0.1.2 发后审查 low:会话名不可枚举,常驻进程防无限累积):超限按插入序裁最旧。 */
+const SESSION_CACHE_CAP = 200
+
+/** 有界写入:超限裁最旧插入的会话(热点会话每次 set 即刷新插入位,天然靠后)。 */
+function capSet<T>(map: Map<string, T>, key: string, value: T): void {
+  map.set(key, value)
+  if (map.size > SESSION_CACHE_CAP) {
+    const oldest = map.keys().next()
+    if (!oldest.done) map.delete(oldest.value)
+  }
+}
+
 let markerSeq = 0
 
 /** 测试重置(清缓存+序号;构造器缓存由 __setCliDistDirForTest 管理)。 */
@@ -199,7 +211,7 @@ export async function composeState(session: string, page: string | undefined, ti
   if (!r.ok) return undefined
   // 回读 diff hashes(best-effort,上游同款:失败不影响主结果)
   const hr = await directExec(session, 'window.__opencli_prev_hashes', r.page ?? page, 10_000)
-  if (hr.ok && typeof hr.data === 'string') stateHashes.set(session, hr.data)
+  if (hr.ok && typeof hr.data === 'string') capSet(stateHashes, session, hr.data)
   // URL:优先取 composeOpen 导航后的已知值(上游 _lastUrl 同款);无已知值才 exec 现取
   // (best-effort:上游 getCurrentUrl 失败返回 null → emitResult 里 url 落 '')
   let url = lastUrl.get(session) ?? ''
@@ -303,7 +315,7 @@ export async function composeOpen(session: string, url: string, page: string | u
   let currentUrl = url
   const ur = await directExec(session, 'window.location.href', pageId, 10_000)
   if (ur.ok && typeof ur.data === 'string' && ur.data.length > 0) currentUrl = ur.data
-  lastUrl.set(session, currentUrl)
+  capSet(lastUrl, session, currentUrl)
   return { env: okEnv({ url: currentUrl, page: pageId }), pageId }
 }
 

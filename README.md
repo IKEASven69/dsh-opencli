@@ -10,7 +10,7 @@
 
 - 面向使用者:安装与面板操作见 [快速开始](#快速开始);全部能力清单见 [功能矩阵](#功能矩阵)
 - 面向 agent:SKILL.md 已随包分发,会话内可直接发现并调用;命令行入口 `dsh-opencli-ctl`
-- 面向贡献者:开发约定、审查流程与内部调研见 [docs/](docs/)
+- 面向贡献者:源码、issue 与发布记录见 [GitHub 仓库](https://github.com/IKEASven69/dsh-opencli)
 
 ## 工作原理
 
@@ -114,7 +114,20 @@ cron 持久化任务,到点用登录态真实采集:失败自动重试 ×3,成�
 
 - opencli ≤1.8.8 在插件目录内跑 `npm install` 会静默替换宿主链接([#2555](https://github.com/jackwener/opencli/issues/2555),2.0 已修复)——1.8.x 用户请在仓库外装依赖
 - 升级 dsh 到 0.2 前自查 profile `cordis.patch.yml` 有无引用未安装的 bundle——0.2 对此静默退出
-- 面板聊天会话不装载插件 agent 工具是 dsh 预设作用域架构所致,详见 [docs/RESEARCH-20261030-dsh-preset-and-env.md](docs/RESEARCH-20261030-dsh-preset-and-env.md)
+- 面板聊天会话不装载插件 agent 工具是 dsh 预设作用域架构所致——该类会话可改用 `dsh-opencli-ctl` 命令面(见 [面向 agent](#面向-agent))
+
+## 未装扩展时能用什么(零配置降级)
+
+BrowserBridge 扩展未安装或未连接时,插件不伪造降级,按命令类型如实处理:
+
+| 命令类型 | 无扩展时的行为 |
+|---|---|
+| `site` 纯 HTTP 只读命令(如 `site juejin hot`、`site hackernews best`) | 照常直跑,不受影响 |
+| `site` 需浏览器会话的只读命令 | 不自动降级执行,如实报告不可用并给出两条路(装扩展 / 先用纯 HTTP 命令)。CDP 匿名通道默认关闭:附着现有标签页会带上你的登录态,与"匿名"承诺冲突 |
+| `site` 写命令、权限未知的命令 | 永不降级:没有你的登录身份,写操作不是降级而是伪造 |
+| `opencli_*` / `chrome_*` 原语族 | 执行前短路,一次说清缺什么、怎么装、装好后会怎样,不空等超时 |
+
+doctor 诊断与面板首启向导在扩展未连时会同时声明"当前还能跑什么"。装好扩展后自动重连,全部能力立即恢复,无需重启 dsh。
 
 ## 配置
 
@@ -130,7 +143,7 @@ cron 持久化任务,到点用登录态真实采集:失败自动重试 ×3,成�
 
 ## 安全不变量
 
-write 审批门 fail-closed:权限不明按写处理。20 种绕过形态逐条回归 + 200 次可复现 fuzz,不变量:**凡 allow ⟹ 只读意图**。形态样本:
+write 审批门 fail-closed:权限不明按写处理。攻击表 22 行(17 种写/越权形态逐条弹审批 + 5 条只读对照放行)+ 独立通道 3 项(`site_batch` / benchmark / canary 各自带只读门)逐条回归,另有 200 次可复现 fuzz,不变量:**凡 allow ⟹ 只读意图**。形态样本:
 
 | 攻击形态 | 行为 |
 |---|---|
@@ -155,7 +168,7 @@ write 审批门 fail-closed:权限不明按写处理。20 种绕过形态逐条�
 ## 文档
 
 - [CHANGELOG](CHANGELOG.md) · [SKILL.md](SKILL.md)(agent 使用手册) · [AGENT_INSTALL.md](AGENT_INSTALL.md)(agent 自助安装)
-- 开发文档:[docs/](docs/) — 设计稿、调研、验收记录与内部约定
+- 问题反馈:[GitHub Issues](https://github.com/IKEASven69/dsh-opencli/issues)
 
 ## 定位
 

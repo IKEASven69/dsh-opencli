@@ -10,6 +10,13 @@ import { join } from 'node:path'
 import * as os from 'node:os'
 
 const BSN = String.fromCharCode(10) // 真实换行字符(字面反斜杠n 会让文本正则全乱)
+/** daemon status 运行态响应:2.0.x JSON 信封+尾部升级横幅(0.1.3 C②:真实 2.0.x 守护进程的输出形状,
+ *  字段名取自本机 `opencli daemon status` 实测——{ok,data:{ok,pid,daemonVersion,extensionConnected,…}};
+ *  此前桩用 1.x 文本形状,健康预检链只对真实守护进程不再产生的形状做过端到端验证)。
+ *  未运行态保留 1.x 文本:2.0.x 未运行态的真实输出未经实测取证,不臆造(parsers 两形都接)。 */
+const daemonJson = (version: string, extension: string): string =>
+  `{"ok":true,"data":{"ok":true,"pid":19616,"uptime":3600.5,"daemonVersion":${JSON.stringify(version)},"extensionConnected":${extension === 'connected'},"extensionVersion":"1.0.26","port":19825,"running":true,"stale":false}}` +
+  BSN + BSN + '  Extension update available: v1.0.26 → v1.0.27' + BSN + '  Download: https://github.com/jackwener/opencli/releases' + BSN
 class ShellStub extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
   resolve(req: unknown): unknown { return req }
@@ -23,7 +30,7 @@ class ShellStub extends Service {
       ShellStub.statusCalls++
       const st = ShellStub.statusSeq.length > 1 ? ShellStub.statusSeq.shift()! : (ShellStub.statusSeq[0] ?? { running: false, version: '', extension: '' })
       if (!st.running) return { exitCode: 0, stdout: { text: 'Daemon: not running' }, stderr: { text: '' } }
-      return { exitCode: 0, stdout: { text: 'Daemon: running' + BSN + 'Version: ' + st.version + BSN + 'Extension: ' + st.extension + BSN + 'Port: 19825' }, stderr: { text: '' } }
+      return { exitCode: 0, stdout: { text: daemonJson(st.version, st.extension) }, stderr: { text: '' } }
     }
     if (/daemon restart/.test(cmdStr)) {
       ShellStub.restartCalls++

@@ -1,8 +1,8 @@
 /**
  * dsh-opencli host 半:登录态浏览器代理。
  * - opencli_* 工具族:包装 `opencli browser <session> …` 原语(open/state/click/type/fill/extract/screenshot/scroll/wait + do 透传)。
- *   2026-10 命名空间迁移:browser_* → opencli_*(wqty123 #28 / Tencent #444 两次撞名后主动让出
- *   browser_ 前缀),旧名经 registerToolWithLegacyAlias 挂弃用别名,2027-04 移除。
+ *   2026-10 命名空间迁移:browser_* → opencli_*(两次第三方插件 browser_ 前缀撞名事故后
+ *   主动让出该前缀),旧名经 registerToolWithLegacyAlias 挂弃用别名,2027-04 移除。
  * - site 工具:`opencli <adapter> <command> …` 适配器桥
  * - systemPrompt:适配器目录(缓存 + TTL)与使用要点
  * - TypertRemoteService RPC:status / adapters / refresh(面板用)
@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 import type {
   AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
   AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, DaemonStartResult, EvidenceGetResult,
-  IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult, TraceLine, TraceListResult,
+  EventsGetResult, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult, TraceLine, TraceListResult,
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, extractJsonObject, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
@@ -33,16 +33,17 @@ import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, renderTransportBenchmark, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
 import { EVIDENCE_FILE_RE, EVIDENCE_KEEP, buildEvidence, parseEvidenceFileName, saveEvidence, type EvidenceRecord } from './evidence.ts'
-import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, inQuietHours, parseQuietHours, renderQuietDigest, type NotifyConfig, type QuietPendingItem } from './notify.ts'
+import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, inQuietHours, parseQuietHours, renderQuietDigest, scrubLocalPaths, scrubUrlParams, type NotifyConfig, type QuietPendingItem } from './notify.ts'
+import { PLUGIN_VERSION } from './version.ts'
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
 import { composeClick, composeCloseWindow, composeOpen, composeScreenshot, composeScroll, composeState, composeTabs, setCliDistDir, type CliEnvelope } from './direct-compose.ts'
 import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, type Intent, type IntentResult } from './inbox.ts'
+import { startMcpSelfhost, mcpAuthFile, type McpSelfhostHandle } from './mcp-selfhost.ts'
 import { aggregateDaySums, detectDrift, diffSnapshots, renderDiffText, type DriftSample } from './diffsnap.ts'
-import { authRiskClass, countStructuredItems, isChallengePage, looksTruncated, type Receipt } from './parsers.ts'
+import { authRiskClass, countStructuredItems, cursorOfPartialPage, coverageStopReason, isChallengePage, isDecorativeStep, looksPartialPage, looksTruncated, looksUnloaded, typedErrorCode, type Receipt } from './parsers.ts'
 
-/** 本插件版本(package.json 同源,自检视图与更新检查用;bundle 内联,发布脚本管同步)。 */
-const PLUGIN_VERSION = '0.1.2'
+/** 本插件版本单一来源在 version.ts(自检视图与面板「版本与更新」卡共用同一常量)。 */
 import { exportSnapshots } from './exportcsv.ts'
 import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
@@ -83,7 +84,7 @@ const CHROME_METHODS_ALLOW = new Set([
   'windows.get', 'windows.getAll', 'windows.create', 'windows.update', 'windows.remove',
 ])
 
-/** ④⑤ 无扩展短路统一文案(docs/DESIGN-zero-config-fallback.md §5 三件套:缺什么/装什么/装完会发生什么)。
+/** ④⑤ 无扩展短路统一文案(三件套:缺什么/装什么/装完会发生什么)。
  *  opencli_* 与 chrome_* 两族是 CLI→daemon→扩展硬链路(上游架构事实),无扩展不做伪造降级,只给确切出路。 */
 const NO_EXT_GUIDANCE =
   '需要 OpenCLI 扩展(当前未检测到):opencli_*/chrome_* 走 CLI→daemon→扩展链路,无扩展无法工作,也不伪造降级。' +
@@ -212,8 +213,13 @@ export class OpencliService extends TypertRemoteService {
   private adapterCache: { at: number; json: unknown } | null = null
   private lastShellError: string | null = null
   private state: PluginState = { approval: 'on', disabled: [], schedules: [], runHistory: {}, audit: [] }
-  /** 面板通知事件(调度失败等;内存态,最近 30 条) */
+  /** 面板通知事件(调度失败等;内存态最近 30 条——跨会话历史经 pushIngestEvent 追加落盘
+   *  ~/.dsh/opencli-events.jsonl,events-get 读回;内存态仍是 ingest-events 的数据源) */
   private ingestEventList: IngestEvent[] = []
+  // 事件历史文件可用 DSH_OPENCLI_EVENTS_FILE 覆盖(单测隔离用,与 statePath 同款约定)
+  private readonly eventsFile = process.env.DSH_OPENCLI_EVENTS_FILE !== undefined && process.env.DSH_OPENCLI_EVENTS_FILE.length > 0
+    ? process.env.DSH_OPENCLI_EVENTS_FILE
+    : join(homedir(), '.dsh', 'opencli-events.jsonl')
   /** 每任务结构签名环形缓冲(适配器漂移预警;内存态,任务 id → 最近 5 次 {items,structured}) */
   private driftHistory = new Map<string, DriftSample[]>()
   /** 当前构建 sha256(懒计算) */
@@ -240,16 +246,22 @@ export class OpencliService extends TypertRemoteService {
   benchGapMs = 800
   /** 截图序号(进程内单调,同秒多步防碰撞;跨进程/重启撞名由 existsSync 续拨兜底)。 */
   private shotSeq = 0
-  /** 收件箱轮询计时器(F1;同 schedTimer 的停机清除纪律)。 */
+  /** 收件箱轮询计时器(同 schedTimer 的停机清除纪律)。 */
   private inboxTimer: ReturnType<typeof setInterval> | undefined
+  /** MCP 自host 运行句柄(mcp-selfhost-status RPC 读;init 里启动,ctx.effect 收)。 */
+  private mcpSelfhost: McpSelfhostHandle | null = null
+  /** MCP 自host 启动失败留痕(端口被占等;status RPC 透出,init 不因此失败)。 */
+  private mcpSelfhostError: string | null = null
   private loginCache: { at: number; results: LoginCheckResult } | null = null
-  // usagePolicy：与 anweat 对齐的限流（并发/突发/冷却），默认与 anweat 一致
-  private usagePolicy = { minDelayMs: 750, maxConcurrency: 2, burst: 3, cooldownMs: 30000, retryLimit: 2, maxPagesPerRun: 20, maxDepth: 2 }
+  // usagePolicy：限流三参数（并发/突发/冷却），默认值对齐主流 DSH 浏览器插件的礼貌限流
+  private usagePolicy = { minDelayMs: 750, maxConcurrency: 2, burst: 3, cooldownMs: 30000, retryLimit: 2, maxPagesPerRun: 20, maxDepth: 2, writeMinDelayMs: 3000 }
   private callTimestamps: number[] = []
+  /** 写命令最近放行时刻(#59 读写分频:写步骤独立限频轨,与读的 minDelay/突发窗互不占用)。 */
+  private lastWriteAt = 0
   private concurrent = 0
   private cooldownUntil = 0
   private queue: Array<() => void> = []
-  // 限域登录（与 anweat authProfiles 对齐）：按 profile 限 allowedDomains，默认只读不回写
+  // 限域登录（authProfiles）：按 profile 限 allowedDomains，默认只读不回写
   private authProfiles: Record<string, { allowedDomains: string[]; storageStatePath?: string; persistState?: boolean }> = {
     // 示例：forum: { allowedDomains: ['example.com'], storageStatePath: 'D:/secrets/forum.json' }
   }
@@ -257,10 +269,17 @@ export class OpencliService extends TypertRemoteService {
     id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string
     source?: string; notifyLevel?: string; retry?: number; notify?: boolean; watch?: string
     quietHours?: string; pendingNotify?: QuietPendingItem[]
-    /** 拟人限速(0.1.2 P0-1):默认 true——精确 cron 时刻是指纹,首跑前随机延迟打散 */
+    /** 拟人限速:默认 true——精确 cron 时刻是指纹,首跑前随机延迟打散 */
     jitter?: boolean
     /** 登录态预检(0.1.2 认证预检):默认 false——开启时每 tick 采集前跑 whoami 快检,未登录跳过本 tick */
     preflight?: boolean
+    /** 快照留存预算(回执/轨迹卫生,任务级可配):本任务最多保留的快照份数,超出按时间序滚动淘汰最旧;默认 50 */
+    keep?: number
+    /** 重试退避(回执/轨迹卫生,任务级默认字段):普通失败两次尝试间隔毫秒;默认 15000。风控墙失败另有下限 120s */
+    backoffMs?: number
+    /** 多账号登录态隔离:浏览器 profile 别名或 contextId——经 OPENCLI_PROFILE 透传给 CLI
+     *  (上游 2.0.3 原生 --profile/contextId 路由,真隔离:不同 profile=不同浏览器档案的 cookie/存储) */
+    profile?: string
   }> = []
   private runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string; receipt?: Receipt }>> = {}
   /** 快照根目录(DSH_OPENCLI_SNAPSHOTS_DIR 可覆盖,测试隔离用;与 traceDir 同款约定)。 */
@@ -301,7 +320,7 @@ export class OpencliService extends TypertRemoteService {
 
   private resolveBin(): string {
     if (process.env.DSH_OPENCLI_BIN !== undefined && process.env.DSH_OPENCLI_BIN.length > 0) return process.env.DSH_OPENCLI_BIN
-    // 优先插件本地依赖（与 anweat 同策略：本地优先/全局复用）
+    // 优先插件本地依赖（本地优先/全局复用策略）
     try {
       // @ts-ignore - optional peer
       const pkg = require.resolve('@jackwener/opencli/package.json')
@@ -339,7 +358,7 @@ export class OpencliService extends TypertRemoteService {
     this.registerDoctorTool()
     this.registerBenchmarkTool()
     if (this.toolConflicts.length > 0) {
-      // 撞名让位是静默行为,不留宿主日志用户无从得知这些工具为何消失(Tencent/wqty123 整挂都因它)
+      // 撞名让位是静默行为,不留宿主日志用户无从得知这些工具为何消失(社区插件因 browser_* 撞名整挂的教训)
       console.warn(`[dsh-opencli] 另一插件注册了同名工具,本插件已让位这些命令:${this.toolConflicts.join(', ')}`)
     }
     this.registerApprovalGate()
@@ -353,7 +372,7 @@ export class OpencliService extends TypertRemoteService {
     void this.extensionState().catch(() => {})
     void this.injectSystemPrompt()
     if (this.schedules.some((s) => s.enabled)) this.startScheduler()
-    // 命令收件箱(0.4.6 F1):ctl 助手写意图 → 本消费者执行并回写结果。面板/ZCode/任意
+    // 命令收件箱:ctl 助手写意图 → 本消费者执行并回写结果。面板/ZCode/任意
     // dsh 会话的 agent 都能用 shell 驱动插件(预设门绕开的生态面)。vitest 里只由专项
     // 用例手动 drain(自动轮询会与隔离目录用例互相踩);单测环境外 3s 一拍。
     if (process.env.VITEST === undefined) {
@@ -361,6 +380,11 @@ export class OpencliService extends TypertRemoteService {
       ;(this.ctx as unknown as { effect?: (f: () => () => void) => unknown }).effect?.(() => () => {
         if (this.inboxTimer !== undefined) { clearInterval(this.inboxTimer); this.inboxTimer = undefined }
       })
+      // MCP 自host Streamable-HTTP 端点(知识卡第三分发面,外部 MCP 消费者直连):
+      // 启动失败(端口被占等)不抛不炸,mcpSelfhostError 留痕给 status RPC;
+      // 句柄随 ctx.effect 收走(停 HTTP server+删 token 告知文件),与收件箱计时器同纪律。
+      // vitest 里不自动起(同收件箱理由);tests/mcp-selfhost.test.ts 直接驱动模块。
+      await this.startMcpSelfhostSafe()
     }
     // 调度计时器随服务停机清除:cordis stop 不自动收走裸 setInterval,vitest 复用 worker 跑
     // 多个测试文件与插件热重载都会留下僵尸调度器——它在服务"死后"继续触发
@@ -369,7 +393,7 @@ export class OpencliService extends TypertRemoteService {
     ;(this.ctx as unknown as { effect?: (f: () => () => void) => unknown }).effect?.(() => () => {
       if (this.schedTimer !== undefined) { clearInterval(this.schedTimer); this.schedTimer = undefined }
     })
-    // 兼容 anweat 生态：其他插件 inject: ['browser'] 时共用本服务。
+    // 兼容其他浏览器类插件生态：其他插件 inject: ['browser'] 时共用本服务。
     // 不能把带 typertRemote 的原始实例直接 provide：网关遍历 ctx.reflect.props 时,
     // 'browser' 条目会在 namespace 过滤前走 readBinding,serviceKey('browser')≠绑定
     // 里的 'opencli' 直接抛 inconsistent binding。改为提供绑定方法的无门面副本
@@ -393,14 +417,18 @@ export class OpencliService extends TypertRemoteService {
   private toolConflicts: string[] = []
   /** 本插件成功注册的工具名(自检视图逐个点名:#9308 式'装上没效果'的可视化解药)。 */
   private registeredToolNames: string[] = []
+  /** 注册期预期清单(成功与撞名让位都入册):selfCheck 点名的基准——此前从 registeredToolNames
+   *  自身取期望,点名恒真,对任何失败形态都无鉴别力。 */
+  private expectedToolNames: string[] = []
 
   /**
    * 重名防护:dsh 0.2.1 的 dsh-tools NamedEntries 对重名注册直接抛 "tool X is already
-   * registered",不接住就是整个插件加载失败(Tencent/wqty123 两个插件都栽过 browser_* 撞名)。
+   * registered",不接住就是整个插件加载失败(社区已有两个插件栽在 browser_* 撞名上)。
    * 五个 register* 方法的全部工具注册走这里:撞名 → 记入 toolConflicts 让位(本插件后加载,
    * 先到先得);其他错误仍抛——真正的 bug 不许被吞。
    */
   private registerToolSafe<S extends ParameterSchemaSpec, O extends ValueSchemaSpec>(def: DefineToolOptions<S, O>): void {
+    this.expectedToolNames.push(def.name)
     try {
       this.ctx.tools.register(defineTool(def))
       this.registeredToolNames.push(def.name)
@@ -412,7 +440,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * 命名空间迁移兼容层(2026-10,wqty123 #28 / Tencent #444 两次撞名后主动让出 browser_ 前缀):
+   * 命名空间迁移兼容层(2026-10,两次第三方插件 browser_* 撞名事故后主动让出该前缀):
    * 新名 opencli_* 是正主,旧名 browser_* 同步注册为弃用别名——描述前置「已弃用」引导模型改口,
    * execute 原样转发新名实现,结果首行附弃用提示(功能不断)。旧名只是别名:systemPrompt 目录、
    * doctor 等正主位只写新名;别名同样走 registerToolSafe,被其他插件占了旧名正合迁移本意,让位即可。
@@ -484,7 +512,7 @@ export class OpencliService extends TypertRemoteService {
             } else {
               lines.push('✗ BrowserBridge:扩展未连接')
               next.push('装扩展(需人在浏览器点一次):https://github.com/jackwener/OpenCLI/releases 下载 opencli-extension-*.zip 解压 → Chrome/Edge 扩展页开"开发者模式"→"加载解压缩的扩展";装完等扩展自动重连')
-              // 零配置降级声明(设计 §2.2-1):红层不再只有"装扩展"一种结局——同步声明当前诚实的可用面,
+              // 零配置降级声明:红层不再只有"装扩展"一种结局——同步声明当前诚实的可用面,
               // 不让"全部工具族的错误文案都引向先装扩展"高估不可用面
               next.push('零配置继续用:无扩展也能直跑纯 HTTP 只读命令(如 site juejin hot);需浏览器的只读命令当前不可自动降级(CDP 通道默认关闭:attach 现存标签页与匿名承诺冲突),装扩展后自动恢复全部能力')
             }
@@ -506,7 +534,7 @@ export class OpencliService extends TypertRemoteService {
     })
   }
 
-  /** 一键冒烟基准(任务 C):固定无需登录的读命令集串行实测出成功率表,报告落盘可追溯。 */
+  /** 一键冒烟基准:固定无需登录的读命令集串行实测出成功率表,报告落盘可追溯。 */
   private registerBenchmarkTool(): void {
     this.registerToolSafe({
       name: 'benchmark',
@@ -848,7 +876,9 @@ export class OpencliService extends TypertRemoteService {
             status: (!r.ok ? 'fail' : r.badge.includes('疑似静默失败') ? 'silent' : r.badge.includes('内容可疑') ? 'suspect' : 'ok') as ReportSource['status'],
             ...(r.badge.length > 0 ? { note: r.badge.replace(/^\(|\)$/g, '') } : {}),
           }))
-          const md = buildReport(`批量采集报告 · ${command}`, sources, new Date().toISOString())
+          // 报告出口统一过 URL 凭据参数脱敏(卫生包:批量源是现场输出、不经快照落盘清洗,出口补洗;
+          // 与报告尾注「凭据类查询参数已脱敏」的声明一致)
+          const md = scrubUrlParams(buildReport(`批量采集报告 · ${command}`, sources, new Date().toISOString()))
           const dir = process.env.DSH_OPENCLI_REPORTS_DIR ?? join(homedir(), '.dsh', 'opencli-reports')
           await mkdir(dir, { recursive: true })
           const file = join(dir, `batch-${Date.now()}.md`)
@@ -912,7 +942,7 @@ export class OpencliService extends TypertRemoteService {
     })
   }
 
-  // ── chrome_* 原生管理工具族(任务 B)──────────────────────
+  // ── chrome_* 原生管理工具族──────────────────────
 
   /**
    * opencli 2.0 `browser chrome call <method> <args>` 免页面会话桥:原生 Chrome ID 管理标签/分组/窗口,
@@ -1001,7 +1031,7 @@ export class OpencliService extends TypertRemoteService {
    * browser chrome call 单点。CLI 签名为 `call <method> [args]`且 args 是"整个位置参数列表的
    * JSON 数组字符串"(实探 2.0.0 --help),故恒传显式 '[]' 保证 argv 确定性。输出经 runOpencli
    * 自带的 2.0 信封解包;扩展 1.0.24 及以前该通道报 "Browser session is required"——
-   * 补升级指引而不是让用户面对裸错(本机真机实测 2026-10-20,describe 同款报错)。
+   * 补升级指引而不是让用户面对裸错(本机实测 2026-10-20,describe 同款报错)。
    */
   private async runChromeCall(method: string, args: unknown[]): Promise<{ text: string }> {
     // ⑤ 无扩展短路(同④):chrome 通道同样经 daemon→扩展(且需扩展 ≥1.0.25),
@@ -1121,11 +1151,11 @@ export class OpencliService extends TypertRemoteService {
     })
   }
 
-  // ── canvas VOM 工具族(任务 N):eval 桥────────────────────
-  // 前提(DESIGN-canvas-vom.md §1.1 实测):上游 browser 交互族 selector-first、无坐标
+  // ── canvas VOM 工具族:eval 桥────────────────────
+  // 前提(2026-10 对上游交互族的实测):上游 browser 交互族 selector-first、无坐标
   // 参数,canvas 位图内部无 DOM/AX 目标——唯一能触及 canvas 数据面的通道是 browser eval。
   // 这里把 src/vom.ts 编译出的页面 JS 经 runBrowserTraced 单点下发(eval 子命令自动进
-  // 「运行轨迹」,与 opencli_* 全族同一复盘链路)。审批归类按同文档 §3:坐标点击在登录态
+  // 「运行轨迹」,与 opencli_* 全族同一复盘链路)。审批归类:坐标点击在登录态
   // 页面产生真实副作用,按写原语走审批门(registerApprovalGate 的 canvas_click 分支);
   // discover/read 只读自动放行——生成物是本插件固定的探测脚本,不是任意代码。
 
@@ -1263,16 +1293,18 @@ export class OpencliService extends TypertRemoteService {
         // 恰是最该留痕的一类,'===write' 会漏掉它们
         const evidenceOn = (await this.lookupAccess(adapter, command)) !== 'read'
         const beforeShot = evidenceOn ? await this.captureEvidenceShot() : undefined
-        // 零配置降级路由(设计 §3,P0):确定无扩展时——browser:false 直跑(①现状零改动);
+        // 零配置降级路由:确定无扩展时——browser:false 直跑(①现状零改动);
         // browser:true 只读命令命中本机 CDP 端点则匿名降级(②注入 env+flag);无端点按④诚实报不可用;
         // 写/未知权限命令在 zeroCfgPlan 内部按硬不变量直接返回 null,走现状路径
         const zc = await this.zeroCfgPlan(adapter, command)
         if (zc !== null && zc.mode === 'skip') return { text: zc.text }
         const inj = zc !== null && zc.mode === 'inject' ? zc : null
+        // #59 读写分频:写/未知权限(与审批门、证据包同口径——未知按写)走 3s 独立写轨,读走 750ms 轨
         const out = await this.runOpencli(
           inj !== null ? [...argv, ...inj.argvTail] : argv,
           60_000, 1_048_576,
           inj !== null ? inj.env : undefined,
+          evidenceOn ? 'write' : 'read',
         )
         if (evidenceOn) await this.recordSiteEvidence(adapter, command, argv, out, beforeShot)
         const text = this.renderOut(out)
@@ -1284,7 +1316,7 @@ export class OpencliService extends TypertRemoteService {
             : `适配器 ${adapter} 返回空（可能未登录或无数据）。请先在真实 Chrome 登录 ${adapter}，或运行 \`opencli ${adapter} login\` 后用面板“巡检登录态”确认。` }
         }
         if (out.exitCode !== 0 && /Navigation rejected/i.test(text)) return { text: `${anon}导航被拒（${adapter}）：请确认 Chrome 扩展已连接且已登录 ${adapter}，或先 \`opencli ${adapter} login\`。原错：${text.slice(0,300)}` }
-        // ③(设计 §3-③):无扩展时的 AUTH 失败不是"去浏览器登录"能解决的——登录态整体不可用,
+        // ③(零配置路由矩阵 ③):无扩展时的 AUTH 失败不是"去浏览器登录"能解决的——登录态整体不可用,
         // 换成降级引导(装扩展+为何不能降级);有扩展时维持原登录指引不变
         if (out.exitCode !== 0 && /AUTH_REQUIRED|请先登录|NOT_LOGGED_IN/i.test(`${out.stdout}\n${out.stderr}`) && (await this.extensionState()).connected === false) {
           return { text: `${anon}登录态缺失:当前无扩展,登录态(COOKIE)命令整体不可用——匿名会话拿不到你的 cookie,写命令也永不降级。装扩展后可恢复:https://github.com/jackwener/OpenCLI/releases。原错:${text.slice(0, 300)}` }
@@ -1355,7 +1387,7 @@ export class OpencliService extends TypertRemoteService {
       ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
       : 'daemon 未运行——opencli_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
     const gate = this.state.approval === 'on' ? 'site 的 write 命令会先请求用户审批。' : '审批门已关闭(write 命令直接执行)。'
-    // 无扩展的诚实可用面(设计 §2.2-3):目录是模型可见的动态能力声明——工具 description 是一次性
+    // 无扩展的诚实可用面:目录是模型可见的动态能力声明——工具 description 是一次性
     // 注册的静态文案改不了,动态能力只能走目录文本与错误文案两个通道。判据与 doctor 同源
     // (daemon 未运行/扩展非正向连接都算无扩展),与 ④⑤ 短路的"显式未连"刻意不同档(那是动作门,这是声明)
     const extLine = (daemon?.extension ?? '').trim()
@@ -1469,9 +1501,9 @@ export class OpencliService extends TypertRemoteService {
   /**
    * 执行结果真实性判定:exit 0 ≠ 拿到有效数据——上游静默失败类 issue
    * (#2497 EMPTY_RESULT/#2469 600B 壳/#2520 假成功)的插件侧防线。site_batch/try-run/定时三处共用。
-   * 两层:①确定性规则(opencli 失败词汇表/错误 JSON/空输出)——真机实测 laya 对这类文本判别力不足(P≈0.9),规则是主力;
+   * 两层:①确定性规则(opencli 失败词汇表/错误 JSON/空输出)——实测 laya 对这类文本判别力不足(P≈0.9),规则是主力;
    * ②laya noul 兜底判未知形态,只做标注。返回:null=不可用(调用方走原行为);verdict=false 即拦截级失败;
-   * noul 0.35-0.7 可疑(verdict=true 但 p<0.7)。真机判别数据见 docs/USER-NEEDS-RESEARCH-20260925.md。
+   * noul 0.35-0.7 可疑(verdict=true 但 p<0.7)。判别力阈值来自 2026-09 对宿主内嵌模型真实样本的实测。
    */
   private async verifyResult(site: string, command: string, text: string, opts?: { warmOnly?: boolean }): Promise<{ verdict: boolean; p: number; why?: string } | null> {
     const trimmed = text.trim()
@@ -1596,7 +1628,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (request === undefined) request = {} as never
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
@@ -1607,8 +1639,15 @@ export class OpencliService extends TypertRemoteService {
     if (toks.length !== 5 || !toks.every((t) => /^(\*|\d+|\*\/\d+|\d+(,\d+)*)$/.test(t))) return { ok: false, error: 'cron 非法:需 5 段(分 时 日 月 周),支持 * 数字 */步长 逗号列表' }
     const CRON_RANGES: Array<[number, number]> = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 6]]
     for (let i = 0; i < 5; i++) {
-      const t = toks[i]
-      if (t === '*' || t.startsWith('*/')) continue
+      const t = toks[i]!
+      if (t === '*') continue
+      if (t.startsWith('*/')) {
+        // `*/0` 拒收(0.1.2 发后审查 low 项):词法放行 → cronMatches step<=0 恒 false →
+        // 创建 ok 但永不执行且无报错。步长必须是 ≥1 整数,门口拒收给可读错误
+        const step = Number(t.slice(2))
+        if (!Number.isInteger(step) || step < 1) return { ok: false, error: `cron 步长非法:第${i + 1}段 "${t}" — */0 或非正整数步长恒不触发,请用 ≥1 的步长(如 */5)` }
+        continue
+      }
       for (const p of t.split(',')) {
         const n = Number(p)
         if (n < CRON_RANGES[i][0] || n > CRON_RANGES[i][1]) return { ok: false, error: `cron 字段越界:第${i + 1}段 ${t} 不在 ${CRON_RANGES[i][0]}-${CRON_RANGES[i][1]}` }
@@ -1629,6 +1668,30 @@ export class OpencliService extends TypertRemoteService {
         quietHours = `${q.from}-${q.to}`
       }
     }
+    // 回执/轨迹卫生·任务级默认字段:快照留存预算 keep(5-500 份)/重试退避 backoffMs(0-600000ms);
+    // 非数字/越界直接报错(与 quietHours 同款:不静默吞,用户知道自己的值没生效)
+    let keep: number | undefined
+    if (request.keep !== undefined) {
+      const k = Number(request.keep)
+      if (!Number.isInteger(k) || k < 5 || k > 500) return { ok: false, error: 'keep 非法:快照留存份数需为 5-500 的整数(默认 50)' }
+      keep = k
+    }
+    let backoffMs: number | undefined
+    if (request.backoffMs !== undefined) {
+      const b = Number(request.backoffMs)
+      if (!Number.isFinite(b) || b < 0 || b > 600_000) return { ok: false, error: 'backoffMs 非法:重试退避需为 0-600000 毫秒(默认 15000)' }
+      backoffMs = Math.round(b)
+    }
+    // 多账号隔离 profile:别名或 contextId(上游 browser-profiles.json 的 alias 键/daemon 上报的 contextId);
+    // 只收 [\w.@-] 安全字符(经 env 透传,不经 shell,但仍拒收控制字符/空白)。'off'/空串=清除
+    let profile: string | undefined
+    let profileClear = false
+    if (typeof request.profile === 'string') {
+      const raw = request.profile.trim()
+      if (raw === '' || raw === 'off') profileClear = true
+      else if (!/^[\w.@-]{1,64}$/.test(raw)) return { ok: false, error: 'profile 非法:需为 1-64 位字母数字/._@- (opencli profile 别名或 contextId);清除传 off' }
+      else profile = raw
+    }
     // 幂等去重:governor 队列下 add/remove 可能乱序(重试/双击),同 site+cron 的
     // 已有任务直接复用,不再生成僵尸副本(审查复现过 3 条重复)
     const dup = this.schedules.find((s) => s.site === site && s.cron === cron)
@@ -1641,6 +1704,10 @@ export class OpencliService extends TypertRemoteService {
       else if (quietHours !== undefined && dup.quietHours !== quietHours) { dup.quietHours = quietHours; await this.saveState() }
       if (typeof request.jitter === 'boolean' && dup.jitter !== request.jitter) { dup.jitter = request.jitter; await this.saveState() }
       if (typeof request.preflight === 'boolean' && dup.preflight !== request.preflight) { dup.preflight = request.preflight; await this.saveState() }
+      if (keep !== undefined && dup.keep !== keep) { dup.keep = keep; await this.saveState() }
+      if (backoffMs !== undefined && dup.backoffMs !== backoffMs) { dup.backoffMs = backoffMs; await this.saveState() }
+      if (profileClear && dup.profile !== undefined) { delete dup.profile; await this.saveState() }
+      else if (profile !== undefined && dup.profile !== profile) { dup.profile = profile; await this.saveState() }
       return { ok: true, id: dup.id }
     }
     const id = String(Date.now())
@@ -1654,6 +1721,9 @@ export class OpencliService extends TypertRemoteService {
     if (quietHours !== undefined) entry.quietHours = quietHours
     if (typeof request.jitter === 'boolean') entry.jitter = request.jitter
     if (typeof request.preflight === 'boolean') entry.preflight = request.preflight
+    if (keep !== undefined) entry.keep = keep
+    if (backoffMs !== undefined) entry.backoffMs = backoffMs
+    if (profile !== undefined) entry.profile = profile
     this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
@@ -1672,6 +1742,70 @@ export class OpencliService extends TypertRemoteService {
   @Remote('ingest-events')
   async ingestEvents(): Promise<{ ok: boolean; events: IngestEvent[] }> {
     return { ok: true, events: this.ingestEventList.slice(0, 30) }
+  }
+
+  /**
+   * 面板通知事件单一入口(事件历史持久化):内存态 unshift+截 30(ingest-events 契约不变,
+   * newest-first 由测试锁定),同时整行 JSONL 追加落盘 ~/.dsh/opencli-events.jsonl——
+   * watch 命中/漂移/翻转跨会话可回看(此前 30 条内存态重启即丢,#9544「定时静默失效」
+   * 的插件层反面证据面)。落盘预算与 traces 同款:单文件超 5MB 轮转为 .1(旧 .1 丢弃);
+   * 任何写失败静默——事件是旁路面,绝不反噬调用方(轨迹 recordTrace 同纪律)。
+   */
+  private pushIngestEvent(kind: string, text: string): void {
+    // 事件文本常含任务命令行(可能带登录态链接 ?token=/?code=):内存与落盘同一份脱敏文本(落盘即洗)
+    const safe = scrubUrlParams(text)
+    this.ingestEventList.unshift({ at: new Date().toISOString(), kind, text: safe })
+    this.ingestEventList = this.ingestEventList.slice(0, 30)
+    this.appendEventsFile({ at: new Date().toISOString(), kind, text: safe })
+  }
+
+  /** dsh 面板通知通道的事件入口:与调度失败/watch 命中共用同一条 ingest 时间线(最近 30 条)。 */
+  private emitNotifyEvent(ev: IngestEvent): void {
+    this.ingestEventList.unshift(ev)
+    this.ingestEventList = this.ingestEventList.slice(0, 30)
+    // 通知通道回灌的事件(dsh 通道 emit)同样落历史文件——时间线一个事实,两个来源都进档
+    this.appendEventsFile(ev)
+  }
+
+  /** 事件行落盘(同 at 生成两次无妨:append 行与内存行独立,读侧以文件行为准)。 */
+  private appendEventsFile(row: IngestEvent): void {
+    try {
+      mkdirSync(dirname(this.eventsFile), { recursive: true })
+      try {
+        if (statSync(this.eventsFile).size > 5 * 1024 * 1024) {
+          try { unlinkSync(`${this.eventsFile}.1`) } catch { /* 无旧档 */ }
+          renameSync(this.eventsFile, `${this.eventsFile}.1`)
+        }
+      } catch { /* 文件不存在(首条)或轮转失败:照常追加 */ }
+      appendFileSync(this.eventsFile, `${JSON.stringify(row)}\n`, 'utf8')
+    } catch { /* 静默:历史缺失不阻断事件本身 */ }
+  }
+
+  /**
+   * events-get RPC(evidence-get 同款读侧投影):读事件历史文件(+轮转档 .1),
+   * 新→旧返回。脏行(半截 JSON/形状不对)跳过不抛;文件不存在=空表不是错误。
+   * 与 ingest-events(内存 30 条)分工:本 RPC 是跨会话历史,面板「事件历史」卡数据源。
+   */
+  @Remote('events-get')
+  async eventsGet(request?: { limit?: number }): Promise<EventsGetResult> {
+    const limit = Math.max(1, Math.min(500, Math.floor(Number(request?.limit ?? 50)) || 50))
+    const rows: IngestEvent[] = []
+    for (const file of [`${this.eventsFile}.1`, this.eventsFile]) { // 旧档在前:读侧统一倒序输出
+      let text = ''
+      try { text = readFileSync(file, 'utf8') } catch { continue /* 无档/无权限:跳过 */ }
+      for (const line of text.split('\n')) {
+        if (line.trim().length === 0) continue
+        try {
+          const v = JSON.parse(line) as unknown
+          if (v === null || typeof v !== 'object'
+            || typeof (v as IngestEvent).at !== 'string' || typeof (v as IngestEvent).kind !== 'string'
+            || typeof (v as IngestEvent).text !== 'string') continue
+          rows.push(v as IngestEvent)
+        } catch { /* 脏行跳过 */ }
+      }
+    }
+    rows.reverse() // 文件是追加序(旧→新),历史面契约与 ingest-events 一致:最新在前
+    return { ok: true, events: rows.slice(0, limit) }
   }
 
   @Remote('audit-list')
@@ -1768,11 +1902,11 @@ export class OpencliService extends TypertRemoteService {
   private static readonly CDP_PORTS = [9222, 9234, 9236, 9238]
   private cdpCache: { at: number; found: boolean; port: number | null; browser: string | null } | null = null
 
-  /** 扩展连接态缓存(≤15s,与 probeCdp 同量级;设计 §2.2-4:每命令路由读缓存,不逐条打 daemon status)。 */
+  /** 扩展连接态缓存(≤15s,与 probeCdp 同量级;每命令路由读缓存,不逐条打 daemon status)。 */
   private extCache: { at: number; connected: boolean | null; explicitDown: boolean } | null = null
 
   /**
-   * 扩展状态快照,两档判据刻意分开(零配置降级设计 §2.1,信号复用 daemonStatus/parseDaemonStatus):
+   * 扩展状态快照,两档判据刻意分开(信号复用 daemonStatus/parseDaemonStatus):
    * - connected(false=宽档"非正向连接"):daemon 未运行/字段缺失/显式未连都算——给 ②③ 的 site 路由用,
    *   降级是加路不是拆路,判宽些只影响"要不要尝试匿名通道",不会拦掉任何现状路径;
    * - explicitDown(仅显式未连):daemon 明确报告扩展未连(2.0 extensionConnected:false → 归一
@@ -1808,10 +1942,10 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * 命令级 browser 字段探测(设计 §2.1):`<site> <cmd> --help -f json` 的 browser 布尔是区分
+   * 命令级 browser 字段探测:`<site> <cmd> --help -f json` 的 browser 布尔是区分
    * 通道A(纯 HTTP,零依赖直跑)与通道B(需浏览器)的唯一可靠判据(实测:juejin hot→false,36kr hot→true)。
    * 失败/无字段返回 null=未知,按保守侧"需要浏览器"处理(§3 判据级联的约定)。
-   * 只在"确定无扩展 + read"的降级路径上才被调用,正常路径零成本;P0 不做 TTL 缓存(P1 项)。
+   * 只在"确定无扩展 + read"的降级路径上才被调用,正常路径零成本;暂不做 TTL 缓存(后续优化项)。
    */
   private async commandNeedsBrowser(adapter: string, command: string): Promise<boolean | null> {
     const r = await this.runOpencli([adapter, command, '--help', '-f', 'json'], 15_000)
@@ -1821,7 +1955,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * 零配置降级路由(site 命令执行前的唯一降级决策点,设计 §3 P0-②)。返回:
+   * 零配置降级路由(site 命令执行前的唯一降级决策点)。返回:
    * - null:现状路径(有扩展/状态未知/写或未知权限/browser:false/1.x 宿主);
    * - inject:② 通道B——注入 OPENCLI_CDP_ENDPOINT + --site-session ephemeral(匿名会话);
    * - skip:④式诚实报不可用(browser:true + read + 无扩展 + 无 CDP 端点,注定失败不执行)。
@@ -1842,7 +1976,7 @@ export class OpencliService extends TypertRemoteService {
     // 通道B(CDP attach)默认关死(立项评审致命发现):上游 CDPBridge 是 attach 端点浏览器
     // 已存在的真实标签页(无隐身上下文/独立 profile),而候选口 9222 族恰是用户自开调试
     // Chrome 的惯用口——attach 上去执行会带着用户登录态,与「匿名降级」标注构成信任断裂。
-    // 正解是 headless 自管 Chrome(设计稿 P1,唯一正当端点来源);在那之前只留显式实验开关。
+    // 长期方案是 headless 自管 Chrome(唯一正当端点来源);在那之前只留显式实验开关。
     if (process.env.OPENCLI_ZEROCDP_CDP === '1' && cdp.found && cdp.port !== null) {
       return { mode: 'inject', env: { OPENCLI_CDP_ENDPOINT: `http://127.0.0.1:${cdp.port}` }, argvTail: [...CDP_ARGV_TAIL] }
     }
@@ -1892,13 +2026,28 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true }
   }
 
+  /**
+   * 快照目录安全解析(traceShot 同款标准,id 面板/收件箱入口可携任意串):resolve+root 前缀
+   * 校验,`../` 穿越与绝对路径逃逸、同前缀目录假命中一并挡下。返回 null=越界,调用方按
+   * "无快照"处理。win32 盘符大小写不稳定,比较前归一(与 traceShot 同源)。
+   */
+  private snapshotDirOf(id: string): string | null {
+    if (id.length === 0) return null // 空 id 不得落到快照根(会整目录列举)
+    const norm = (s: string): string => (process.platform === 'win32' ? s.toLowerCase() : s)
+    const root = resolve(this.snapshotsBase)
+    const p = resolve(this.snapshotsBase, id)
+    if (norm(p) !== norm(root) && !norm(p).startsWith(norm(root) + sep)) return null
+    return p
+  }
+
   @Remote('schedule-history')
   async scheduleHistory(p: { id: string } | undefined): Promise<{ ok: boolean; history: Array<{ at: string; ok: boolean; summary: string }>; snapshots?: Array<{ at: string; bytes: number; file: string }> }> {
     // 时间线数据源:运行史(内存,近 5) + 快照索引(落盘,近 50,含体积用于趋势)
     const id = String((p ?? { id: ''}).id ?? '')
     let snapshots: Array<{ at: string; bytes: number; file: string }> | undefined
     try {
-      const dir = join(this.snapshotsBase, id)
+      const dir = this.snapshotDirOf(id)
+      if (dir === null) throw new Error('id 越界')
       snapshots = readdirSync(dir).slice(-50).map((f) => {
         // 文件名=ISO 全 [:.] 换 '-':2026-10-05T15-36-53-123.json → 还原时日期分隔符不能再全量替换(修复 2026:10:05 错乱)
         const stem = f.slice(0, f.length - 5)
@@ -1921,7 +2070,8 @@ export class OpencliService extends TypertRemoteService {
     const id = String((p ?? { id: '' }).id ?? '')
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     try {
-      const dir = join(this.snapshotsBase, id)
+      const dir = this.snapshotDirOf(id)
+      if (dir === null) return { ok: true, days: [] }
       let files: string[] = []
       try { files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-21) } catch { return { ok: true, days: [] } } // 目录不存在=零采集任务,空时间线而非 ENOENT
       if (files.length < 2) return { ok: true, days: [] }
@@ -1953,7 +2103,8 @@ export class OpencliService extends TypertRemoteService {
     const id = String((p ?? { id: '' }).id ?? '')
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     try {
-      const dir = join(this.snapshotsBase, id)
+      const dir = this.snapshotDirOf(id)
+      if (dir === null) return { ok: false, error: 'id 越界' }
       const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort().slice(-50)
       if (files.length === 0) return { ok: false, error: '该任务暂无快照' }
       const snapshots = files.map((f) => {
@@ -1970,7 +2121,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * 通知通道配置读写(任务 E,面板「自动化」页后续接):不带 channels=读当前配置;
+   * 通知通道配置读写(面板「自动化」页后续接):不带 channels=读当前配置;
    * 带 channels=白名单归一后写盘。归一用 notify.ts 口径(未知 type/非字符串字段整条
    * 丢弃),但 channels 本身不是数组直接拒绝而不是清空——手滑的 POST 不许把用户已配好
    * 的通道抹掉。写盘走 saveNotifyConfig(失败往外抛,与 saveState 尽力而为不同口径:
@@ -1978,9 +2129,9 @@ export class OpencliService extends TypertRemoteService {
    * saveState 整文件重写会丢掉 notifyConfig 键(见 PluginState.notifyConfig 注释)。
    */
   /**
-   * 插件自检(0.1.2 P0-6,#9308/#9261/#2582/BrowserSkill#554 四源交叉的'装上没效果'解药):
-   * 激活/工具注册点名/入口在线/宿主匹配——面板安全 tab 顶部自检卡 3 秒可见。
-   * update 段(0.1.2 P0-7,#10869 '有新版本无路可走'):npm registry dist-tag 对比当前版本,
+   * 插件自检('装上没效果'问题的解药——同一症状在 dsh #9308/#9261、插件市场 #2582、
+   * BrowserSkill #554 多处反馈):激活/工具注册点名/入口在线/宿主匹配——面板安全 tab 顶部自检卡 3 秒可见。
+   * update 段(#10869 '有新版本无路可走'):npm registry dist-tag 对比当前版本,
    * 有新版给出一键复制升级命令(不自动执行——升级是用户显式决策,#6971 教训)。
    */
   @Remote('self-check')
@@ -2008,8 +2159,9 @@ export class OpencliService extends TypertRemoteService {
       tools: [], conflicts: [...this.toolConflicts], entries: [],
       currentVersion,
     }
-    // 工具点名:期望注册表(正主名,不含弃用别名)逐个核对
-    const expected = [...new Set(this.registeredToolNames.filter((n) => !n.startsWith('browser_')))]
+    // 工具点名:期望取注册期预期清单(正主名,不含弃用别名)逐个核对 registeredToolNames——
+    // 撞名让位的名字 registered:false 且仍计入 conflicts,点名对失败形态有真鉴别力
+    const expected = [...new Set(this.expectedToolNames.filter((n) => !n.startsWith('browser_')))]
     for (const name of expected) {
       const registered = this.registeredToolNames.includes(name)
       out.tools.push({ name, registered })
@@ -2054,13 +2206,14 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, config }
   }
 
-  /** 报告导出:定时任务的近期快照 → 带出处 markdown(每节=一次运行,出处=命令+时间+快照路径)。summary=true 出摘要版(≤500 字,任务 E)。 */
+  /** 报告导出:定时任务的近期快照 → 带出处 markdown(每节=一次运行,出处=命令+时间+快照路径)。summary=true 出摘要版(≤500 字)。 */
   @Remote('report-build')
   async reportBuild(request?: { id: string; summary?: boolean }): Promise<{ ok: boolean; path?: string; error?: string }> {
     const id = String(request?.id ?? '')
     if (id.length === 0) return { ok: false, error: 'id 为空' }
     const sch = this.schedules.find((s) => s.id === id)
-    const dir = join(this.snapshotsBase, id)
+    const dir = this.snapshotDirOf(id)
+    if (dir === null) return { ok: false, error: 'id 越界' }
     let files: string[] = []
     try { files = readdirSync(dir).slice(-5) } catch { return { ok: false, error: '该任务暂无快照——先运行一次采集' } }
     if (files.length === 0) return { ok: false, error: '该任务暂无快照' }
@@ -2078,7 +2231,8 @@ export class OpencliService extends TypertRemoteService {
       } catch { /* 单份损坏跳过 */ }
     }
     if (sources.length === 0) return { ok: false, error: '快照全部损坏' }
-    const md = buildReport(`定时采集报告 · ${sch?.site ?? id}`, sources, new Date().toISOString(), { summary: request?.summary === true })
+    // 出口统一脱敏:改动前落盘的旧快照未经清洗,报告出口兜底(与尾注声明一致)
+    const md = scrubUrlParams(buildReport(`定时采集报告 · ${sch?.site ?? id}`, sources, new Date().toISOString(), { summary: request?.summary === true }))
     const rdir = process.env.DSH_OPENCLI_REPORTS_DIR ?? join(homedir(), '.dsh', 'opencli-reports')
     await mkdir(rdir, { recursive: true })
     const path = join(rdir, `sched-${id}-${Date.now()}.md`)
@@ -2087,7 +2241,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * 一键冒烟基准(任务 C):逐站串行 runOpencli(60s 超时)+ verifyResult 取 P,
+   * 一键冒烟基准:逐站串行 runOpencli(60s 超时)+ verifyResult 取 P,
    * 汇总写 ~/.dsh/opencli-benchmarks/bench-<时间戳>.md(目录自建,保留 20 份轮转)。
    * 串行 + 站间 800ms:基准数字要可比,并发会互相抢带宽、连发会撞限流,耗时与成败都失真。
    */
@@ -2217,7 +2371,7 @@ export class OpencliService extends TypertRemoteService {
 
   /**
    * 知识卡直取 RPC(面板/外部可调,不经模型会话):sites 缺省返回健康度异常(degraded/notice)
-   * 且在目录内的站。MCP resources seam 不可用的 0.1.x 宿主上的等价路径;机制与迁移路径见 docs/MCP-RESOURCES.md。
+   * 且在目录内的站。MCP resources seam 不可用的 0.1.x 宿主上的等价路径(机制与迁移路径见仓库开发文档)。
    */
   @Remote('knowledge-get')
   async knowledgeGet(request?: { sites?: string[] }): Promise<{ ok: boolean; cards?: Array<{ site: string; uri: string; markdown: string }>; error?: string }> {
@@ -2243,6 +2397,33 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, cards }
   }
 
+  /**
+   * MCP 自host 端点状态(面板/ctl 可见性:外部消费者直连的 url+token 从告知文件拿)。
+   * 只读投影:token 本体不回传(在 ~/.dsh/opencli-mcp-auth.json,文件权限即边界)。
+   */
+  @Remote('mcp-selfhost-status')
+  async mcpSelfhostStatus(): Promise<{ ok: boolean; running: boolean; url?: string; port?: number; tokenSource?: string; authFile: string; tools?: Array<{ name: string; description: string }>; error?: string }> {
+    if (this.mcpSelfhost !== null) {
+      return { ok: true, running: true, url: this.mcpSelfhost.url, port: this.mcpSelfhost.port, tokenSource: this.mcpSelfhost.tokenSource, authFile: mcpAuthFile(), tools: this.mcpSelfhost.tools }
+    }
+    return { ok: true, running: false, authFile: mcpAuthFile(), ...(this.mcpSelfhostError !== null ? { error: this.mcpSelfhostError } : {}) }
+  }
+
+  /** MCP 自host 启动(init 专用,awaited):失败留痕不抛;句柄随 ctx.effect 收(收件箱计时器同款)。 */
+  private async startMcpSelfhostSafe(): Promise<void> {
+    const r = await startMcpSelfhost({ entriesProvider: () => (this.adapterCache as { json?: unknown } | null)?.json })
+    if (!r.ok) {
+      this.mcpSelfhostError = r.error
+      console.warn(`[dsh-opencli] ${r.error}(外部 MCP 消费者直连不可用,插件其余功能不受影响;可用 DSH_OPENCLI_MCP_PORT 换端口)`)
+      return
+    }
+    this.mcpSelfhost = r.handle
+    ;(this.ctx as unknown as { effect?: (f: () => () => void) => unknown }).effect?.(() => () => {
+      void r.handle.stop()
+      if (this.mcpSelfhost === r.handle) this.mcpSelfhost = null
+    })
+  }
+
   @Remote('schedule-remove')
   async scheduleRemove(request: { id: string }): Promise<{ ok: boolean; error?: string }> {
     if (request === undefined) request = {} as never
@@ -2255,7 +2436,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * NL 意图映射(0.4.6 B1):自然语言 → ctl 同款闭集意图(经宿主 llm)。显式按钮触发——
+   * NL 意图映射:自然语言 → ctl 同款闭集意图(经宿主 llm)。显式按钮触发——
    * 花的是用户自己的模型额度,且映射结果必须过预览卡确认,不做黑箱执行。
    * llm 服务缺席(web 之外的宿主)→ ok:false 带指引;模型输出不合法 → ok:false(绝不猜测补全)。
    */
@@ -2384,7 +2565,7 @@ export class OpencliService extends TypertRemoteService {
     if (out.exitCode !== 0) {
       // 修复(核验A-3):exit≠0 原样透传原始 YAML,绕过统一恢复指引。归类+附插件层指引
       const raw = out.stdout + out.stderr
-      // ③(设计 §3-③):无扩展时的 AUTH 失败换降级引导——登录态整体不可用,不是"去登录"能解决的;
+      // ③(零配置路由矩阵 ③):无扩展时的 AUTH 失败换降级引导——登录态整体不可用,不是"去登录"能解决的;
       // 有扩展时维持原文案。前缀「登录态缺失」保持不变(hardening A-3 归类锚点)
       const kind = /BROWSER_CONNECT|extension not connected/i.test(raw) ? '扩展未连接——请打开 Chrome 并启用 OpenCLI 扩展(装法见 https://github.com/jackwener/opencli/releases),再在面板「总览」巡检登录态'
         : /AUTH_REQUIRED|请先登录|NOT_LOGGED_IN/i.test(raw)
@@ -2405,9 +2586,13 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('replay')
-  async replay(request: { step: string; session?: string }): Promise<{ ok: boolean; error?: string }> {
+  async replay(request: { step: string; session?: string; skipDecorative?: boolean }): Promise<{ ok: boolean; error?: string; skipped?: 'decorative' }> {
     const step = typeof request.step === 'string' ? request.step.trim() : ''
     if (step.length === 0) return { ok: false, error: 'step 为空' }
+    // #59 补完:装饰性步骤(scroll/hover,只改 CSS/视觉状态)回放可整体跳过——调用方显式
+    // skipDecorative:true 才跳;跳过不执行、不落轨迹,结果带 skipped:'decorative' 如实标注
+    // (数据读写步骤永不归入装饰类,isDecorativeStep 只认 scroll/hover 两个动词)
+    if (request.skipDecorative === true && isDecorativeStep(step)) return { ok: true, skipped: 'decorative' }
     // MVP：仅回显步骤，真实回放走 site/opencli_* 透传（与 client 的 localStorage 录制互补）
     const [head, ...rest] = step.split(' ')
     if (head === 'site' && rest.length >= 2) {
@@ -2429,7 +2614,7 @@ export class OpencliService extends TypertRemoteService {
     return { ok: false, error: `未知步骤:${step}` }
   }
 
-  // L3 高级自动化：脚本/配方/泛爬（对齐 anweat 21 工具，MVP 桩 + 透传）
+  // L3 高级自动化：脚本/配方/泛爬（对齐社区同类插件的高级工具面，MVP 桩 + 透传）
   @Remote('script-catalog')
   async scriptCatalog(): Promise<{ ok: boolean; scripts: Array<{ name: string; sha256: string; description: string }> }> {
     return { ok: true, scripts: [
@@ -2625,7 +2810,7 @@ export class OpencliService extends TypertRemoteService {
           this.recordAudit(`chrome_raw ${m}`, reason)
           return { kind: 'ask', reason }
         }
-        // canvas_click 坐标点击按写原语审批(DESIGN-canvas-vom.md §3 审批归类:在用户
+        // canvas_click 坐标点击按写原语审批(坐标点击在用户
         // 登录态浏览器里产生真实副作用);且点击目标由坐标在页面运行时动态命中,不像
         // selector 目标那样可静态审计——与 opencli_do eval 同款门,不裸放
         if (exec.name === 'canvas_click') {
@@ -2726,7 +2911,7 @@ export class OpencliService extends TypertRemoteService {
     return { ok: failedCmds.size === 0, total: results.length, passed, newFailures, recovered, path: file }
   }
 
-  // ── 写操作证据包(任务 D)──────────────────────────────────
+  // ── 写操作证据包──────────────────────────────────
 
   /** 审批拒绝在 host 落地的最终文本特征(dsh-tools serviceAsk 的四种非授权拒绝 + 本插件
    *  审批门的写操作/只读拦截理由——无审批服务时 ask.reason 会原样成为拒绝文本)。
@@ -2774,7 +2959,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * 审批拒绝监听(任务 D):被拒的写命令执行体根本不会跑(site execute 无从得知),唯一
+   * 审批拒绝监听:被拒的写命令执行体根本不会跑(site execute 无从得知),唯一
    * 可见点是 tools/post-execute 收到的 isError 结果——host 把 serviceAsk 的拒绝落成
    * error.message(派发前拒绝也走这条 waterfall,dsh-tools finalizeScheduledExecution)。
    * 命中拒绝特征且目录确认为写命令 → 补一包 approval.reason='blocked'。观察者姿态:
@@ -2797,7 +2982,7 @@ export class OpencliService extends TypertRemoteService {
     })
   }
 
-  /** 最近写命令证据包(任务 D):文件名即元数据(时间戳+站点),不读全文;倒序取前 20。 */
+  /** 最近写命令证据包:文件名即元数据(时间戳+站点),不读全文;倒序取前 20。 */
   @Remote('evidence-list')
   async evidenceList(): Promise<{ ok: boolean; items: Array<{ file: string; at: string; site: string; bytes: number }> }> {
     try {
@@ -2858,15 +3043,35 @@ export class OpencliService extends TypertRemoteService {
 
   // ── 基础设施 ──────────────────────────────────────────────
 
-  private async acquireGovernor(): Promise<void> {
+  /**
+   * 读写分频(#59 补完):读步骤维持 750ms 级礼貌限流;写步骤走独立限频轨——
+   * 距上一次写命令不足 writeMinDelayMs(默认 3s)时等足差额。读高频不抬写节奏,
+   * 写谨慎也不拖慢读采集;两类步骤的时间预算互不占用。
+   */
+  private async acquireGovernor(kind: 'read' | 'write' = 'read'): Promise<void> {
     // 冷却期
     const now = Date.now()
     if (now < this.cooldownUntil) await new Promise((res) => setTimeout(res, this.cooldownUntil - now))
-    // 并发
-    if (this.concurrent >= this.usagePolicy.maxConcurrency) {
+    // 并发闸:槽满时入队。唤醒后**重查**——release 唤醒(resolver 已出队)到被唤者真正
+    // ++ 之间隔着微任务,期间新到者会同步抢走槽位;直增会让并发短暂超 max(0.1.2 发后
+    // 审查 low:同构脚本实测 max=2 短暂达 3)。重查只看 concurrent,不看 queue.length:
+    // 被唤者若因「队里还有人」再入队,队列只会无限轮转无人出列(livelock,单测实测);
+    // 槽位空出时晚到者直接拿槽属礼貌限流的预期行为,不在此处补 FIFO 公平。
+    while (this.concurrent >= this.usagePolicy.maxConcurrency) {
       await new Promise<void>((res) => { this.queue.push(res) })
     }
     this.concurrent++
+    // 写独立限频轨:等足 writeMinDelayMs 差额(读轨不动;DSH_OPENCLI_WRITE_MIN_DELAY_MS 调,0=关)。
+    // 预约式计时:先把"本写起跑时刻"记进 lastWriteAt 再睡——maxConcurrency=2 下两个写并发到达,
+    // 后到者按前者的预约时刻顺延,起跑仍错开 ≥writeMin(礼貌限流语义,与读轨同为节奏而非硬闸)
+    if (kind === 'write') {
+      const rawW = Number(process.env.DSH_OPENCLI_WRITE_MIN_DELAY_MS ?? this.usagePolicy.writeMinDelayMs)
+      const writeMin = Number.isFinite(rawW) && rawW >= 0 ? rawW : this.usagePolicy.writeMinDelayMs
+      const t = Date.now() // 排队等槽后现取,不复用入口时刻(否则排过队的写会多等)
+      const wait = this.lastWriteAt > 0 ? Math.max(0, writeMin - (t - this.lastWriteAt)) : 0
+      this.lastWriteAt = t + wait
+      if (wait > 0) await new Promise((res) => setTimeout(res, wait))
+    }
     // 突发 + minDelay
     const burstWindow = 1000
     this.callTimestamps = this.callTimestamps.filter((t) => Date.now() - t < burstWindow)
@@ -2881,7 +3086,9 @@ export class OpencliService extends TypertRemoteService {
       if (delay > 0) await new Promise((res) => setTimeout(res, delay))
     }
   }
-  private releaseGovernor(): void {
+  private releaseGovernor(kind: 'read' | 'write' = 'read'): void {
+    // 写轨以"上一写结束"与"已预约起跑"较晚者为基准(结束晚于预约=长命令,间隔从结束起算)
+    if (kind === 'write') this.lastWriteAt = Math.max(this.lastWriteAt, Date.now())
     this.concurrent = Math.max(0, this.concurrent - 1)
     this.callTimestamps.push(Date.now())
     const next = this.queue.shift()
@@ -2906,8 +3113,39 @@ export class OpencliService extends TypertRemoteService {
 
   /** shell 调用形态(跨版本自探测锁定):resolved=shell.resolve(spec) 后执行;direct=直传 spec;array=command 传 argv 数组。 */
   private shellMode: 'resolved' | 'direct' | 'array' | null = null
-  /** 调度去重 marker(每启动周期有效,不落盘;此前寄生 runHistory 造成 5055 键无限累积)。 */
-  private schedMarkers = new Set<string>()
+  /** 调度去重 marker(键=任务id:分钟键,值=入册时刻;每启动周期有效,不落盘;此前寄生
+   *  runHistory 造成 5055 键无限累积)。上限+过期淘汰对齐 runHistory 自愈先例:条目只在
+   *  当个 tick 有意义,过期(>10 分钟)即删,超上限再裁最旧——常驻进程不再无限累积。 */
+  private schedMarkers = new Map<string, number>()
+  /** schedMarkers 存活上限(条);过期线 10 分钟(一次 tick 最多 15s,余量充裕)。 */
+  private static readonly SCHED_MARKER_CAP = 2000
+  private static readonly SCHED_MARKER_TTL_MS = 10 * 60 * 1000
+  /** 超时后等子进程收尾的清理宽限(回执/轨迹卫生「cancel+有界清理」的有界部分;默认 5s,
+   *  DSH_OPENCLI_CLEANUP_GRACE_MS 可调,与 JITTER/CHALLENGE_WAIT/SELFHEAL_BACKOFF 同款 env 约定)。 */
+  private static cleanupGraceMs(): number {
+    const v = process.env.DSH_OPENCLI_CLEANUP_GRACE_MS
+    const raw = v === undefined || v.trim() === '' ? Number.NaN : Number(v) // 空串不当 0(Number('')===0 陷阱)
+    return Number.isFinite(raw) && raw >= 0 ? Math.min(Math.round(raw), 60_000) : 5_000
+  }
+
+  /** marker 入册 + 过期/超限淘汰(插入序=时间序,裁最旧)。 */
+  private addSchedMarker(key: string): void {
+    const now = Date.now()
+    this.schedMarkers.set(key, now)
+    if (this.schedMarkers.size <= OpencliService.SCHED_MARKER_CAP) {
+      for (const [k, at] of this.schedMarkers) {
+        if (now - at <= OpencliService.SCHED_MARKER_TTL_MS) break // Map 迭代按插入序:遇到未过期即可停
+        this.schedMarkers.delete(k)
+      }
+      return
+    }
+    let excess = this.schedMarkers.size - OpencliService.SCHED_MARKER_CAP
+    for (const [k] of this.schedMarkers) {
+      if (excess <= 0) break
+      this.schedMarkers.delete(k)
+      excess--
+    }
+  }
 
   /**
    * 0.2.0+ 原生执行:ctx.subprocess.spawn(argv)(官方 bash 工具同款 seam;
@@ -2933,10 +3171,31 @@ export class OpencliService extends TypertRemoteService {
       graceMs: 1_000,
       signal: AbortSignal.timeout(timeoutMs),
       // env 显式条目与擦净后的父环境合并(dsh-subprocess 0.2.0 SubprocessSpawnRequest.env,本次实测确认);
-      // per-spawn spec 携带、绝不写 process.env——降级注入对插件进程环境零残留(设计 §4-2-4)
+      // per-spawn spec 携带、绝不写 process.env——降级注入对插件进程环境零残留
       ...(env !== undefined ? { env } : {}),
     })
-    const outcome = await h.done
+    // 超时语义(回执/轨迹卫生,BrowserSkill 0.4.2 同款措辞「cancel + 有界清理」):
+    // AbortSignal.timeout 到点 = 取消执行;清理**必须有界**——seam 若如实响应信号,h.done
+    // 很快落定(被杀的子进程带部分输出正常返回);若 seam 未响应(旧宿主/悬挂进程),最多再等
+    // cleanupGraceMs 就放弃等待并给 typed 超时信封(exit 124=GNU timeout 惯例),绝不无限
+    // await。被弃置的子进程由 OS/seam 兜底回收,插件侧不再跟进——清理无限期 = 把调度线程也
+    // 赔进去(v2ex fetch failed 重试链单次 11s+,无人值守一天几十次,等待必须收敛)。
+    // 只有计时器胜出才算超时(唯一哨兵,不与 done 的任何落定值混淆);h.done 自身 reject 照常
+    // 上抛——seam 冷启动竞态的抛错要交给 runOpencliUngoverned 重试 seam/回落 shell,语义不变。
+    const TIMED_OUT = Symbol('timed-out')
+    const grace = OpencliService.cleanupGraceMs()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const bounded = new Promise<typeof TIMED_OUT>((res) => { timer = setTimeout(() => res(TIMED_OUT), timeoutMs + grace); timer.unref?.() })
+    let raced: Awaited<typeof h.done> | typeof TIMED_OUT
+    try {
+      raced = await Promise.race([h.done, bounded])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+    if (raced === TIMED_OUT) {
+      return { exitCode: 124, stdout: '', stderr: `超时取消(cancel + bounded cleanup):${timeoutMs}ms 到点取消执行,宽限 ${grace}ms 内子进程未退出,插件侧停止等待(子进程由 OS/seam 兜底回收;GNU timeout 惯例 exit 124)` }
+    }
+    const outcome = raced
     const read = async (r: { readFrom: (o: number) => Promise<{ text?: string }> } | undefined): Promise<string> => {
       try { return String((await r?.readFrom(0))?.text ?? '') } catch { return '' }
     }
@@ -2947,8 +3206,8 @@ export class OpencliService extends TypertRemoteService {
     }
   }
 
-  private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576, env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
-    const raw = await this.runOpencliRaw(argv, timeoutMs, stdoutMaxBytes, env)
+  private async runOpencli(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576, env?: Record<string, string>, kind: 'read' | 'write' = 'read'): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
+    const raw = await this.runOpencliRaw(argv, timeoutMs, stdoutMaxBytes, env, kind)
     return this.unwrapCli2(argv, raw)
   }
 
@@ -3001,8 +3260,8 @@ export class OpencliService extends TypertRemoteService {
       : `opencli 已定位(${this.bin})但 --version 执行失败,不是"未安装"——常见:node 版本切换后路径悬空/daemon 残留${d}`
   }
 
-  private async runOpencliRaw(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576, env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
-    await this.acquireGovernor()
+  private async runOpencliRaw(argv: string[], timeoutMs = 60000, stdoutMaxBytes = 1048576, env?: Record<string, string>, kind: 'read' | 'write' = 'read'): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
+    await this.acquireGovernor(kind)
     try {
       return await this.runOpencliUngoverned(argv, timeoutMs, stdoutMaxBytes, env)
     } catch (e) {
@@ -3014,7 +3273,7 @@ export class OpencliService extends TypertRemoteService {
       }
       throw e
     } finally {
-      this.releaseGovernor()
+      this.releaseGovernor(kind)
     }
   }
 
@@ -3050,11 +3309,16 @@ export class OpencliService extends TypertRemoteService {
     // 0.2.0 起 spec 必须携带沙箱策略(否则 shell 内部 destructure policy.mode 直接抛错);
     // 插件是可信进程内消费者,用 danger-full-access(与 0.1.x 无沙箱行为一致);老版本忽略多余字段。
     const policy = { mode: 'danger-full-access' as const, workspaceRoot: homedir() }
-    // env 同样进 shell 回落 spec(设计 §3-②:回落路径也要带 env,两处都注)——
+    // env 同样进 shell 回落 spec(零配置路由矩阵 ②:回落路径也要带 env,两处都注)——
     // dsh-shell ShellExecRequest.env 与凭据擦净后的环境合并(0.2.0 types.d.ts 实测确认),老版本忽略多余字段
-    const baseSpec = { command: [this.bin, ...argv].join(' '), timeoutMs, stdoutMaxBytes, policy, ...(env !== undefined ? { env } : {}) }
-    const argvSpec = { ...baseSpec, command: [this.bin, ...argv], policy }
-    const attempts: Array<'resolved' | 'direct' | 'array'> = this.shellMode !== null ? [this.shellMode] : ['resolved', 'direct', 'array']
+    // 字符串形态逐参数转义(quoteShellArg):argv 是模型可控输入,裸 join(' ') 可被空白/引号
+    // 碎裂注入(0.1.2 发后审查发现 2);数组形态(command 传 argv)不经 shell 解析,零注入面
+    const argvAll = [this.bin, ...argv]
+    const baseSpec = { command: argvAll.map(OpencliService.quoteShellArg).join(' '), timeoutMs, stdoutMaxBytes, policy, ...(env !== undefined ? { env } : {}) }
+    const argvSpec = { ...baseSpec, command: argvAll, policy }
+    // 数组形态优先(0.1.2 发后审查发现 2):两形态宿主都认时锁定 array,与 opencli_run
+    // 「argv 数组、不拼 shell」的描述对齐;只认字符串的 0.1.x 宿主回落转义后的字符串形态
+    const attempts: Array<'resolved' | 'direct' | 'array'> = this.shellMode !== null ? [this.shellMode] : ['array', 'resolved', 'direct']
     let out: { exitCode: number; stdout: string; stderr: string } = { exitCode: 1, stdout: '', stderr: '' }
     for (const mode of attempts) {
       let spec: unknown
@@ -3087,6 +3351,16 @@ export class OpencliService extends TypertRemoteService {
     }
     this.noteRateLimit(`${out.stdout}\n${out.stderr}`)
     return out
+  }
+
+  /**
+   * shell 字符串形态的单参数转义:安全字符集(无空白、无 shell 元字符)直通,其余整体
+   * 双引号并转义 " \ $ `(POSIX sh 双引号语义)。只是字符串形态的防线——数组形态不经
+   * shell 解析,才是与「不拼 shell」对齐的正道;Windows 宿主 cmd 的引号规则不同,转义
+   * 是近似兜底而非等价,这也是数组形态优先的原因。
+   */
+  private static quoteShellArg(s: string): string {
+    return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `"${s.replace(/[\\"$`]/g, '\\$&')}"`
   }
 
   private renderOut(out: { exitCode: number; stdout: string; stderr: string }): string {
@@ -3122,8 +3396,20 @@ export class OpencliService extends TypertRemoteService {
    * 与 replay / script-run-builtin / crawl / userscript-run / recipe-run 五个 RPC 透传都经此——
    * 任何入口执行的 browser 命令都进「运行轨迹」,复盘链路不断(评审:面板回放按钮曾绕过单点)。
    */
-  /** 直连页面身份缓存:session → targetId。响应顶层 page 持续刷新;stale 类错误清缓存。 */
+  /** 直连页面身份缓存:session → targetId。响应顶层 page 持续刷新;stale 类错误清缓存。
+   *  有界化:会话名不可枚举(ephemeral/多会话),常驻进程按插入序
+   *  裁最旧,上限对齐 direct-compose 的会话级缓存。 */
   private directPages = new Map<string, string>()
+  private static readonly DIRECT_PAGE_CAP = 200
+
+  /** 页面身份写入(有界):超限裁最旧插入的会话;delete/stale 清理路径不经此。 */
+  private setDirectPage(sess: string, page: string): void {
+    this.directPages.set(sess, page)
+    if (this.directPages.size > OpencliService.DIRECT_PAGE_CAP) {
+      const oldest = this.directPages.keys().next()
+      if (!oldest.done) this.directPages.delete(oldest.value)
+    }
+  }
   /** 直连总闸(DSH_OPENCLI_DIRECT=0 关):旁路加速的逃生口——组合层在某宿主异常时可整体回 CLI。 */
   private readonly directEnabled = process.env.DSH_OPENCLI_DIRECT !== '0'
 
@@ -3145,7 +3431,7 @@ export class OpencliService extends TypertRemoteService {
         r = await directExec(sess, code)
       }
       if (!r.ok) return undefined
-      if (r.page !== undefined) this.directPages.set(sess, r.page)
+      if (r.page !== undefined) this.setDirectPage(sess, r.page)
       // 归一 CLI 2.0 信封:eval 的 data 是页面求值原文(string),下游信封解包路径原样可用
       return { exitCode: 0, stdout: JSON.stringify({ ok: true, data: r.data }), stderr: '' }
     } catch {
@@ -3164,7 +3450,7 @@ export class OpencliService extends TypertRemoteService {
     const head = String(argv[0] ?? '')
     const sess = session ?? 'dsh'
     const cachedPage = this.directPages.get(sess)
-    const refresh = (page?: string): void => { if (typeof page === 'string' && page.length > 0) this.directPages.set(sess, page) }
+    const refresh = (page?: string): void => { if (typeof page === 'string' && page.length > 0) this.setDirectPage(sess, page) }
     try {
       switch (head) {
         case 'open': {
@@ -3291,7 +3577,7 @@ export class OpencliService extends TypertRemoteService {
 
   private async runBrowserTraced(session: string | undefined, argv: string[], opts?: { deriveShot?: (out: { exitCode: number; stdout: string; stderr: string }) => Promise<string | undefined> }): Promise<{ exitCode: number; stdout: string; stderr: string; shot?: string }> {
     const started = Date.now()
-    // ④ 无扩展短路(设计 §3-④):opencli_* 是 CLI→daemon→扩展硬链路(上游 daemon.js 头注释,
+    // ④ 无扩展短路(零配置路由矩阵 ④):opencli_* 是 CLI→daemon→扩展硬链路(上游 daemon.js 头注释,
     // 无 CDP 分支),daemon 明确报告扩展未连时注定失败——把注定失败的往返(默认 60s 超时)换成
     // 一次性"缺什么/装什么/装完会怎样"。只认显式未连(extensionState.explicitDown):
     // daemon 运行但不上报 Extension 字段的旧形态仍按现状放行,缺字段≠否定
@@ -3352,7 +3638,7 @@ export class OpencliService extends TypertRemoteService {
    * <shotsDir>/<yyyymmdd>/<session>/step-<hhmmss>-<idx>.png。任何失败(建目录/CLI 报错/文件没落盘)
    * 一律静默返回 undefined——截图只是复盘增强,绝不阻断命令本身;CLI 已确认文件写出后才计入轨迹行,
    * 杜绝 shot 字段指向不存在文件的悬空引用。
-   * force(证据包专用,任务 D):写命令的 before/after 必拍——证据链完整性优先于截图频率,
+   * force(证据包专用):写命令的 before/after 必拍——证据链完整性优先于截图频率,
    * 绕过"页面变化才拍"触发门限。
    */
   private async captureStepShot(session: string | undefined, argv: string[], out: { exitCode: number; stdout: string; stderr: string; unavailable?: string }, major: number, force = false): Promise<string | undefined> {
@@ -3431,11 +3717,21 @@ export class OpencliService extends TypertRemoteService {
    * {at, cmd, exitCode, ms, outHead(输出前 200 字,失败时 stderr 优先)}。
    * 同步写(量级 ~300B/条,相对秒级浏览器操作可忽略,且对调用方可确定性断言);
    * 单文件超 5MB 轮转为 .1(旧 .1 丢弃,保留前一份);任何失败静默,绝不影响命令本身。
+   * 留存预算(回执/轨迹卫生,chrome-devtools-mcp --maxNavigationSaved 同款滚动淘汰):
+   * trace-*.jsonl(+各档 .1)最多 TRACE_KEEP_FILES 份,超出按文件名(日期)序删最旧——
+   * 只在**新建当日文件**时执行一次(热路径零开销;DSH_OPENCLI_TRACE_KEEP_FILES 可调,5-365)。
+   * cmd 与 outHead 过 URL 参数脱敏(回执/轨迹卫生):登录态链接 ?token=/?code= 落盘即洗,
+   * 复制轨迹贴 issue/聊天不再泄凭据。
    */
   private recordTrace(cmd: string, out: { exitCode: number; stdout: string; stderr: string }, ms: number, shot?: string): void {
     try {
       try { mkdirSync(this.traceDir, { recursive: true }) } catch { return }
-      const file = this.traceFileOf(OpencliService.traceDateKey())
+      const dateKey = OpencliService.traceDateKey()
+      const file = this.traceFileOf(dateKey)
+      let freshFile = false
+      try {
+        statSync(file)
+      } catch { freshFile = true /* 当日首条 */ }
       try {
         if (statSync(file).size > 5 * 1024 * 1024) {
           try { unlinkSync(`${file}.1`) } catch { /* 无旧档 */ }
@@ -3444,9 +3740,27 @@ export class OpencliService extends TypertRemoteService {
       } catch { /* 文件不存在(当日首条)或轮转失败:照常追加 */ }
       const outHead = (out.exitCode === 0 ? out.stdout : `${out.stderr}\n${out.stdout}`.trim()).slice(0, 200)
       // shot 为可选字段:老轨迹行没有它,消费端(readTraceFile/面板)一律按可选透传
-      const row = { at: new Date().toISOString(), cmd, exitCode: out.exitCode, ms, outHead, ...(shot !== undefined && shot.length > 0 ? { shot } : {}) }
+      const row = { at: new Date().toISOString(), cmd: scrubUrlParams(cmd), exitCode: out.exitCode, ms, outHead: scrubUrlParams(outHead), ...(shot !== undefined && shot.length > 0 ? { shot } : {}) }
       appendFileSync(file, `${JSON.stringify(row)}\n`, 'utf8')
+      // 淘汰放在追加之后:当日新档已落盘、按文件名(日期)序是最新一份,计入预算(否则多留 1 份)
+      if (freshFile) this.pruneTraceFiles()
     } catch { /* 静默:轨迹缺失不阻断命令 */ }
+  }
+
+  /** 轨迹文件留存上限(份,含每日档与轮转档;env DSH_OPENCLI_TRACE_KEEP_FILES 可调,钳 5-365)。 */
+  private traceKeepFiles(): number {
+    const raw = Number(process.env.DSH_OPENCLI_TRACE_KEEP_FILES)
+    return Number.isFinite(raw) && raw >= 5 ? Math.min(Math.round(raw), 365) : 30
+  }
+
+  /** 轨迹滚动淘汰:trace-*.jsonl(+.1)超上限时按文件名(日期)序删最旧;任何失败静默。 */
+  private pruneTraceFiles(): void {
+    try {
+      const keep = this.traceKeepFiles()
+      const files = readdirSync(this.traceDir).filter((f) => /^trace-\d{8}\.jsonl(\.1)?$/.test(f)).sort()
+      if (files.length <= keep) return
+      for (const f of files.slice(0, files.length - keep)) { try { unlinkSync(join(this.traceDir, f)) } catch { /* ignore */ } }
+    } catch { /* 静默:淘汰失败不影响记录 */ }
   }
 
   /** 解析一个轨迹文件为行数组(缺文件/JSON 解析失败/**形状不对**的脏行一律跳过,不抛错)。 */
@@ -3473,19 +3787,23 @@ export class OpencliService extends TypertRemoteService {
     return lines
   }
 
-  /** trace_replay 的 markdown 时间线(新→旧):时间/命令/exit/耗时,失败步附输出摘录。 */
+  /** trace_replay 的 markdown 时间线(新→旧):时间/命令/exit/耗时,失败步附输出摘录。
+   *  #59 补完:装饰性步骤(scroll/hover——只改 CSS/视觉状态、不读写数据)在命令列前标
+   *  〔装饰〕,复盘时一眼分出"像人的动作"与真正的数据步骤;回放 RPC 可凭 skipDecorative 整体跳过。 */
   private async renderTraceTimeline(limit: number): Promise<string> {
     const r = await this.traceList({ limit })
     if (!r.ok || r.traces.length === 0) return '暂无运行轨迹(还没有 browser 命令执行记录)。跑一条 opencli_* 后再来看。'
     // 单元格净化:换行折为可见 \n 标记(userscript eval 等多行 cmd 会把表格行拆断),
     // 空白折叠为单格,竖线转义;命令不再用反引号包裹——载荷内嵌 ` 也不会截断 code span。
-    const esc = (s: string): string => s.replace(/\r?\n/g, '\\n').replace(/\s+/g, ' ').replace(/\|/g, '\\|')
+    // 轨迹报告同过 URL 参数脱敏(回执/轨迹卫生;老轨迹行写入时尚未脱敏,读侧补洗)
+    const esc = (s: string): string => scrubUrlParams(s).replace(/\r?\n/g, '\\n').replace(/\s+/g, ' ').replace(/\|/g, '\\|')
+    const deco = r.traces.filter((t) => isDecorativeStep(t.cmd)).length
     const out = [
-      `最近 ${r.traces.length} 步 browser 命令(新→旧,exit≠0 为失败):`,
+      `最近 ${r.traces.length} 步 browser 命令(新→旧,exit≠0 为失败${deco > 0 ? `;〔装饰〕=只改视觉的 scroll/hover 步 ${deco} 条,回放可跳过` : ''}):`,
       '',
       '| 时间 | 命令 | exit | 耗时 |',
       '|---|---|---|---|',
-      ...r.traces.map((t) => `| ${OpencliService.traceClock(t.at)} | ${esc(t.cmd.slice(0, 80))} | ${t.exitCode} | ${t.ms}ms |`),
+      ...r.traces.map((t) => `| ${OpencliService.traceClock(t.at)} | ${isDecorativeStep(t.cmd) ? '〔装饰〕' : ''}${esc(t.cmd.slice(0, 80))} | ${t.exitCode} | ${t.ms}ms |`),
     ]
     const fails = r.traces.filter((t) => t.exitCode !== 0).slice(0, 3)
     if (fails.length > 0) {
@@ -3496,7 +3814,10 @@ export class OpencliService extends TypertRemoteService {
   }
 
   private async daemonStatus() {
-    const r = await this.runOpencli(['daemon', 'status'], 15000)
+    // 探测走 runOpencliUngoverned(extensionState/cliMajor 同款约定):本机 RPC 不吃 site
+    // 限流,也不经会被覆写的 runOpencli;daemonStatus 挂在任务预检热路径上,走 governed 通道
+    // 会让每 tick 白付 750ms 级礼貌限流延迟,故此处绕行
+    const r = await this.runOpencliUngoverned(['daemon', 'status'], 15_000, 262_144)
     if (r.exitCode !== 0) return null
     return parseDaemonStatus(r.stdout + '\n' + r.stderr)
   }
@@ -3585,7 +3906,7 @@ export class OpencliService extends TypertRemoteService {
   /** 执行器桥(inbox-intent 与收件箱轮询共用;意图 → 既有 RPC 同源方法,一套逻辑两个入口)。 */
   private inboxExecutor(): IntentExecutor {
     return {
-      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}), ...((i as { jitter?: boolean }).jitter !== undefined ? { jitter: (i as { jitter?: boolean }).jitter } : {}), ...(i.preflight !== undefined ? { preflight: i.preflight } : {}) }),
+      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}), ...((i as { jitter?: boolean }).jitter !== undefined ? { jitter: (i as { jitter?: boolean }).jitter } : {}), ...(i.preflight !== undefined ? { preflight: i.preflight } : {}), ...(i.keep !== undefined ? { keep: i.keep } : {}), ...(i.backoffMs !== undefined ? { backoffMs: i.backoffMs } : {}), ...(i.profile !== undefined ? { profile: i.profile } : {}) }),
       scheduleRemove: async (id) => this.scheduleRemove({ id }),
       scheduleRun: async (id) => this.scheduleRunNow({ id }),
       scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
@@ -3613,21 +3934,28 @@ export class OpencliService extends TypertRemoteService {
         ...(this.state.notifyConfig !== undefined ? { notifyChannels: this.state.notifyConfig.channels.length } : {}),
       }),
       event: (text) => {
-        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'inbox', text })
-        this.ingestEventList = this.ingestEventList.slice(0, 30)
+        this.pushIngestEvent('inbox', text)
       },
     }
   }
 
+  /** drain 在途标记(重入守卫):3s 一拍,慢 drain(意图执行 60s 级 site 命令)期间
+   *  在途拍会无上限叠加;忙碌拍直接跳过,出结果后下一拍自然接管。 */
+  private inboxDraining = false
+
   /**
-   * 收件箱消费(F1):意图 → 既有服务方法(RPC 同源,一套逻辑两个入口)。轮询循环与专项
+   * 收件箱消费:意图 → 既有服务方法(RPC 同源,一套逻辑两个入口)。轮询循环与专项
    * 测试都走这里;任何异常吞掉记事件——收件箱是旁路面,绝不反噬宿主进程。
    * notify-test 走 buildNotifyChannels 真发一次(与调度通知同链),发到的是用户已配通道。
    */
   private async drainInboxSafe(): Promise<void> {
+    if (this.inboxDraining) return // 在途:跳过本拍(计时器照走,不叠加并发 drain)
+    this.inboxDraining = true
     try {
       await drainInbox(this.inboxExecutor())
-    } catch { /* 收件箱旁路:静默 */ }
+    } catch { /* 收件箱旁路:静默 */ } finally {
+      this.inboxDraining = false
+    }
   }
 
   private startScheduler(): void {
@@ -3640,7 +3968,7 @@ export class OpencliService extends TypertRemoteService {
         const histKey = `${sch.id}:${minuteKey}`
         if (this.schedMarkers.has(histKey)) continue
         if (!this.cronMatches(sch.cron, now)) continue
-        this.schedMarkers.add(histKey)
+        this.addSchedMarker(histKey)
         void this.runSiteCommand(sch.site, sch.id)
       }
     }, 15_000)
@@ -3650,8 +3978,70 @@ export class OpencliService extends TypertRemoteService {
   /** 上次看到的 daemon 版本(版本翻转检测:CLI 2.0.x 与 App 内置 1.8.6 互杀,#2761 实测一天 3 翻)。 */
   private lastDaemonVersion: string | undefined
 
+  /** 上次 daemon 自愈(restart)时刻:退避防循环——修复无效时,后续 tick 不再连发重启。 */
+  private lastSelfHealAt = 0
+  /** 自愈退避窗默认 10 分钟(DSH_OPENCLI_SELFHEAL_BACKOFF_MS 可调,0=关退避)。 */
+  private static readonly SELFHEAL_BACKOFF_MS = 10 * 60 * 1000
+
+  /** 熔断窗:系统级失败签名 → 开窗时刻。窗内同签名失败短路各任务的重试链(跨任务去重,§七#4)。 */
+  private circuitOpen = new Map<string, number>()
+  /** 熔断窗默认 30 分钟(DSH_OPENCLI_CIRCUIT_MINUTES 可配)。 */
+  private static readonly CIRCUIT_WINDOW_MS = 30 * 60 * 1000
+
   /**
-   * 任务级健康预检+断线恢复(0.1.2 P0-3,#2416/#2417/#1565/#2761):
+   * 系统级失败签名提取(熔断判据):daemon 断连(fetch failed——undici 汇聚错误文本,
+   * 11-06..08 v2ex 三日连败实证)与 Windows 文件系 EPERM(09-25 九分钟窗 75 条洪水实证,
+   * 单根因×任务×重试链放大)。返回 null=非系统级:站点/适配器故障不熔断,照常走重试链
+   * 与通知——熔断只止血系统面,不吞业务面。
+   */
+  private static circuitSignature(text: string): string | null {
+    if (/\bfetch failed\b/i.test(text)) return 'fetch-failed'
+    if (/\bEPERM\b[^\n]*operation not permitted/i.test(text)) return 'eperm'
+    return null
+  }
+
+  /** 熔断窗时长(分钟 → ms;env 可配,非正数回默认)。 */
+  private circuitWindowMs(): number {
+    const raw = Number(process.env.DSH_OPENCLI_CIRCUIT_MINUTES)
+    return Number.isFinite(raw) && raw > 0 ? Math.round(raw * 60_000) : OpencliService.CIRCUIT_WINDOW_MS
+  }
+
+  /** 熔断窗判定:开窗时刻仍在窗口内=活跃;过期条目顺手清掉(下次同签名失败重新开窗)。 */
+  private circuitActive(sig: string): boolean {
+    const at = this.circuitOpen.get(sig)
+    if (at === undefined) return false
+    if (Date.now() - at >= this.circuitWindowMs()) {
+      this.circuitOpen.delete(sig)
+      return false
+    }
+    return true
+  }
+
+  /**
+   * daemon 自愈单发(D3 纪律改版,用户 2026-11-09 确认):`daemon restart` → 重探,三态返回。
+   * 触发面由「daemon 明确报告未运行」扩为:未运行 / 运行但版本翻转(CLI/App 互杀,版本错=
+   * 功能坏,只观察不修复等于无人值守任务整天空转)/ 执行期 fetch failed(断连签名)。
+   * 退避窗(默认 10 分钟)内直接 skip-backoff 不动手——同一故障不由每次 tick 各重启一遍,
+   * 「翻转→重启」不再成循环;restart 前记 daemon-selfheal 事件(面板时间线可见自愈动作)。
+   */
+  private async selfHealDaemon(reason: string): Promise<'ok' | 'skip-backoff' | 'failed'> {
+    const rawBackoff = Number(process.env.DSH_OPENCLI_SELFHEAL_BACKOFF_MS)
+    const backoff = Number.isFinite(rawBackoff) && rawBackoff >= 0 ? rawBackoff : OpencliService.SELFHEAL_BACKOFF_MS
+    if (Date.now() - this.lastSelfHealAt < backoff) return 'skip-backoff'
+    this.lastSelfHealAt = Date.now()
+    this.pushIngestEvent('daemon-selfheal', `🩺 daemon 自愈:${reason} → daemon restart(退避 ${Math.round(backoff / 1000)}s 内不再重启)`)
+    try {
+      await this.runOpencli(['daemon', 'restart'], 30_000)
+    } catch {
+      return 'failed'
+    }
+    // restart 输出是纯文本,恢复判定必须重探(与 ① 路径同口径;重探结果取代旧值走后续检查)
+    const after = await this.daemonStatus()
+    return after !== null && after.running === true ? 'ok' : 'failed'
+  }
+
+  /**
+   * 任务级健康预检+断线恢复(dsh #2416/#2417/#1565 与上游 #2761):
    * 返回 {ok, note}——ok=true 可跑;note=人类可读的预检说明(进 history 行与推送)。
    * 预检失败且自动恢复也失败 → ok=false,本次 tick 跳过(诚实跳过优于注定失败的 60s 往返)。
    * 预检纪律:任何探测失败降级为"放行"——预检自身故障不能变成定时任务的死因(fail-open)。
@@ -3660,7 +4050,7 @@ export class OpencliService extends TypertRemoteService {
     const notes: string[] = []
     const ds = await this.daemonStatus()
     // ① daemon 未运行 → 尝试自动拉起(单次;失败即诚实跳过本 tick)。
-    //    审查 P1-5:exit≠0 与'未运行'不可分——仅当明确报告未运行(ds!==null&&!running)才动手 restart,
+    //    注意:exit≠0 与'未运行'不可分——仅当明确报告未运行(ds!==null&&!running)才动手 restart,
     //    ds=null(命令失败/输出变异)不碰 restart(fail-open 放行,让 attempt 循环自然失败并暴露)
     let effDs = ds
     if (ds !== null && ds.running !== true) {
@@ -3668,7 +4058,7 @@ export class OpencliService extends TypertRemoteService {
       try {
         await this.runOpencli(['daemon', 'restart'], 30_000)
         // restart 输出是纯文本,解析不出 running——恢复判定必须**重新探测**;
-        // 审查 P1-4:重探结果 after **取代** ds 走后续全部检查(拉起后扩展几乎必然未重连)
+        // 重探结果 after **取代** ds 走后续全部检查(拉起后扩展几乎必然未重连)
         const after = await this.daemonStatus()
         if (after === null || after.running !== true) {
           return { ok: false, note: 'daemon 不可用且自动拉起失败——本 tick 跳过(装扩展/查 daemon 日志后自动恢复)' }
@@ -3679,13 +4069,28 @@ export class OpencliService extends TypertRemoteService {
         return { ok: false, note: 'daemon 不可用且自动拉起异常——本 tick 跳过' }
       }
     }
-    // ② daemon 版本翻转检测(#2761):版本变化 → 记事件(扩展连接通常随之断开,下个预检周期会处理)
+    // ② daemon 版本翻转检测(#2761):版本变化 → 记事件 + 单次 restart 自愈(D3 纪律改版,
+    //    用户 2026-11-09 确认:触发条件由「仅未运行才 restart」扩为「未运行 OR 版本翻转」——
+    //    App 内置旧 daemon 会杀掉新 daemon,版本错=功能坏,只观察不修复等于任务整天空转;
+    //    退避窗防「翻转→重启」循环,窗内 skip 放行,修复无效时每 tick 至多记一次事件)
     if (effDs !== null && typeof effDs.version === 'string' && effDs.version.length > 0) {
       if (this.lastDaemonVersion !== undefined && this.lastDaemonVersion !== effDs.version) {
-        const flip = `daemon 版本翻转 ${this.lastDaemonVersion} → ${effDs.version}(疑似 CLI/App 互杀,#2761)——观察扩展重连`
-        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'daemon-flip', text: `⚠ ${flip}` })
-        this.ingestEventList = this.ingestEventList.slice(0, 30)
+        const flip = `daemon 版本翻转 ${this.lastDaemonVersion} → ${effDs.version}(疑似 CLI/App 互杀,#2761)`
+        this.pushIngestEvent('daemon-flip', `⚠ ${flip}`)
         notes.push(flip)
+        const healed = await this.selfHealDaemon('版本翻转')
+        if (healed === 'failed') {
+          return { ok: false, note: `${flip};自动重启未恢复——本 tick 跳过` }
+        }
+        if (healed === 'ok') {
+          const re = await this.daemonStatus()
+          if (re === null || re.running !== true) {
+            return { ok: false, note: `${flip};重启后重探失败——本 tick 跳过` }
+          }
+          notes.push('已自动重启 daemon(版本翻转自愈)')
+          effDs = re
+        }
+        // skip-backoff:退避窗内不重复重启,放行执行链自然暴露(循环防护的一部分)
       }
       this.lastDaemonVersion = effDs.version
     }
@@ -3703,7 +4108,7 @@ export class OpencliService extends TypertRemoteService {
 
   private async runSiteCommand(siteCmd: string, id: string, opts?: { manual?: boolean }): Promise<void> {
     const sch = this.schedules.find((s) => s.id === id)
-    // 健康预检(0.1.2 P0-3):daemon 探测/自动拉起/版本翻转/扩展断连四合一;
+    // 健康预检:daemon 探测/自动拉起/版本翻转/扩展断连四合一;
     // fail-open 纪律:预检自身异常 → 放行(预检故障不能变成任务死因)
     let healthNote: string | undefined
     try {
@@ -3713,8 +4118,7 @@ export class OpencliService extends TypertRemoteService {
         hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}` })
         this.runHistory[id] = hist0.slice(0, 5)
         await this.saveState()
-        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'schedule-skipped', text: `⏸ ${siteCmd} 本 tick 跳过:${hc.note ?? ''}` })
-        this.ingestEventList = this.ingestEventList.slice(0, 30)
+        this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:${hc.note ?? ''}`)
         return
       }
       healthNote = hc.note
@@ -3723,7 +4127,7 @@ export class OpencliService extends TypertRemoteService {
     const notify = sch?.notify !== false
     const hist = this.runHistory[id] ?? []
     // 面板占位符是 'site zhihu hot' 形态,而 CLI 直接吃 'zhihu hot'——此前原样透传导致
-    // 按占位符创建的任务 100% 失败(unknown command 'site')(真机走查发现 B)。剥掉 site 前缀。
+    // 按占位符创建的任务 100% 失败(unknown command 'site')(实测发现)。剥掉 site 前缀。
     const norm = siteCmd.replace(/^\s*site\s+/i, '').trim()
     // canary 特例:定时任务填 canary 即每晚漂移巡检(dogfooding——插件自监控),
     // 走 canaryRun 全链(与上轮对比出漂移报告),不走单命令执行
@@ -3736,7 +4140,17 @@ export class OpencliService extends TypertRemoteService {
     }
     const cmdLine = norm.length > 0 ? norm : siteCmd
     const [sSite = '', sCmd = ''] = cmdLine.split(/\s+/)
-    // 认证预检(USER-NEEDS #1882/#1883/#2568/#2758:cookie 过期=false AUTH 失败,烧满重试链才暴露):
+    // 多账号隔离(任务级透传):上游 2.0.3 原生支持 --profile/OPENCLI_PROFILE(contextId
+    // 严格路由,fail loud——profile 未连=诚实失败,插件层不降级不吞),任务字段 profile 存在时
+    // 经 env 透传(不经 shell,runSubprocess env 合并路径零注入面)。回执标 profile 留审计痕。
+    const profileEnv = sch?.profile !== undefined && sch.profile.length > 0 ? { OPENCLI_PROFILE: sch.profile } : undefined
+    // 命令读写类别(#59 读写分频):清单缓存里的 access 决定限频轨(read=750ms 轨,write=3s 独立轨)。
+    // 只读已有缓存(面板 status 异步预热 / systemPrompt 目录构建 / 审批门 lookupAccess 都会填充),
+    // 不为分频在调度热路径上额外拉 2.0 分页清单(1225 条≈13 次受控 CLI 调用);冷缓存时 access=unknown
+    // 按 read 轨走——如实边界:此时写命令不享独立写轨,但放行语义不变(分频是节奏,不是授权)
+    const access = commandAccess((this.adapterCache as { json?: unknown } | null)?.json, sSite, sCmd)
+    const govKind: 'read' | 'write' = access === 'write' ? 'write' : 'read'
+    // 认证预检(dsh #1882/#1883/#2568/#2758:cookie 过期=false AUTH 失败,烧满重试链才暴露):
     // 任务级开关(默认关,scheduleAdd preflight / 收件箱 / ctl --preflight),canary 例外已在上方 return。
     // 开启时每次采集前跑 whoami 快检(loginCheck 池,10min TTL 缓存——多任务同分钟共享一次探测);
     // 未登录 → 按 AUTH 类失败记 history 行并跳过本 tick(与扩展断连跳过同款 ⏸ 语义,任务保留)。
@@ -3751,11 +4165,10 @@ export class OpencliService extends TypertRemoteService {
             const detail = item.detail !== null && item.detail.length > 0 ? `:${item.detail}` : ''
             const note = `${sSite} 未登录(AUTH 预检未过${detail})`
             const hist0 = this.runHistory[id] ?? []
-            hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${note}(先 site ${sSite} login;任务保留,下 tick 再检)`, receipt: { auth_state: 'auth_wall', bytes: 0 } })
+            hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${note}(先 site ${sSite} login;任务保留,下 tick 再检)`, receipt: { auth_state: 'auth_wall', bytes: 0, stop_reason: 'error', remaining_cursor: null } })
             this.runHistory[id] = hist0.slice(0, 5)
             await this.saveState()
-            this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'schedule-skipped', text: `⏸ ${siteCmd} 本 tick 跳过:登录态预检未过——${note}` })
-            this.ingestEventList = this.ingestEventList.slice(0, 30)
+            this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:登录态预检未过——${note}`)
             return
           }
         }
@@ -3765,7 +4178,8 @@ export class OpencliService extends TypertRemoteService {
     let lastSummary = ''
     let lastOut = ''
     let lastRaw = ''
-    // 拟人限速(0.1.2 P0-1):精确 cron 时刻本身是指纹——首跑前随机延迟打散命中时间
+    let lastStderr = '' // 末次尝试的 stderr(typed 失败码提取源;异常尝试清空,不残留上一次的码)
+    // 拟人限速:精确 cron 时刻本身是指纹——首跑前随机延迟打散命中时间
     // (重试链已有风控感知退避;任务级 jitter:false 可关;DSH_OPENCLI_JITTER_MAX_MS 调上限/置 0 关)
     if (opts?.manual !== true && sch?.jitter !== false) {
       const raw = Number(process.env.DSH_OPENCLI_JITTER_MAX_MS ?? 90_000)
@@ -3776,18 +4190,22 @@ export class OpencliService extends TypertRemoteService {
       }
     }
     let bonusUsed = false
+    let selfHealUsed = false // 同 tick 只试一次自愈(D3);跨 tick 循环由 selfHealDaemon 退避窗防
+    let circuitSkipped = false // 熔断短路标记:跳过余下重试,且不再补 schedule-failed 事件/外送通知
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         const started = Date.now()
-        const r = await this.runOpencli(cmdLine.split(/\s+/), 60_000)
+        const r = await this.runOpencli(cmdLine.split(/\s+/), 60_000, 1_048_576, profileEnv, govKind)
         // 定时链路此前绕过 recordTrace(只有 browser 透传入口记录),「运行轨迹」看不到定时执行的
-        // 真实失败输出,复盘断链(GUI 走查 2026-10-08)。带 schedule 前缀与手动 browser 命令区分。
+        // 真实失败输出,复盘断链(GUI 走查 2026-10-08)。带 schedule 前缀与手动 browser 命令区分;
+        // URL 参数脱敏在 recordTrace 单点完成(回执/轨迹卫生:登录态链接常带 ?token=/?code=,落盘即洗)
         this.recordTrace(`schedule ${cmdLine}`, r, Date.now() - started)
         lastOk = r.exitCode === 0
         lastSummary = lastOk ? (r.stdout.slice(0, 120) || 'ok') : (r.stderr.slice(0, 120) || `exit ${r.exitCode}`)
         lastOut = lastOk ? r.stdout : ''
         lastRaw = `${r.stdout}
 ${r.stderr}`
+        lastStderr = r.stderr
         if (lastOk) {
           // 无人值守防线:规则命中或 noul 强失效(P<0.35)→ 按失败重试;noul 可疑(0.35-0.7)只标注不重试
           const v = await this.verifyResult(sSite, sCmd, r.stdout)
@@ -3802,12 +4220,34 @@ ${r.stderr}`
         }
       } catch (e) {
         lastOk = false
+        lastStderr = ''
         lastSummary = e instanceof Error ? e.message.slice(0, 120) : 'failed'
       }
-      const sum = attempts > 1 ? `#${attempt}/${attempts} ${lastSummary}` : lastSummary
+      // 回执卫生:history 摘要是输出前 120 字,登录态页面链接的 ?token=/?code= 会原样进
+      // state.json 与面板 tooltip——落 history 前过 URL 参数脱敏(通知出口另有全量 scrub)
+      const sum = scrubUrlParams(attempts > 1 ? `#${attempt}/${attempts} ${lastSummary}` : lastSummary)
       hist.unshift({ at: new Date().toISOString(), ok: lastOk, summary: healthNote !== undefined ? `【${healthNote}】${sum}` : sum })
       if (lastOk) break
-      // 挑战自解等待(0.1.2 P0-1):验证码/人机验证常在数十秒内自解(上游 #2045 已采纳同方向)——
+      // 熔断检查(§七#4,置于自愈/挑战/退避之前:窗已开=系统性故障且修复已试过,不再烧链):
+      // 同签名失败跨任务去重——首个任务烧完链开窗,窗内其余任务首败即短路,单行诚实落史
+      const sig = OpencliService.circuitSignature(`${lastRaw}\n${lastSummary}`)
+      if (sig !== null && this.circuitActive(sig)) {
+        circuitSkipped = true
+        if (hist[0] !== undefined) hist[0].summary = `${hist[0].summary} ⚡ 熔断:${sig} 系统级失败 ${Math.round(this.circuitWindowMs() / 60_000)} 分钟窗内,重试链短路(诊断入口:canary 巡检)`
+        break
+      }
+      // 执行期断连自愈(D3):fetch failed=daemon 断连签名 → 单次 restart 后重探重跑
+      // (赠次不占 attempts 预算,与挑战自解同款);同 tick 只试一次,退避窗防跨 tick 循环
+      if (sig === 'fetch-failed' && !selfHealUsed) {
+        selfHealUsed = true
+        const healed = await this.selfHealDaemon(`执行期断连:${cmdLine}`)
+        if (healed === 'ok') {
+          healthNote = 'daemon 断连已自愈重跑'
+          attempt--
+          continue
+        }
+      }
+      // 挑战自解等待:验证码/人机验证常在数十秒内自解(上游 #2045 已采纳同方向)——
       // 首次命中额外赠一次尝试(不占 attempts 预算);DSH_OPENCLI_CHALLENGE_WAIT_MS 调等待时长
       if (attempt >= attempts && !bonusUsed && isChallengePage(lastRaw || lastSummary)) {
         bonusUsed = true
@@ -3818,36 +4258,60 @@ ${r.stderr}`
         continue
       }
       if (attempt < attempts) {
-        // 风控感知退避:撞登录/风控墙时 15s 固定重试等于往枪口上撞(小红书封号是中文圈最真实恐惧,
-        // PM 调研 2026-09-25),改等 2 分钟让软封禁冷却;其他失败维持 15s。
+        // 风控感知退避(回执/轨迹卫生:退避写成任务级默认字段 backoffMs,默认 15s 行为不变;
+        // 风控墙维持 ≥120s 下限——撞墙时 15s 固定重试等于往枪口上撞,改等 2 分钟让软封禁冷却)
+        const backoffMs = Math.max(0, Math.min(600_000, sch?.backoffMs ?? 15_000))
         const riskWall = lastSummary.includes('登录/风控墙')
-        await new Promise((res) => setTimeout(res, riskWall ? 120_000 : 15_000))
+        await new Promise((res) => setTimeout(res, riskWall ? Math.max(backoffMs, 120_000) : backoffMs))
       }
     }
-    // 采集回执(0.1.2 P0-2):auth 状态/条目数/空结果——对齐上游 missing≠zero 语义(#2699/#2708):
-    // 空数组≠没数据(可能是登录后空壳页),必须显式标注而不是假装成功
+    // 采集回执:auth 状态/条目数/空结果——对齐上游 missing≠zero 语义(#2699/#2708):
+    // 空数组≠没数据(可能是登录后空壳页),必须显式标注而不是假装成功。
+    // 回执深化(对齐 2.0.3 #2708/#2754/#2766 typed 口径):partial=#2766 分页未尽,
+    // unloaded=#2708 内容未渲染完即读(输出含加载中/骨架正向标记),coverage 近似
+    // stop_reason/remaining_cursor(插件层近似,上游 #2698 设计落地后对齐字段语义)。
     const itemCount = lastOk ? countStructuredItems(lastOut) : null
+    const partial = lastOk && looksPartialPage(`${lastRaw}\n${lastOut}`)
+    // typed 失败码(#2708/#2754 对齐):失败回执带上游原码,不再只落 auth_state:unknown;
+    // COUNTS_NOT_LOADED=上游 typed「未载」→ unloaded 直接采信(成功侧仍是加载标记近似)
+    const errorCode = lastOk ? null : typedErrorCode(lastStderr)
+    const unloaded = (lastOk && itemCount === 0 && looksUnloaded(lastOut)) || errorCode === 'COUNTS_NOT_LOADED'
+    const truncated = lastOk && looksTruncated(lastOut)
     const receipt: Receipt = {
       auth_state: lastOk ? (authRiskClass(lastOut) ?? 'ok') : (authRiskClass(lastRaw || lastSummary) ?? 'unknown'),
       ...(lastOk && itemCount !== null ? { items: itemCount } : {}),
       bytes: lastOut.length,
-      ...(lastOk && itemCount === 0 ? { empty: true } : {}),
-      ...(lastOk && looksTruncated(lastOut) ? { truncated: true } : {}),
+      ...(lastOk && itemCount === 0 && !unloaded ? { empty: true } : {}),
+      ...(truncated ? { truncated: true } : {}),
+      ...(partial ? { partial: true } : {}),
+      ...(unloaded ? { unloaded: true } : {}),
+      ...(sch?.profile !== undefined ? { profile: sch.profile } : {}),
+      ...(errorCode !== null ? { error_code: errorCode } : {}),
+      // coverage 近似:cursor 仅 #2766 提示给出 offset 时可提取,其余未知恒 null;
+      // unloaded(疑似未渲染完)不能算"自然翻完"——结构化判据对它不成立,stop_reason 落 null(未知)
+      stop_reason: coverageStopReason(lastOk, truncated || partial, itemCount !== null && !unloaded),
+      remaining_cursor: partial ? (cursorOfPartialPage(lastRaw) ?? null) : null,
     }
     if (hist[0] !== undefined) (hist[0] as { receipt?: Receipt }).receipt = receipt
     this.runHistory[id] = hist.slice(0, 5)
     // 采集结构化落盘(主线 B):成功执行的完整输出存快照,时间线/diff/趋势的数据源。
-    // 文件即真相:~/.dsh/opencli-snapshots/<任务id>/<时间戳>.json,保留最近 50 份自动轮转。
+    // 文件即真相:~/.dsh/opencli-snapshots/<任务id>/<时间戳>.json。留存预算(回执/轨迹卫生,
+    // 任务级可配 sch.keep,默认 50 份、钳制 5-500):超出按时间序滚动淘汰最旧——高频任务
+    // 不再把磁盘写穿,低频长周期任务可调大保留全程。快照 stdout 同过 URL 参数脱敏(落盘即洗)。
+    let snapPath: string | undefined // 本 tick 快照路径:漂移兜底数据并入同一份(不另起快照)
     if (lastOk && lastOut.length > 0) {
       try {
         const dir = join(this.snapshotsBase, id)
         await mkdir(dir, { recursive: true })
         const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-        await writeFile(join(dir, `${stamp}.json`), JSON.stringify({
-          at: new Date().toISOString(), site: siteCmd, bytes: lastOut.length, stdout: lastOut, receipt,
+        const p = join(dir, `${stamp}.json`)
+        await writeFile(p, JSON.stringify({
+          at: new Date().toISOString(), site: siteCmd, bytes: lastOut.length, stdout: scrubUrlParams(lastOut), receipt,
         }), 'utf8')
+        snapPath = p
         const olds = readdirSync(dir).sort() // 字典序=时间序
-        if (olds.length > 50) for (const f of olds.slice(0, olds.length - 50)) { try { unlinkSync(join(dir, f)) } catch { /* ignore */ } }
+        const keep = Math.max(5, Math.min(500, sch?.keep ?? 50))
+        if (olds.length > keep) for (const f of olds.slice(0, olds.length - keep)) { try { unlinkSync(join(dir, f)) } catch { /* ignore */ } }
       } catch { /* 快照失败不阻断主流程 */ }
     }
     // 快照 diff(0.4.6 C):成功采集时与上一份快照比对(文件即真相,字典序取次新份)。
@@ -3860,11 +4324,12 @@ ${r.stderr}`
         const prevFile = olds.length >= 2 ? olds[olds.length - 2] : undefined  // 刚写入的当前份是最后一份
         if (prevFile !== undefined) {
           const prev = JSON.parse(readFileSync(join(sdir, prevFile), 'utf8')) as { stdout?: string }
-          const d = diffSnapshots(String(prev.stdout ?? ''), lastOut)
+          // 同口径比对:落盘 stdout 已过 URL 参数脱敏,当前份也先脱敏再比——否则带 ?sid= 等参数的
+          // 条目会因"一边脱敏一边原文"被误判为变化
+          const d = diffSnapshots(String(prev.stdout ?? ''), scrubUrlParams(lastOut))
           diffText = renderDiffText(d)
           if (d.structured && d.added + d.removed + d.moved > 0) {
-            this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'snap-diff', text: `📊 ${siteCmd} 变化:新增 ${d.added}/消失 ${d.removed}/位移 ${d.moved}` })
-            this.ingestEventList = this.ingestEventList.slice(0, 30)
+            this.pushIngestEvent('snap-diff', `📊 ${siteCmd} 变化:新增 ${d.added}/消失 ${d.removed}/位移 ${d.moved}`)
           }
         }
       } catch { /* diff 旁路:失败不影响主流程 */ }
@@ -3880,8 +4345,42 @@ ${r.stderr}`
       if (sig.length > 5) sig.splice(0, sig.length - 5)
       this.driftHistory.set(id, sig)
       if (detectDrift(sig)) {
-        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'adapter-drift', text: `⚠ ${siteCmd} 疑似适配器坏/灰度漂移:连续 3 次结果结构突变(条目骤降/结构翻转),建议 browser_* 兜底` })
-        this.ingestEventList = this.ingestEventList.slice(0, 30)
+        // 预警事件照发(adapter-drift 发射点,0.1.2 语义不变),随后接兜底:此前只发预警
+        // "建议 browser_* 兜底",当晚数据就断流——现在命中处直接经 browser_* 原语兜底采集
+        // (open 域名首页 + state 页面状态)。成功:兜底数据并入本 tick 快照(fallback 字段,
+        // 不另起一份——diff 仍只比 .stdout=适配器输出,时间线每 tick 一份)、回执标 degraded;
+        // 失败:按现语义诚实失败(预警已发,history 行写明兜底失败原因,不伪造任何数据)。
+        // coverage 字段(stop_reason/remaining_cursor)保持适配器侧口径不改:页面状态级的近似
+        // 数据说明不了适配器是否"翻完",改成 end 就是虚报。
+        this.pushIngestEvent('adapter-drift', `⚠ ${siteCmd} 疑似适配器坏/灰度漂移:连续 3 次结果结构突变(条目骤降/结构翻转)——自动接 browser_* 原语兜底采集`)
+        // 多账号边界:任务指定了浏览器 profile 时不兜底——browser_* 原语(含生产直连路径)不按任务
+        // profile 路由,兜底会落到默认档案、用**另一个账号**采到数据,标 degraded 也掩盖不了"账号错了";
+        // 宁可如实报兜底不可用,也不拿错账号的数据顶替
+        const domain = sch?.profile !== undefined ? null : await this.domainOf(sSite)
+        const fb = sch?.profile !== undefined
+          ? { ok: false, note: `任务指定了浏览器 profile「${sch.profile}」,browser_* 兜底不支持按 profile 路由——不用默认档案的账号顶替采集` }
+          : domain !== null ? await this.driftFallbackCollect(domain) : { ok: false, note: '适配器清单无该站点域名' }
+        if (fb.ok) {
+          receipt.degraded = true
+          if (snapPath !== undefined) {
+            try {
+              const snap = JSON.parse(readFileSync(snapPath, 'utf8')) as Record<string, unknown>
+              snap.degraded = true
+              snap.fallback = { via: 'browser open + state', domain, bytes: fb.bytes, stdout: scrubUrlParams(fb.stdout ?? '') }
+              snap.receipt = receipt
+              await writeFile(snapPath, JSON.stringify(snap), 'utf8')
+            } catch { /* 兜底数据并入快照失败不阻断主流程(回执与事件照常) */ }
+          }
+          if (hist[0] !== undefined) {
+            hist[0].summary = `${hist[0].summary} 🛟 漂移兜底:browser_* 原语已采集近似数据(${domain} 首页页面状态,degraded;非适配器结构化输出)`
+          }
+          this.pushIngestEvent('adapter-drift-fallback', `🛟 ${siteCmd} 漂移兜底成功:browser_* 原语采集了 ${domain} 首页页面状态(degraded,已并入本次快照);适配器恢复前数据为近似口径`)
+        } else {
+          if (hist[0] !== undefined) {
+            hist[0].summary = `${hist[0].summary} 🛟 漂移兜底失败(${fb.note ?? '未知'}):本 tick 无兜底数据`
+          }
+          this.pushIngestEvent('adapter-drift-fallback', `🛟 ${siteCmd} 漂移兜底失败:${fb.note ?? '未知'}——不伪造数据;建议人工 browser open 该站验证或等适配器修复`)
+        }
       }
     }
     // watch 命中:采集成功且完整结果包含任一监控关键词 → ingest 事件(确定性匹配,零误报)。
@@ -3889,17 +4388,23 @@ ${r.stderr}`
     let watchHits: string[] = []
     if (lastOk && sch?.watch !== undefined && sch.watch.length > 0) {
       const kws = sch.watch.split(/[,，\s]+/).filter((k) => k.length > 0)
-      // 大小写不敏感(真机走查发现 A:'agent,diffusion' 撞 'Agentic/Diffusion' 全 miss)
+      // 大小写不敏感(实测发现:'agent,diffusion' 撞 'Agentic/Diffusion' 全 miss)
       const low = lastOut.toLowerCase()
       watchHits = kws.filter((k) => low.includes(k.toLowerCase()))
       if (watchHits.length > 0) {
-        this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'watch-hit', text: `🔔 Watch 命中:${siteCmd} 出现 [${watchHits.join(', ')}]` })
-        this.ingestEventList = this.ingestEventList.slice(0, 30)
+        this.pushIngestEvent('watch-hit', `🔔 Watch 命中:${siteCmd} 出现 [${watchHits.join(', ')}]`)
       }
     }
-    if (!lastOk && notify) {
-      this.ingestEventList.unshift({ at: new Date().toISOString(), kind: 'schedule-failed', text: `定时任务连续 ${attempts} 次失败:${siteCmd} — ${lastSummary}` })
-      this.ingestEventList = this.ingestEventList.slice(0, 30)
+    if (!lastOk && notify && !circuitSkipped) {
+      // 熔断开窗(§七#4):链烧完仍是系统级签名且窗未开 → 开窗一次,ingest 单条事件给
+      // 诊断入口(canary 区分站点面漂移与系统面故障);窗内后续任务的短路行只进 runHistory
+      // (上方 ⚡ 行),不再补 schedule-failed/外送——「1 条诊断 + 全任务熔断到修复」
+      const finalSig = OpencliService.circuitSignature(`${lastRaw}\n${lastSummary}`)
+      if (finalSig !== null && !this.circuitActive(finalSig)) {
+        this.circuitOpen.set(finalSig, Date.now())
+        this.pushIngestEvent('circuit-open', `⚡ 系统级熔断开窗(${finalSig}):同签名失败将在 ${Math.round(this.circuitWindowMs() / 60_000)} 分钟窗内短路各任务重试链——daemon 断连/文件系权限类系统面故障;诊断入口:canary 巡检(区分站点面漂移与系统面故障)`)
+      }
+      this.pushIngestEvent('schedule-failed', `定时任务连续 ${attempts} 次失败:${siteCmd} — ${lastSummary}`)
     }
     await this.saveState()
     // 任务 E:结果外送通知——重试链走完、状态落盘后一次群发。放在 saveState 之后:
@@ -3910,7 +4415,8 @@ ${r.stderr}`
     // ④补强:notifyLevel==='quiet' 只推有价值信号(watch 命中/有变化/失败),高频任务不再刷屏
     const quiet = sch?.notifyLevel === 'quiet'
     const worthPushing = !lastOk || watchHits.length > 0 || diffText.length > 0
-    if (sch?.notify !== false && (!quiet || worthPushing)) {
+    // 熔断短路(circuitSkipped)不外送:开窗任务的通知已发过一次,窗内任务不再逐任务推送
+    if (sch?.notify !== false && !circuitSkipped && (!quiet || worthPushing)) {
       // 静默时段(0.4.7 B2):窗内暂存(上限 20 条,防长窗爆内存;随任务落盘重启不丢),
       // 出窗首跑把暂存合并进正文一次推送后清空。窗解析失败按未配置处理(fail-open 多推不吞)。
       if (sch?.quietHours !== undefined && inQuietHours(sch.quietHours)) {
@@ -3919,41 +4425,71 @@ ${r.stderr}`
         sch.pendingNotify = pend.slice(-20)
         await this.saveState()
       } else {
-        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours, receipt, healthNote)
+        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours, receipt, healthNote, sch?.source)
         if ((sch?.pendingNotify?.length ?? 0) > 0) { sch!.pendingNotify = []; await this.saveState() }
       }
     }
   }
 
-  /** dsh 面板通知通道的事件入口:与调度失败/watch 命中共用同一条 ingest 时间线(最近 30 条)。 */
-  private emitNotifyEvent(ev: IngestEvent): void {
-    this.ingestEventList.unshift(ev)
-    this.ingestEventList = this.ingestEventList.slice(0, 30)
+  /**
+   * 漂移兜底采集:adapter-drift 命中时经 browser_* 原语(open + state)抓域名首页的
+   * 页面状态,作 degraded 近似数据。显式诚实边界:抓的是"浏览器还能打开这个域"的证据与
+   * 页面状态 JSON,不是适配器结构化输出——回执标 degraded,数据并入本 tick 快照的 fallback 字段。
+   * 两步任一失败即整体失败(返回 note),由调用方按现语义诚实降级;会话名带 drift- 前缀,
+   * 与用户活页/其他任务的会话隔离,两步都进运行轨迹(runBrowserTraced 单点纪律)。
+   */
+  private async driftFallbackCollect(domain: string): Promise<{ ok: boolean; stdout?: string; bytes?: number; note?: string }> {
+    const sess = `drift-${Date.now()}`
+    let opened = false
+    try {
+      const o = await this.runBrowserTraced(sess, ['open', `https://${domain}`])
+      if (o.exitCode !== 0) return { ok: false, note: `open https://${domain} 失败:${(o.stderr || o.stdout).slice(0, 80)}` }
+      opened = true
+      const state = await this.runBrowserTraced(sess, ['state'])
+      const ok = state.exitCode === 0 && state.stdout.trim().length > 0
+      return ok
+        ? { ok: true, stdout: state.stdout, bytes: state.stdout.length }
+        : { ok: false, note: `state 失败:${(state.stderr || state.stdout).slice(0, 80)}` }
+    } catch (e) {
+      return { ok: false, note: e instanceof Error ? e.message.slice(0, 80) : 'browser 原语异常' }
+    } finally {
+      // 有界清理(回执/轨迹卫生同款纪律):兜底会话开的窗口用完即关,单条命令、失败忽略——
+      // 不在用户浏览器里每次漂移都遗留一个标签页
+      if (opened) { try { await this.runBrowserTraced(sess, ['close']) } catch { /* 清理尽力而为 */ } }
+    }
   }
 
   /**
    * 定时结果外送(notify.ts 通道层的接线点):notifyConfig 有启用通道才发;标题/正文由
-   * buildNotifyBody 统一组装(本机路径/凭据的出口清洗在那边内置,这里没有"忘了洗"的口子)。
+   * buildNotifyBody 统一组装,四个追加段(diff/静默摘要/自愈说明/回执)在拼接处逐段过
+   * scrubLocalPaths——本机路径/凭据的出口清洗全线覆盖,没有"忘了洗"的口子。
    * watch 命中的正文加「🔔 Watch 命中」前缀行——收端(群机器人/邮箱)免读全文即可分拣
    * 例行结果与关键词命中。sendViaChannels 并发群发且单通道失败不抛;这里再兜一层:
    * 装配阶段的意外(坏配置形状等)也绝不反噬调度主链,通知永远是旁路。
    */
-  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string, receipt?: Receipt, recoveredNote?: string): Promise<void> {
+  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string, receipt?: Receipt, recoveredNote?: string, schSource?: string): Promise<void> {
     try {
       const config = this.state.notifyConfig
       if (config === undefined) return
       const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
       if (channels.length === 0) return
       const { title, body } = buildNotifyBody(
-        { site: siteCmd, ...(watch !== undefined && watch.length > 0 ? { watch } : {}) },
+        // 任务身份(回执/轨迹卫生):来源标记进推送卡正文「任务:… · 来源 …」行,BrowserSkill
+        // Controller identity 同款——同站多任务在群里可分拣是谁的
+        { site: siteCmd, ...(watch !== undefined && watch.length > 0 ? { watch } : {}), ...(schSource !== undefined && schSource.length > 0 ? { source: schSource } : {}) },
         { ok, ...(summary.length > 0 ? { summary } : {}), ...(watchHits.length > 0 ? { watchHits } : {}) },
       )
       const head = watchHits.length > 0 ? `🔔 Watch 命中\n` : diffText.length > 0 ? `📊 变化\n` : ''
-const diffSeg = diffText.length > 0 ? `\n📊 与上次相比:${diffText}` : ''
-const quietSeg = renderQuietDigest(pending, quietHours)
-const recoverSeg = recoveredNote !== undefined && recoveredNote.length > 0 ? `\n🩺 ${recoveredNote}` : ''
-const receiptSeg = receipt !== undefined ? `\n🧾 回执:auth=${receipt.auth_state}${receipt.items !== undefined ? ` · ${receipt.items} 条` : ''} · ${receipt.bytes}B${receipt.empty === true ? ' · ⚠ 空结果' : ''}` : ''
-await sendViaChannels(channels, title, head + body + recoverSeg + diffSeg + quietSeg + receiptSeg)
+      // 四个追加段逐段过 scrubLocalPaths(0.1.2 发后审查发现 1):buildNotifyBody 只洗 title/body,
+      // diff 摘要(快照 diff 文本)、静默期摘要(暂存的 summary 原文)、自愈说明、回执都绕过了
+      // 清洗——本机路径/token 会原样发往群机器人/邮箱,出口处补洗,不依赖上游自觉
+      const diffSeg = diffText.length > 0 ? scrubLocalPaths(`\n📊 与上次相比:${diffText}`) : ''
+      const quietSeg = scrubLocalPaths(renderQuietDigest(pending, quietHours))
+      const recoverSeg = recoveredNote !== undefined && recoveredNote.length > 0 ? scrubLocalPaths(`\n🩺 ${recoveredNote}`) : ''
+      // 回执段(typed 口径进推送卡):partial/unloaded/degraded/profile 与 empty 同款按需追加——
+      // 收端不读面板也能分辨「一页未尽/未渲染完/兜底近似/哪个账号档案」
+      const receiptSeg = receipt !== undefined ? scrubLocalPaths(`\n🧾 回执:auth=${receipt.auth_state}${receipt.items !== undefined ? ` · ${receipt.items} 条` : ''} · ${receipt.bytes}B${receipt.empty === true ? ' · ⚠ 空结果' : ''}${receipt.partial === true ? ' · 分页未尽' : ''}${receipt.unloaded === true ? ' · ⚠ 疑似未渲染完' : ''}${receipt.degraded === true ? ' · 🛟 兜底近似' : ''}${receipt.profile !== undefined ? ` · profile ${receipt.profile}` : ''}${receipt.error_code !== undefined ? ` · ${receipt.error_code}` : ''}`) : ''
+      await sendViaChannels(channels, title, head + body + recoverSeg + diffSeg + quietSeg + receiptSeg)
     } catch { /* 通知旁路:全静默降级 */ }
   }
 

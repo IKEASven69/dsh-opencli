@@ -1,12 +1,67 @@
+## 0.1.3 — 未发布
+
+> 本段随开发推进持续补充,发布时定稿。
+
+### 无人值守采集
+- **事件历史持久化**:watch 命中 / 适配器漂移与兜底 / daemon 翻转 / 熔断 / 自愈等通知事件追加写入
+  `~/.dsh/opencli-events.jsonl`(超 5MB 轮转为 .1,与运行轨迹同款预算),新增 events-get RPC 跨会话读回;
+  面板「自动化」页新增「事件历史」卡——重启 dsh 后仍可回看(此前只有内存里最近 30 条)
+- **采集回执深化**:receipt 新增 typed 口径 `partial`(分页未尽,对齐上游 #2766 的分页提示)与 `unloaded`
+  (上游 typed 失败码 COUNTS_NOT_LOADED 直接采信,对齐 #2708「未载≠0」;成功输出零条目且含加载中/骨架标记时
+  近似判定;无正向证据不标注);失败回执带上游 typed 失败码 `error_code`(如 AUTH_REQUIRED / COUNTS_NOT_LOADED
+  / SECURITY_BLOCK,此前这类失败只能记为 unknown);新增 coverage 字段
+  `stop_reason`('end' / 'truncated' / 'error',未知为 null)与 `remaining_cursor`(仅分页提示给出 offset
+  时有值,其余为 null)——**插件层近似,上游 #2698 设计落地后对齐字段语义**
+- **漂移兜底**:同一任务连续 3 次结果结构突变时,除预警事件外自动经 browser_* 原语(打开站点首页 + 读取
+  页面状态)兜底采集,数据并入当次快照、回执标 `degraded`(页面状态级近似,不是适配器结构化输出);
+  兜底也失败则如实记录原因,不伪造数据;指定了浏览器 profile 的任务不兜底(兜底不按 profile 路由,
+  不用默认档案的另一个账号顶替采集)
+- **多账号登录态隔离**:定时任务新增 `profile` 字段(面板 / ctl `--profile` / 收件箱),经 `OPENCLI_PROFILE`
+  透传给 OpenCLI——上游 2.0.3 原生按浏览器 profile 路由,不同 profile 即不同 Chrome 档案,cookie/存储各自
+  独立;该 profile 未连接时任务如实失败,不回落到别的账号;回执标注所用 profile
+- **拟人限速补完(#59)**:读写分频——写命令(权限未知的按写)走独立限频轨,默认间隔 3s,与读命令的 750ms
+  礼貌间隔互不占用;装饰性步骤(只改视觉的 scroll/hover)在运行轨迹与 trace_replay 时间线标注〔装饰〕,
+  录制回放可勾选跳过,数据读写步骤照常执行
+
+### 回执与轨迹卫生
+- **URL 敏感参数默认脱敏**:token / access_token / code / sid / sig / secret 等查询参数的值,在运行轨迹(含
+  trace_replay 时间线)、快照、history 摘要、采集报告与推送正文中替换为 `[已脱敏]`(参数名保留)
+- **推送卡带任务身份**:正文新增「任务:<命令> · 来源 <agent/chat/panel/ctl>」行
+- **超时「取消 + 有界清理」**:到点取消执行,子进程 5s 宽限内仍未退出则停止等待,返回 exit 124
+  (dsh 0.2.0+ 的子进程通道;0.1.x 宿主的 shell 回落路径沿用宿主自身的超时处理)
+- **留存预算与滚动淘汰**:快照按任务可配 `keep`(默认 50 份,5-500);运行轨迹文件默认保留 30 份
+  (`DSH_OPENCLI_TRACE_KEEP_FILES` 可调)
+- **重试退避写成任务级字段** `backoffMs`(默认 15s;撞登录/风控墙维持 ≥120s 下限)
+
+### 质量门禁
+- **知识卡漂移门禁**:测试启动前先比对 `knowledge/*.json` 与本机 OpenCLI CLI 的 manifest(2.0.3:171 站 /
+  1225 命令)——卡片站点已被上游移除、标「不支持」的站点已有适配器、新站缺卡、站点/命令数低于对外
+  「170+ / 1200+」口径,任一即整轮失败(未安装 CLI 的环境跳过并提示);新增拼多多(pinduoduo)知识卡
+
+## 未竟与已知问题(Known issues)
+
+> 常设段(自 0.1.3 起建制):集中如实记录当前仍未完成、或受上游限制无法在插件侧根治的事项,
+> 每项注明状态;补完后随对应版本更新本段。此前唯一的「未竟」记录散落在 0.1.2 段的如实降格行里。
+
+- **拟人限速的装饰性操作与读写分频(#59)**——0.1.2 如实降格项(当时只做了首跑随机延迟)。
+  状态:**0.1.3 开发线已补完**(见 0.1.3 段「拟人限速补完」),随 0.1.3 发布后从本段移除。
+- **上游 daemon 版本互杀**:OpenCLIApp 内置的旧版 daemon(1.8.6)与全局 CLI 2.0.x 会相互替换 daemon,
+  导致扩展连接反复掉线。上游 CLI 侧已于 2.0.3 修复,App 内置侧上游仍未修(上游 #2761 截至
+  2026-11-10 仍 open)。状态:受上游限制;本插件健康预检的版本翻转检测会如实报告该状态(0.1.2 起)。
+- **站点适配器随站点改版漂移**:属上游适配器层的持续性问题。状态:插件侧对同一任务连续 3 次结构
+  突变发出预警(0.1.2 起);0.1.3 开发线增加 browser_* 兜底采集(页面状态级近似,回执标 `degraded`,
+  不是适配器结构化输出)。
+
 ## 0.1.2 — 2026-11-06
 
-> 无人值守可靠性 2.0 + 插件健康可视化(双主题,需求全部来自 2026-11-05 四路调研的量化信号)。
-> 单元 503 全绿(三轮稳定);工作流交付(四特性并行实现+交叉复核);审查 P1 六条/P2 四条全修。
+> 无人值守可靠性 2.0 + 插件健康可视化(双主题,需求来自 2026-11-05 对上游动向、宿主生态、用户反馈与同类插件的量化信号整理)。
+> 单元测试 503/503 通过;发布前集中修复 10 项缺陷(见下文「发布前修正」)。
 
 ### 主题一:无人值守可靠性 2.0
 - **拟人限速(如实表述:首跑随机延迟)**:定时任务首跑前随机延迟 15-90s 打散 cron 指纹
   (任务级可关);挑战自解等待:验证码类失败赠一次尝试等 45s 自解(#59 方向/#2045 同款)。
-  #59 的装饰性操作与读写分频未做,如实降格
+  #59 的装饰性操作与读写分频当时未做,于 0.1.3 补完(见 0.1.3 段「拟人限速补完」;未竟项集中记录见
+  「未竟与已知问题」段)
 - **采集回执 🧾**:receipt{auth_state, items, bytes, empty, truncated} 进 history/快照/推送——
   对齐上游 missing≠zero 语义;裸 '[]'(#2708 canonical 空)不再判死重试,由 empty 标注;
   截断启发(上限 95%)标 truncated(#2698)
@@ -20,46 +75,52 @@
 
 ### 主题二:插件健康可视化
 - **插件自检卡**:安全 tab 顶部——工具注册逐个点名/入口三项在线(panel/ctl/daemon)/宿主匹配;
-  #9308 式"装上没效果"3 秒可见(四源交叉:#9308/#9261/awesome#2582/BrowserSkill#554)
+  #9308 式"装上没效果"3 秒可见(同一问题见于 #9308/#9261/awesome#2582/BrowserSkill#554 多处反馈)
 - **更新绕行**:npm dist-tag 对比,有新版给一键复制升级命令——绝不自动执行(#10869/#6971)
 
-### P1 增量
+### 增量改进
 - 定时任务批量管理:全选/批量启停(循环 schedule-toggle)/来源过滤(#10911);选中集修剪、
-  过滤切换清空、面板任务自动带 source:panel(复核者提出 6 条全修)
+  过滤切换清空、面板任务自动带 source:panel(发布前修正 6 处交互缺陷)
 - 画布证据卡:evidence-get RPC(verdict 三值 blocked>fail>ok)+ before/after 双图并排 +
-  shotNote 免责行(画布 P1 遗留)
+  shotNote 免责行(补完画布遗留项)
 
-### 交叉复核与审查
-- 工作流交叉复核:批量管理复核者提出 6 条(medium×3/low×3)全部修复;漂移预警复核者
-  发现 brief 口径缺陷(迁移判对结构翻转不成立)并自行修正——新鲜眼睛机制的实证案例
-- 独立审查(二次审查):P1 六条(ctl --no-jitter 末位失效/truncated 缺失/healthNote 假进推送/
-  restart 后扩展检查跳过/fail-closed 陷阱/fail-open 无测试)+ P2 四条全部修复;测试污染事故
-  (hc-f 异常桩经 cordis proxy 泄漏)修复
+### 发布前修正
+- 批量管理修正 6 处缺陷(见上);漂移预警修正结构突变判定口径(单靠迁移判据识别不了结构翻转,
+  改为迁移/状态双口径)
+- 集中修复 10 项缺陷:ctl `--no-jitter` 放在参数末位时不生效、采集回执缺 truncated 标注、
+  健康预检说明误进推送正文、daemon 自动拉起后漏做扩展连接检查、预检自身故障误跳任务、
+  fail-open 放行路径补测试,另 4 项细节修正;修复一处测试隔离问题(异常桩经 cordis proxy
+  泄漏到其他用例)
 
 ### 兼容与验收
 - dsh 0.2.2-alpha.3(11-04 起 rc.1 已发待验);OpenCLI CLI/daemon 2.0.2
-- 单元 503/503(全量三轮稳定);discover 前四特性各过专项测试
+- 单元测试 503/503(全量)
+- **勘误(0.1.3 补记)**:本段原写「前四特性各过专项测试」不准确——截断标注(truncated)与拟人限速
+  (jitter)两项当时并无专项单元测试;0.1.3 开发线已补齐这两项的专项测试
 
 ## 0.1.1 — 2026-11-04
+
+> **注:该版本号未发布至 npm/GitHub,内容并入 0.1.2 线**(npm 版本列表为 0.0.0-stage / 0.1.0 /
+> 0.1.2,GitHub Releases 无 v0.1.1;本段功能随 0.1.2 一并发布,保留本段以记录开发顺序)。
 
 > **版本轨统一**:自本版起 GitHub release 版本号与 npm 一致(此前的 0.4.x 为 GitHub 侧旧版本轨;
 > npm 0.1.0 即原 0.4.6 同码,历史条目保留原名不改)。
 
 > 直连铺满 + 场景批:浏览器原语族全量 daemon 直连(实测最高 118x),通知静默时段/级别 UI、
-> 七天变化聚合、CSV diff 列、批量派发前登录态快检。486 单元全绿;真机八原语差分基准 8/8
+> 七天变化聚合、CSV diff 列、批量派发前登录态快检。486 单元全绿;实测八原语差分基准 8/8
 > 形状一致;全功能矩阵 26/26、GUI 九幕 26/26、canvas 7/7(宿主 dsh 0.2.2-alpha.3 + OpenCLI CLI/daemon 2.0.2)。
 
 ### A. 直连铺满(全原语族)
 - **direct-compose 组合层**:0.4.6 只接了 eval;本期 state/click/scroll/open/screenshot/tab/close 全部直连。上游事实(2.0.2 dist 源码级核对):state/click/scroll 不是 daemon 动作,是 CLI 本地用 JS 串构造器经 exec 组合——本层**运行时装载本机已装 CLI 的构造器模块**(永不内嵌副本,上游改 JS 自动跟上),只复刻薄编排(click=page.click 链:resolve→CDP scrollIntoView→hit-test→CDP 原生点击→el.click 兜底;open=会话捕获启动+navigate+2s 落定+拦截器兜底)
 - 纪律:只在成功路径归一 CLI 2.0 信封,任何失败/旗标不认识→CLI 兜底出权威错误(TargetError 的 candidates/hint);页面身份缓存与上游 page.js 同款流转;`DSH_OPENCLI_DIRECT=0` 总闸逃生
-- **真机差分基准**(两阶段隔离,session=bench):state **57.8x**(1142→37ms)/ tab list **118.7x** / scroll **57x** / tab new **7.9x** / tab close **8.8x** / screenshot **4.7x** / open 1.9x / click 1.4x;八原语信封形状逐字段一致 8/8
+- **实测差分基准**(两阶段隔离,session=bench):state **57.8x**(1142→37ms)/ tab list **118.7x** / scroll **57x** / tab new **7.9x** / tab close **8.8x** / screenshot **4.7x** / open 1.9x / click 1.4x;八原语信封形状逐字段一致 8/8
 - 步骤截图直连化:每条轨迹都付的热路径(captureStepShot)免 CLI 冷启动
 
 ### B. 场景批
-- **通知静默时段**(B2):任务级 quietHours(HH:MM-HH:MM,支持跨夜)——窗内通知暂存(上限 20,随任务落盘),出窗首跑合并 😴 摘要段一次推送;解析失败 fail-open;全链:面板表单+任务行预设下拉+schedule-add 幂等更新+inbox 闭集+ctl `--quiet-hours`
-- **通知级别 UI**(B3):任务行 notifyLevel 下拉(all/quiet),0.4.6 后端能力首次有面板面
-- **七天变化聚合**(B1):变化面板顶部七日条(每日一行 新增/消失/位移);CSV 导出新增 `_diff` 列(diffItemMarks 按身份键逐条标记 new/gone/moved #a→#b,完整无截断——entries 有 20 条上限故单独实现)
-- **批量派发前登录态快检**(W5'):site_batch 加 `preflight`/`skipNotLoggedIn`——未登录站标 ⚠ 或摘除(⛔),复用 login-check 的 whoami 池+TTL 缓存;默认关(交互式首查 15-45s 不可接受),无人值守显式开
+- **通知静默时段**:任务级 quietHours(HH:MM-HH:MM,支持跨夜)——窗内通知暂存(上限 20,随任务落盘),出窗首跑合并 😴 摘要段一次推送;解析失败 fail-open;全链:面板表单+任务行预设下拉+schedule-add 幂等更新+inbox 闭集+ctl `--quiet-hours`
+- **通知级别 UI**:任务行 notifyLevel 下拉(all/quiet),0.4.6 后端能力首次有面板面
+- **七天变化聚合**:变化面板顶部七日条(每日一行 新增/消失/位移);CSV 导出新增 `_diff` 列(diffItemMarks 按身份键逐条标记 new/gone/moved #a→#b,完整无截断——entries 有 20 条上限故单独实现)
+- **批量派发前登录态快检**:site_batch 加 `preflight`/`skipNotLoggedIn`——未登录站标 ⚠ 或摘除(⛔),复用 login-check 的 whoami 池+TTL 缓存;默认关(交互式首查 15-45s 不可接受),无人值守显式开
 
 ### C. 工程与分发
 - OpenCLI CLI/daemon 升级 2.0.2(扩展 1.0.26 对齐);dsh 0.2.2-alpha.3 适配(插件 peer 范围天然放行,唯一断裂=换 scoped 包名时漏改的 cordis.patch.yml,已修)
@@ -67,42 +128,42 @@
 
 ### 兼容与验收
 - dsh 0.2.2-alpha.3(latest 为 0.2.1-rc.5,alpha 为开发线;宿主兼容门实测 includePrerelease 对比运行时主版本,peer `>=0.1.1-rc.2 <0.3.0-0` 天然放行)
-- 真机:全功能矩阵 26/26 + GUI 九幕 26/26 + canvas 7/7 + 直连差分基准 8/8;单元 486/486(+32)
+- 实测:全功能矩阵 26/26 + GUI 九幕 26/26 + canvas 7/7 + 直连差分基准 8/8;单元 486/486(+32)
 
 ## 0.4.6 — 2026-10-30
 
 > 人机协同与引擎大版本:自然语言指挥台 + daemon 直连传输 + 生态接入(任何 dsh 会话一句话驱动插件)。
-> 450 测试全绿;GUI 真机走查通过;直连延迟真机实证(同命令 87ms vs CLI 1040ms,12×)。
+> 450 测试全绿;GUI 逐项界面检查通过(真实浏览器);直连延迟实测(同命令 87ms vs CLI 1040ms,12×)。
 
-### 自然语言指挥台(B1+B3,总览主行动)
+### 自然语言指挥台(总览主行动)
 - **nl-intent**:一句话 → 闭集意图(经宿主 ctx.llm;路由候选=默认选择+已注册 provider 轮试,每条先解析适配器默认模型);模型输出必须过 parseIntent 闭集门,**不合法绝不猜测补全**;失败分诊三种(llm 出错/空输出/闭集拒绝+原文头),各带可行动指引
 - **预览卡**:映射结果逐字段可改,确认执行走 inbox-intent(与 ctl 同一条 applyIntent 白名单/审计链,改什么都过不了门);命令模式(试试看)完整保留,双模式并存
 - 模型额度诚实:映射是显式按钮触发,一次调用;不做后台自动映射
 
-### 生态接入层(F1+F2,预设门的正解)
+### 生态接入层(面板会话预设限制下的接入路径)
 - **dsh-opencli-ctl**(npm bin):schedule add/list/run/remove · notify set/test · report build · status;写白名单意图 JSON 到 `~/.dsh/opencli-inbox/`,插件消费者(3s 轮询+停机清除)执行并回写结果,ctl 默认同步等待拿 JSON——**面板聊天等任何有 shell 的 dsh 会话**一句话即可驱动插件全能力
 - 意图安全:闭集校验(八 kind,多余字段拒绝,绝不 eval)/单文件 16KB+队列 200 条上限/claim 占位防并发/processed 轮转 100;每次消费落 ingest 事件(面板时间线可见)
 - **SKILL.md 全面重写**:场景路由手册(一句话→动作表/ctl 命令面/工具速查/适配器创作/边界如实),面板与 CLI 会话通吃
 
-### daemon 直连传输(A1+A2+A4)
+### daemon 直连传输
 - **direct.ts**:`POST /command` + X-OpenCLI 头,动作族 exec/navigate/tabs/screenshot;能力探测三态(unknown/ready/off),协议形状不认识整层禁用;**永不抛错,任何失败静默回落 CLI**(旁路加速不成为单点)
 - eval 族接入 runBrowserTraced:归一 CLI 2.0 信封下游零改动;页面身份缓存(响应 page 持续刷新,stale 类错误清缓存无 page 重试一次)
-- **传输对照进基准报告**(A4):CLI 冷启动 vs 直连往返双实测,加速比随每份报告落盘
-- 真机:direct-real-test 8/8(导航→discover→像素级 read→click 全走直连);延迟对照 87ms vs 1040ms
+- **传输对照进基准报告**:CLI 冷启动 vs 直连往返双实测,加速比随每份报告落盘
+- 实测:direct-real-test 8/8(导航→discover→像素级 read→click 全走直连);延迟对照 87ms vs 1040ms
 
-### 快照差异推送(C,盯变化独占区深化)
+### 快照差异推送(盯变化场景深化)
 - diffsnap 纯函数:JSON 数组逐条比对(新增/消失/位移≥3 位),包装 {data/items/list/results} 认得,非 JSON 折规模摘要**绝不臆造**;条目身份 id/title/url 优先退化归一文本
 - 调度链接入:成功采集自动 diff 上一份快照,📊 snap-diff 事件+推送正文尾接"与上次相比"段;与 watch 🔔 并存
 
-### 通知渠道平台预设(D)
+### 通知渠道平台预设
 - channels.ts 五平台载荷:飞书/钉钉(加签=timestamp+secret HMAC-SHA256,secret 可钉 URL 发送时拼且不落日志)/企微/Telegram(chat_id 从 query 提取)/generic(0.4.5 信封不变);platformOk 细判 200 体内平台错误码
 - WebhookChannel 平台化(URL 推断兜底);面板自动化 tab 通知通道节:平台下拉+URL+保存+**测试按钮**(与 ctl notify test 同链,诚实回报成败)
 
-### 面板设计系统与动效(B3)
+### 面板设计系统与动效
 - 设计 token 层:色板/圆角/阴影/动效时长缓动收进 CSS 变量(此前 97 处散落色值);卡片 hover 浮起/入场 stagger/骨架屏呼吸/运行态呼吸灯,全 transform+opacity 不触重排;**prefers-reduced-motion 全关**(可访问性)
 
-### 工程加固(E)
-- 工具输出 schema 真调用一致性测试:全注册表 38 工具逐一登记(只读 OUTPUT_KEYS/写类 EXEMPT),新工具漏登记 CI 直接红——宿主 additionalProperties:false 只在真调用时校验,直调 execute 测不出(竞品踩坑实录),机器化排雷
+### 工程加固
+- 工具输出 schema 真调用一致性测试:全注册表 38 工具逐一登记(只读 OUTPUT_KEYS/写类 EXEMPT),新工具漏登记 CI 直接红——宿主 additionalProperties:false 只在真调用时校验,直调 execute 测不出(同类插件踩过的坑),机器化排雷
 
 ### 场景补强(同版重发:从使用场景倒推九缺口)
 - **新手引导**:试试看失败(站名拼错)→ 自动带 3 条最接近的真实命令,点击直接跑
@@ -117,7 +178,7 @@
 
 ### 兼容与验收
 - OpenCLI 2.0 双版本兼容延续;22 项套件 dsh 0.2.1-rc.5 全过
-- dsh 面板聊天会话不装载插件 agent 工具属 dsh 预设作用域架构(RESEARCH-20261030),0.4.6 的 ctl/inbox 生态层即其正解
+- dsh 面板聊天会话不装载插件 agent 工具属 dsh 预设作用域架构,0.4.6 的 ctl/inbox 生态层即为此提供的接入路径
 
 ## 0.4.5 — 2026-10-30
 
@@ -128,7 +189,7 @@
 - **通知通道层**:Webhook / Email(SMTP)/ dsh 面板三通道并发群发,单通道失败不拖累其他;出口 scrubLocalPaths 清洗(送达载荷实测无本机路径/用户名)
 - **watch 命中推送**:关键词命中 → 🔔 正文前缀,与面板事件流同一份命中事实
 - 修复:notify 开关原先无效(sch.notify !== false 关闸)与 saveNotifyConfig 双写竞态(统一走 saveState)
-- 真机验证:本地接收器收真 POST 11/11;坏 email 通道(SMTP 连拒)容错 6/6,配置测后还原
+- 实测验证:本地接收器收真 POST 11/11;坏 email 通道(SMTP 连拒)容错 6/6,配置测后还原
 
 ### 无限画布(新,面板第五 tab)
 - 轨迹/写操作证据/定时快照三源聚合为卡片流:拖拽平移、滚轮缩放、点卡展开步骤回放、分页加载
@@ -137,12 +198,12 @@
 ### canvas VOM 三件套(新,eval 桥)
 - canvas_discover/read/click 触达网页内无 DOM 节点的位图画布(图表/游戏/画板);click 为写原语走人工审批
 - **canvas_read 位图落盘进画布**(0.4.5 内接通):读到的 PNG 自动挂轨迹 shot 字段 → 画布卡片图片步骤,人可回放 agent 看到了什么;两层 canvas(网页 canvas 元素层 vs 面板复盘层)在工具描述/面板/README 三处说清
-- 真机验证:部署包字节级抽取 eval 桥 11/11(含像素级 #d00 采样);真实 daemon 信封喂部署包函数缝合测试 6/6
+- 实测验证:部署包字节级抽取 eval 桥 11/11(含像素级 #d00 采样);真实 daemon 信封喂部署包函数缝合测试 6/6
 
 ### 命名空间迁移
 - browser_* → opencli_*(上游两次撞名后主动让出 browser_ 前缀);旧名挂弃用别名(描述前置弃用标记,转发新名,计划 2027-04 移除)
 
-### 安全与正确性(交叉评审 7 发现全修)
+### 安全与正确性(发布前修复 7 项)
 - HIGH:opencli_run 经 browser eval 绕门第三入口 → 同类拦截
 - MEDIUM:notify 开关无效 → 任务级关闸;saveNotifyConfig 双写竞态 → 单一写者;SKILL/catalog 旧名残留 → 全量迁移
 - LOW:SMTP socket 泄漏(单步超时+finally 清理);cards/knowledge 注释修正
@@ -151,31 +212,31 @@
 ### 兼容与验收
 - OpenCLI 2.0 双版本兼容(信封/--session/分页/daemon JSON/目录形态,按形状嗅探不按版本号)
 - 22 项套件在 dsh 0.2.1-rc.5 全过(0.2.1-rc.1→rc.5 无需适配改动)
-- dsh 面板聊天会话不装载插件 agent 工具属 dsh 预设作用域架构,已记入 README FAQ 与 docs/RESEARCH-20261030
+- dsh 面板聊天会话不装载插件 agent 工具属 dsh 预设作用域架构,已记入 README FAQ
 
 ## 0.4.4 — 2026-10-22
 
-> 交叉审查四视角(正确性/安全/测试真实性/事实核对)24 条唯一发现全修;301 测试 + 22 项套件(含宿主版本记录)全绿。
+> 正确性/安全/测试真实性/事实核对四个维度共修复 24 项问题;301 测试 + 22 项套件(含宿主版本记录)全绿。
 
-### 安全(安全审查:2 HIGH 2 MEDIUM + 机检器漏网)
+### 安全(2 HIGH 2 MEDIUM + 机检器漏网)
 - **opencli_run 写命令绕门(HIGH)**:描述曾宣称"走审批"而 execute 直通——站点形态 argv 现进写审批门(write/未知→ask,浏览器/系统命名空间按 browser_* 边界)
 - **site_batch 多站写命令零检查(HIGH)**:整批 fail-closed 拒绝,未知站点仍走拼写提醒
 - **canary 防御性只读门(MEDIUM)**:热词伪装写命令夜间无人值守拦截
 - **browser_do eval 对齐 userscript-run 门(MEDIUM)**:登录页任意 JS=写原语,进人工审批
 - **presubmit 机检器三漏网**:细粒度 PAT(github_pat_)/长 TLD 邮箱/小写路径与行尾内部目录,实证回归
 
-### 正确性(正确性审查)
+### 正确性
 - **零配置过期承诺收回(HIGH)**:通道B(CDP attach)默认关死后,doctor/systemPrompt/面板三处文案同步收回"匿名降级"承诺,skip 文案不再谎称"未探测到端点"(端点在但通道关闭时如实说)
 - **parseDaemonStatus 缺字段语义**:extensionConnected 缺失归一为 unknown 而非 not connected——explicitDown 只认显式否定,browser_* 不被一刀切死
 
 ### 对外交付体系(2026-10-19 事故)
 - **提交前机检器**:隐私(本机身份/路径/会话id/token/邮箱/内部目录)全 FAIL 拦截+数字声明强制溯源+删除事实检测;#8007 真实翻车文本回归(180+×2 与被删前提均被当场抓住)
-- **站点数对齐上游 manifest**:180+→170+(注册表维护者 fkysly 纠正,#8007 事故全记录见 docs/LESSON-20261020-registry.md)
+- **站点数对齐上游 manifest**:180+→170+(注册表维护者 fkysly 纠正,#8007)
 - 「录屏回放」全仓正名「轨迹回放」
 
 ### 功能补齐
 - browser_screenshot 透传 --full-page(上游 2.0 全页截图);browser_do 白名单补 scroll
-- canary 漂移巡检真机三轮调试(heredoc 反斜杠吞噬 argv 碎片化/选站 kinds 索引不对齐/seam 冷启动竞态)后可用:top-20 零参热榜命令,漂移对比实证(小红书新失败被准确捕获)
+- canary 漂移巡检三轮实测调试(heredoc 反斜杠吞噬 argv 碎片化/选站 kinds 索引不对齐/seam 冷启动竞态)后可用:top-20 零参热榜命令,漂移对比实证(小红书新失败被准确捕获)
 
 ### 测试
 - 审批门安全不变量套件:攻击表 20 形态+200 次可复现 fuzz(allow⟹只读)+独立通道+豁免边界;lib 捆绑陈旧守卫(vitest globalSetup,lib 落后 src 即红)
@@ -183,7 +244,7 @@
 
 ## 0.4.3 — 2026-10-17
 
-> GUI 走查五连修 + 登录态真数据链路全线贯通(详见 `docs/FIX-20261008-GUI走查修复.md`)。
+> 界面逐项检查发现的五处问题全修 + 登录态真数据链路全线贯通。
 > 本版起随 GitHub Release 双资产发布(版本名 + 固定名 dsh-opencli.tgz,注册表浮动地址自动吃到最新)。
 
 ### 修复
@@ -211,7 +272,7 @@
 - **报告导出(带出处)**:buildReport 纯渲染层——多站/定时快照合并为 markdown,每节**出处三元组(命令+时间+快照路径)+判定结论**,尾部"数据源与缺口声明"逐条列失败/静默失败/缺席,**零模型介入**;site_batch 自动落盘+report-build RPC+面板「生成报告」按钮
 - **站点健康度**:上游 issue 实测数据(小红书/instagram 受损等)驱动命令页徽章+知识卡健康段,受损站自动提示 browser 兜底
 - **MCP Resources 知识暴露**:dsh 0.2 ctx.mcpResources seam——opencli://sites/{site}/knowledge 资源;0.1.x 走 knowledge-get RPC 双路径
-- **W3 分层命令路由 site_route**:SystemOne 两步 choice(先站后命令,≤24 候选)亚秒出命令行+Top3 概率
+- **分层命令路由 site_route**:SystemOne 两步 choice(先站后命令,≤24 候选)亚秒出命令行+Top3 概率
 - **采集快照+时间线**:定时成功执行存结构化快照(50 份轮转);schedule-history 快照索引;面板时间线趋势柱状图+运行史
 - **watch 关键词监控增强**:命中事件总览可见,大小写不敏感
 - **SWR 面板缓存 v2**:重开秒显上次数据(损坏缓存全防护:try/catch+结构校验+版本键+12h 过期)
@@ -223,7 +284,7 @@
 ### 性能
 - laya 权重激活期后台预热(冷加载 60s 不再砸首次调用);卡片去 transform 降绘制;目录缓存+快路径
 
-### 可靠性修复(全部经独立子代理真机复核)
+### 可靠性修复(全部经真实环境复核)
 - **[HIGH] cron 调度器从不与当前时间比较**——数字合法即每分钟触发,对站点高频轰炸(历史 state 累积 5055 个 marker 实锤);修复+字段越界拒收+逗号列表语义
 - **任务 site 前缀剥离**:按面板占位符创建的任务此前 100% 失败(unknown command site)
 - **laya noul 放弃阈值判失败**(实测错误文本同样 0.9+,拦截权收归确定性规则层;真数据 0.66-0.77 安全通过)
@@ -235,7 +296,7 @@
 - 逗号运算符吞行/TimelinePanel 作用域/schedule-history 形参名 三连根因修复(时间线不渲染缺口)
 
 ### 工程与文档
-- 159 单测(0.4.1 时 74);审查套件 21 项;竞品监控脚本 competitor-watch.cjs;PM-RESEARCH 竞品全景(官方注册表 4412 条实测);SKILL.md 全工具速查;部署断层教训入档
+- 159 单测(0.4.1 时 74);审查套件 21 项;同类插件生态盘点(官方注册表 4412 条实测);SKILL.md 全工具速查
 
 # 更新日志
 
@@ -253,8 +314,8 @@
 - **SKILL.md 全工具速查表**:site/site_knowledge/site_batch/browser 原语/so_verify/so_pick 各自的使用时机 + 失败自救签名 + 无人值守说明
 - **systemPrompt 注入更新**:目录文本新增辅助工具段(site_knowledge 先读/so_verify/so_pick 亚秒判定/site_batch preflight/watch 关键词+风控退避),agent 零配置发现新能力
 - **上游 1.8.8 升级完成**(undici CVE 修复;站点 176→180):审查套件全过,插件兼容
-- 审查套件 19→**20 项**:新增 knowledge-export RPC 真值(179 张卡真机导出)+ watch 关键词落盘;站点计数改为动态断言(不再钉死 176)
-- 修复 knowledge-export 空 args 崩溃:**网关对空 args 传 undefined**,handler 参数必须可选链(真机 gateway/internal 复现)
+- 审查套件 19→**20 项**:新增 knowledge-export RPC 真值(179 张卡实测导出)+ watch 关键词落盘;站点计数改为动态断言(不再钉死 176)
+- 修复 knowledge-export 空 args 崩溃:**网关对空 args 传 undefined**,handler 参数必须可选链(实测 gateway/internal 复现)
 - dsh017 profile 依赖从 GitHub tarball 切本地 file:tarball(网络不可靠);dsh 0.1.7-alpha.1 兼容实测进行中
 
 ### 登录态 preflight + 面板知识卡入口
@@ -264,28 +325,28 @@
 - 修复 puppeteer-core 误入 runtime dependencies(构建工具,回 devDependencies,免得跟着插件装进商店)
 - 74 测试绿,审查 19/19
 
-### 站点知识包(P1:上游 #2539 砍掉 sitemap/CLI hub 后的知识分发真空)
+### 站点知识包(补上游 #2539 砍掉 sitemap/CLI hub 后的知识分发真空)
 - 新增 agent 工具 `site_knowledge <站>`:动手前读"地形图"——该站全部结构化命令(read/write 标记)+已知坑(风控/登录/改版,人工种子覆盖微博/B站/知乎/小红书/豆瓣/淘宝/京东/YouTube 等)+**失败签名恢复表**(EMPTY_RESULT/风控墙/429/NAVIGATION_REJECTED → 含义 → 恢复动作),命中签名按表自救,不现场试错
 - 新增 `knowledge-export` RPC:全部/指定站知识卡导出为 markdown 到 `~/.dsh/opencli-knowledge/`,可分享、可进版本库;dsh 0.1.6+ MCP Resources 将复用同一数据源
 - 知识三源:opencli 目录(实时)/失败签名表(与执行真实性层同源)/pitfalls 种子(宁缺勿造,未知站为空)
 - 依据:browser-use #5841"每次会话从零重学站点"(10 评论正式提案)+ 上游退出知识分发
-- README 补「固定命令 × 任意网页原语」双模式呈现(PM 调研 t/1225086 弃用理由);测试 64→72
+- README 补「固定命令 × 任意网页原语」双模式呈现(社区帖 t/1225086 反馈的弃用理由);测试 64→72
 
-### 风控感知退避(PM 调研直接驱动)
+### 风控感知退避(用户反馈直接驱动)
 - 定时任务重试命中登录/风控墙时,重试间隔从 15s 提到 **2 分钟**(软封禁冷却);其他失败维持 15s
 - 依据:小红书自动化封号是中文用户最真实恐惧(V2EX 两起封号帖;上游 30 天 3 个 XHS 风控 commit),撞墙后立刻重试等于加重风控信号
 
-### Watch 关键词监控(主线 B 第一片,登录态数据产品)
+### Watch 关键词监控(登录态数据产品)
 - 定时任务新增 `watch` 字段(关键词,逗号/空格分隔,≤120 字符):每次采集成功后做确定性匹配,命中任一关键词 → ingest 事件 `watch-hit`(🔔 通知)
 - 场景:微博热搜监控"出现'放假安排'就通知"/价格监控/舆情关键词——填 dsh-market 微博插件生态空白(≈0 个专用插件)
-- v1 故意用确定性匹配,零误报;noul 模糊"值得关注的变化"判定留 v2(真机实测 laya 判别力不足,宁缺勿误报)
+- v1 故意用确定性匹配,零误报;noul 模糊"值得关注的变化"判定留 v2(实测 laya 判别力不足,宁缺勿误报)
 - 面板:自动化 tab 创建表单新增 watch 输入框;任务行内 🔔 徽章展示监控词
 - schedule-add 幂等去重升级:重复 add 更新 watch 字段而非新建僵尸副本
 
-### 执行真实性层(“失败要说真话”——W2 落地)
+### 执行真实性层(“失败要说真话”)
 - 新增 `verifyResult` 两层判定,三处执行面共用:**site_batch**(每站结果标注 实测有效/疑似静默失败,汇总计数;派发前目录预检拼写错误)、**try-run**(面板“试试看”:空结果/风控页/登录墙直接报 ok:false 并给原因,不再假成功)、**定时任务**(规则命中或 noul 强失效按失败重试,可疑只标注)
 - 第一层为确定性规则(opencli 失败词汇 EMPTY_RESULT/AUTH_REQUIRED/NAVIGATION_REJECTED + 登录墙/风控关键词 + 错误 JSON),零推理、零延迟
-- 第二层 laya noul 兜底判未知形态;**真机实测:laya 对明显错误文本判别力不足(P≈0.9)**,故只对规则放行的文本做模型判定、可疑仅标注——判别数据见 docs/USER-NEEDS-RESEARCH-20260925.md
+- 第二层 laya noul 兜底判未知形态;**实测:laya 对明显错误文本判别力不足(P≈0.9)**,故只对规则放行的文本做模型判定、可疑仅标注
 - 修复:typesafe/laya 两 provider 应答归一化不一致(choice/noul/score → 统一 {type,value,confidence}),此前 laya(默认 provider)下 so_verify/so_pick 运行时读不到结果、整层静默失效
 - SystemOne 不可用时全部路径降级为原行为,零功能损失;测试 53→61 全绿
 

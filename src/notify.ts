@@ -229,7 +229,9 @@ export class EmailChannel implements NotifyChannel {
 
   async send(title: string, body: string): Promise<{ ok: boolean; error?: string }> {
     let url: URL
-    try { url = new URL(this.smtpUrl) } catch { return { ok: false, error: `SMTP URL 非法:${this.smtpUrl}` } }
+    // URL 解析失败不回显原文:smtpUrl 的 userinfo 段是用户名/授权码(泄漏链:notify-test
+    // 把 error 原样拼进面板返回值)。与通道 name 只取 hostname 的既有纪律同款,只给形态指引
+    try { url = new URL(this.smtpUrl) } catch { return { ok: false, error: 'SMTP URL 非法:需 smtp://user:pass@host[:port] 或 smtps://… 形态(URL 原文不回显,防凭据泄漏)' } }
     let sess: SmtpSession
     try { sess = await this.connect(url) } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : 'SMTP 连接失败' }
@@ -329,18 +331,32 @@ export class DshNotifyChannel implements NotifyChannel {
  * 中文内容不陪葬。
  */
 const SCRUB_RULES: Array<{ re: RegExp; to: string }> = [
-  // Windows 绝对路径(C:\Users\<用户名>\… / D:/x/y)。lookbehind 挡掉 https:// 这类 scheme 冒号
-  { re: /(?<![\w:])[A-Za-z]:[\\/][ -~]*/g, to: '[本地路径]' },
+  // URL 敏感查询参数(回执/轨迹卫生,借 playwright-mcp --redact-url-params 同款默认值):
+  // token/access_token/sid/code/key/secret/session/signature 等参数值一律脱敏——分享的
+  // 链接里 ?token=… / ?code=… 是最常见的凭据外流通道,字段名保留(排障可读),值抹掉。
+  // 置于最前:先于 hex/base64 规则,避免长 token 先被整段吃掉导致字段名也消失。
+  // 值的终止符含引号/尖括号/反斜杠/右括号:快照 stdout 是 JSON(URL 在字符串里,止于 ")、
+  // 也有 markdown 链接 (url) 与 HTML 属性——只认 &/空白会一路吞到行尾,把相邻 JSON 对象
+  // 静默并成一个(当场复现的数据损坏),diff/漂移判定/CSV 导出全被带坏
+  { re: /([?&](?:access_token|auth|auth_token|code|key|secret|session(?:_key|_id)?|sid|sig|signature|ticket|token)=)[^&\s#"'<>\\)]*/gi, to: '$1[已脱敏]' },
+  // Windows 绝对路径(C:\Users\<用户名>\… / D:/x/y)。lookbehind 只挡词字符紧邻(https://
+  // 的单字母候选前面必是词字符,天然挡住);冒号不豁免——"路径:C:\Users\x" 里的路径照样清洗
+  // (旧版 (?<![\w:]) 让 ASCII 冒号后的整段本机路径漏洗,已修正)
+  { re: /(?<!\w)[A-Za-z]:[\\/][ -~]*/g, to: '[本地路径]' },
   // 波浪 home 路径(~/.dsh/…、~\…)
   { re: /~[\\/][ -~]*/g, to: '[home路径]' },
   // unix 风格 home(Linux/macOS);系统目录(/tmp /var 等)不扫——通知里出现它们的语义无害
   { re: /(?:\/home\/|\/Users\/)[ -~]*/g, to: '[home路径]' },
-  // 键值形态的令牌(Bearer/token=…/api_key:…):保留字段名,值抹掉
-  { re: /\b(Bearer|token|apikey|api_key|api-key|secret|password|passwd)([ \t]*[:=][ \t]*)[!-~]+/gi, to: '$1$2[已移除]' },
+  // 键值形态的令牌(Bearer/token=…/api_key:…):保留字段名,值抹掉。(?!\[) 跳过已是占位符的值——
+  // URL 参数规则先把 ?token=X 洗成 ?token=[已脱敏],本规则若再吃进 '[' 会产出 "[已移除]已脱敏]"
+  // 残文(两规则共存的双重清洗冲突,当场复现后修正)
+  { re: /\b(Bearer|token|apikey|api_key|api-key|secret|password|passwd)([ \t]*[:=][ \t]*)(?!\[)[!-~]+/gi, to: '$1$2[已移除]' },
   // 裸 Bearer 头(Authorization: Bearer xxx 形态,Bearer 与值之间没有冒号)
   { re: /(?<![A-Za-z0-9_-])Bearer[ \t]+[!-~]+/gi, to: 'Bearer [已移除]' },
-  // 具名密钥前缀(openai sk-、github ghp_/gho_、slack xox*、google ya29):不在键值对里也绝不能外流
-  { re: /\b(?:sk|ghp|gho|xoxb|xoxp|ya29)-[A-Za-z0-9_-]{8,}/g, to: '[已移除]' },
+  // 具名密钥前缀(openai sk-、github ghp_/gho_ 下划线形态、slack xox*、google ya29):
+  // 不在键值对里也绝不能外流;分隔符 [-_] 兼容——github 官方真实格式是 ghp_ 下划线,
+  // 旧规则只认连字符,真实 token 反而漏洗(已修正)
+  { re: /\b(?:sk|ghp|gho|xoxb|xoxp|ya29)[-_][A-Za-z0-9_-]{8,}/g, to: '[已移除]' },
   // 32+ 位连续 hex(sha256/会话 id);40+ 位 base64 形态 blob——长随机串一律按凭据对待
   { re: /\b[0-9a-fA-F]{32,}\b/g, to: '[已移除]' },
   { re: /\b[A-Za-z0-9+/]{40,}={0,2}/g, to: '[已移除]' },
@@ -353,12 +369,24 @@ export function scrubLocalPaths(text: string): string {
   return out
 }
 
+/**
+ * URL 敏感查询参数脱敏(回执/轨迹卫生;与出口清洗同 scrub 体系,单规则复用):
+ * 回执摘要/轨迹行/轨迹报告在**落盘侧**也过这道——通知出口本来就会洗,但 traces/snapshots
+ * 是本地落盘文件,复盘时被复制粘贴进聊天/issue 的场景同样泄凭据(playwright-mcp
+ * --redact-url-params 同款默认值口径)。字段名保留、值替换,排障可读性不丢。
+ */
+export function scrubUrlParams(text: string): string {
+  return text.replace(SCRUB_RULES[0]!.re, SCRUB_RULES[0]!.to)
+}
+
 /** buildNotifyBody 的调度侧输入(只取通知需要的字段,与 PluginState.schedules 条目形状兼容)。 */
 export interface NotifyScheduleInfo {
   /** 站点命令(如 site zhihu hot;标题里截前两个词当站点名)。 */
   site: string
   /** watch 关键词配置(正文提示用)。 */
   watch?: string
+  /** 任务来源标记(agent/chat/panel/ctl——推送卡任务身份行,BrowserSkill Controller identity 同款)。 */
+  source?: string
 }
 
 /** 一次执行的结果侧输入(与 runHistory 条目同源,另带 watch 命中与报告路径)。 */
@@ -392,6 +420,9 @@ export function buildNotifyBody(
   const siteHead = norm.split(/\s+/).slice(0, 2).join(' ')
   const title = scrubLocalPaths(`[dsh-opencli] ${siteHead} ${time}`)
   const lines: string[] = [`结果:${result.ok ? '成功' : '失败'}`]
+  // 任务身份行(回执/轨迹卫生,BrowserSkill Controller identity 同款):无人值守推送卡写明
+  // "哪个任务/谁建的"——同站多任务(不同参数/不同来源)在群里收到时可分拣,不必回面板对照
+  lines.push(`任务:${norm}${schedule.source !== undefined && schedule.source.length > 0 ? ` · 来源 ${schedule.source}` : ''}`)
   if (result.watchHits !== undefined && result.watchHits.length > 0) lines.push(`Watch 命中:${result.watchHits.join(', ')}`)
   if (result.summary !== undefined && result.summary.length > 0) lines.push(`摘要:${result.summary}`)
   if (result.reportPath !== undefined && result.reportPath.length > 0) {

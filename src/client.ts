@@ -11,12 +11,17 @@ import { createElement, useEffect, useRef, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
-  AuditListResult, DaemonStartResult, EvidenceGetItem, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
+  AuditListResult, DaemonStartResult, EventsGetResult, EvidenceGetItem, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
   TraceLine, TraceListResult,
 } from './types.ts'
 import { siteIconOf } from './site-icons.ts'
 import { healthOf } from './knowledge.ts'
-// 画布数据层(纯函数,任务 G):聚合/合并/分页全在这——client 只管取数与投影
+// #59 装饰步识别与宿主侧同一口径(纯函数单一来源;只引此函数,打包按需摇树)
+import { isDecorativeStep } from './parsers.ts'
+// 版本单一来源(version.ts):「版本与更新」卡不再把写入当时的当前版本写死——
+// 曾有 v0.4.1 字面量残留,与同屏自检卡(version.ts 常量)互相矛盾
+import { PLUGIN_VERSION } from './version.ts'
+// 画布数据层(纯函数):聚合/合并/分页全在这——client 只管取数与投影
 import { buildCanvasData, CANVAS_PAGE_DEFAULT, type CanvasCard, type SnapshotMeta } from './canvas.ts'
 
 export const inject = ['slots']
@@ -65,13 +70,13 @@ const STR = {
     cmdFmt: '点命令行 → 复制调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)',
     knowExp: '导出知识卡', knowExpDo: '导出中…',
     timeline: '时间线', reportBtn: '生成报告', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=内容规模)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计', tlFlow: '画布卡片流(本站近 24h,替代运行史文本)',
-    // 画布(任务 H+I+J):全活动卡片流;文案与色调口径见 canvasCardTone/CANVAS_SUSPECT_P
+    // 画布:全活动卡片流;文案与色调口径见 canvasCardTone/CANVAS_SUSPECT_P
     canvasT: '活动画布', canvasSub: '轨迹 / 写操作 / 定时采集聚合为卡片 · 点卡片展开步骤回放 · 拖拽平移,滚轮缩放 · canvas_read 读到的网页画布位图会以图片步骤出现在卡片里',
     canvasEmpty: '暂无活动——跑一条命令或到点采集后,这里会长出卡片',
     canvasZoomIn: '放大', canvasZoomOut: '缩小', canvasReplay: '步骤回放', canvasMore: '加载更多',
     canvasCardsN: (n: number) => `${n} 张卡`, canvasNoShot: '无截图', canvasSuspect: '低分通过',
     canvasSuspectTip: '判定分低(0.7≤P<0.8),建议复核', cvTypeSite: '写操作', cvTypeBrowser: '浏览器', cvTypeSchedule: '定时采集',
-    // 证据卡(canvas P1):写操作证据包卡——verdict 徽标 + before/after 双图 + 免责行
+    // 证据卡:写操作证据包卡——verdict 徽标 + before/after 双图 + 免责行
     cvTypeEvidence: '证据', evdOk: '执行成功', evdFail: '执行失败', evdBlocked: '审批拒绝', evdBefore: '前', evdAfter: '后',
     healthDegraded: '已知受损', healthNotice: '注意', healthIssueT: (d: string) => `上游 issue 实测(${d});点击行展开命令,受损命令优先用 opencli_* 兜底`,
     disable: '禁用', enable: '启用', commandsN: (n: number) => `${n} 命令`,
@@ -82,6 +87,12 @@ const STR = {
     recT: '录制回放', recSub: '录制 site / opencli 步骤,一键回放', recStart: '开始录制', recStop: '停止录制',
     recName: '录制名,如:每日知识采集', recStep: '一条步骤,如:site zhihu hot', recAdd: '+ 加步骤', replay: '回放',
     traceT: '运行轨迹', traceSub: '每条 browser 命令逐步落盘(~/.dsh/opencli-traces),复盘"上次为什么失败"', traceEmpty: '暂无轨迹——跑一条 browser 命令后这里会长出来',
+    // 事件历史:ingest 事件追加落盘 ~/.dsh/opencli-events.jsonl,events-get 读回;重启不丢
+    evT: '事件历史', evSub: '通知事件跨会话可回看(~/.dsh/opencli-events.jsonl):watch 命中 / 漂移与兜底 / daemon 翻转 / 熔断 / 自愈,重启不丢', evEmpty: '暂无历史事件——定时任务跑起来后,命中/失败/漂移会记在这里',
+    // 多账号登录态隔离:上游 OpenCLI 2.0.3 原生 --profile/contextId 路由(CLI 2.0.3 dist 读源与 doctor 探针核实)
+    profPh: '👤 profile(可选)', profTitle: '浏览器 profile 别名或 contextId(opencli profile list 可查)——多账号登录态隔离:经上游 OpenCLI 原生 --profile 路由,不同 profile 即不同 Chrome 档案,cookie/存储各自独立;须先打开该 Chrome 档案并启用 OpenCLI 扩展,未连接时任务如实失败,不回落到别的账号', profTip: (p: string) => `本任务经 OPENCLI_PROFILE=${p} 路由到该浏览器 profile(上游原生隔离)`,
+    // #59 补完:装饰步(只改视觉的 scroll/hover)回放可跳过
+    skipDecor: '跳过装饰步', skipDecorTip: '回放时跳过只改视觉的 scroll/hover 步骤;数据读写步骤照常执行', decoTag: '装饰',
     assetT: '资产库', assetSub: '脚本 / 配方 / 规则包', assetSearch: '搜资产(如:arxiv)', assetSearchBtn: '搜索',
     builtinT: '内置脚本', recipes: '配方', rulepacks: '规则包', browse: '浏览全部',
     v4host: 'v4 host 新增;v0.3.8 已有增删/开关/立即跑',
@@ -98,7 +109,7 @@ const STR = {
     obCliOk: 'opencli CLI 已就绪', obCliBad: '未检测到 opencli CLI', obCliFix: '复制安装命令',
     obBridgeHint: '从 GitHub Releases 下载 BrowserBridge 扩展,到 Chrome 扩展页开发者模式加载,再回面板重巡检',
     obRelBtn: '打开 Releases',
-    // 零配置降级可用面(设计 §2.2-2):无扩展时的黄色状态行——向导不再只有"装扩展"一种结局
+    // 零配置降级可用面:无扩展时的黄色状态行——向导不再只有"装扩展"一种结局
     obZeroCfgN: (n: number) => `降级可用面:${n} 个站的只读命令无扩展也能跑(匿名);opencli_*/chrome_* 暂不可用`,
     obZeroCfgNa: '降级可用面:部分只读命令无扩展也能跑(匿名);opencli_*/chrome_* 暂不可用',
     obLoginOk: '登录态正常', obLoginPart: '登录态部分失效', obLoginBad: '登录巡检全红', obLoginNa: '尚未巡检登录态',
@@ -159,7 +170,7 @@ const STR = {
     canvasZoomIn: 'Zoom in', canvasZoomOut: 'Zoom out', canvasReplay: 'Step replay', canvasMore: 'Load more',
     canvasCardsN: (n: number) => `${n} cards`, canvasNoShot: 'no screenshot', canvasSuspect: 'weak pass',
     canvasSuspectTip: 'low verification score (0.7≤P<0.8), worth a review', cvTypeSite: 'write', cvTypeBrowser: 'browser', cvTypeSchedule: 'schedule',
-    // Evidence cards (canvas P1): write-evidence pack cards — verdict badge + before/after shots + caveat row
+    // Evidence cards: write-evidence pack cards — verdict badge + before/after shots + caveat row
     cvTypeEvidence: 'evidence', evdOk: 'ran ok', evdFail: 'failed', evdBlocked: 'blocked', evdBefore: 'before', evdAfter: 'after',
     healthDegraded: 'degraded', healthNotice: 'notice', healthIssueT: (d: string) => `confirmed upstream issues (${d}); expand the row, prefer opencli_* fallback for broken commands`,
     disable: 'Disable', enable: 'Enable', commandsN: (n: number) => `${n} cmds`,
@@ -170,6 +181,12 @@ const STR = {
     recT: 'Record & replay', recSub: 'Record site / opencli steps, replay in one click', recStart: 'Record', recStop: 'Stop',
     recName: 'name, e.g. daily knowledge', recStep: 'one step, e.g. site zhihu hot', recAdd: '+ add step', replay: 'Replay',
     traceT: 'Run trace', traceSub: 'every browser command logged to ~/.dsh/opencli-traces — replay why the last run failed', traceEmpty: 'No traces yet — they appear after the first browser command',
+    // Event history : ingest events appended to ~/.dsh/opencli-events.jsonl, read back via events-get; survives restarts
+    evT: 'Event history', evSub: 'Notification events kept across sessions (~/.dsh/opencli-events.jsonl): watch hits / drift & fallback / daemon flips / circuit breaks / self-heal — survives restarts', evEmpty: 'No events yet — hits, failures and drift are logged here once schedules run',
+    // Multi-account login isolation: native upstream OpenCLI 2.0.3 --profile/contextId routing
+    profPh: '👤 profile (optional)', profTitle: 'Browser profile alias or contextId (see opencli profile list) — multi-account login isolation via native upstream OpenCLI --profile routing: each profile is a separate Chrome profile with its own cookies/storage; open that Chrome profile with the OpenCLI extension enabled first — if it is not connected the run fails honestly instead of falling back to another account', profTip: (p: string) => `Routed to browser profile via OPENCLI_PROFILE=${p} (native upstream isolation)`,
+    // #59 completion: decorative (visual-only scroll/hover) steps can be skipped on replay
+    skipDecor: 'Skip decorative', skipDecorTip: 'Skip visual-only scroll/hover steps on replay; data read/write steps still run', decoTag: 'decorative',
     assetT: 'Assets', assetSub: 'scripts / recipes / rulepacks', assetSearch: 'search assets (e.g. arxiv)', assetSearchBtn: 'Search',
     builtinT: 'Builtin scripts', recipes: 'recipes', rulepacks: 'rulepacks', browse: 'Browse all',
     v4host: 'v4 host additions; add/toggle/run-now RPCs shipped in v0.3.8',
@@ -210,7 +227,7 @@ const STR = {
 
 type StrKey = keyof typeof STR.zh
 
-interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; history?: Array<{ at: string; ok: boolean; summary: string }> }
+interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; profile?: string; keep?: number; backoffMs?: number; history?: Array<{ at: string; ok: boolean; summary: string }> }
 interface AssetHit { id: string; name: string }
 interface BuiltinScript { name: string; sha256: string; description: string }
 interface ToastMsg { msg: string; ok: boolean }
@@ -584,7 +601,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [ingest, setIngest] = useState<IngestEvent[] | null>(null)
   const [login, setLogin] = useState<LoginCheckResult | null>(null)
   const [checking, setChecking] = useState(false)
-  // 0.1.2 P0-6/7:插件自检(工具点名/入口在线/更新检查)
+  // 插件自检(工具点名/入口在线/更新检查)
   const [selfCheck, setSelfCheck] = useState<SelfCheckResult | null>(null)
   const [toast, setToast] = useState<ToastMsg | null>(null)
   // 试试看
@@ -611,6 +628,8 @@ function Panel(): ReturnType<typeof createElement> {
   const [schedCron, setSchedCron] = useState('0 9 * * *')
   const [schedWatch, setSchedWatch] = useState('')
   const [schedQuiet, setSchedQuiet] = useState('')
+  // 多账号隔离:任务级浏览器 profile(别名/contextId),空=不指定(CLI 默认档案)
+  const [schedProfile, setSchedProfile] = useState('')
   const [schedBusy, setSchedBusy] = useState(false)
   // 批量管理:选中任务 id 集 + 来源过滤 + 批量操作进行中
   const [schedSel, setSchedSel] = useState<Set<string>>(new Set())
@@ -622,6 +641,8 @@ function Panel(): ReturnType<typeof createElement> {
   const [isRec, setIsRec] = useState(false)
   const [recName, setRecName] = useState('')
   const [recSteps, setRecSteps] = useState<string[]>([])
+  // #59 补完:回放时跳过装饰步(只改视觉的 scroll/hover),默认不跳——跳过是用户显式选择
+  const [skipDecor, setSkipDecor] = useState(false)
   const [assetHits, setAssetHits] = useState<AssetHit[] | null>(null)
   const [assetBusy, setAssetBusy] = useState(false)
   const [scripts, setScripts] = useState<BuiltinScript[] | null>(null)
@@ -816,9 +837,10 @@ function Panel(): ReturnType<typeof createElement> {
     setSchedBusy(true)
     const watch = schedWatch.trim()
     const qh = schedQuiet.trim()
-    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, source: 'panel', ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}) } } as unknown as Record<string, unknown>)
+    const prof = schedProfile.trim()
+    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, source: 'panel', ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}), ...(prof.length > 0 ? { profile: prof } : {}) } } as unknown as Record<string, unknown>)
     setSchedBusy(false)
-    if (r.ok) { setSchedSite(''); setSchedWatch(''); setSchedQuiet(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
+    if (r.ok) { setSchedSite(''); setSchedWatch(''); setSchedQuiet(''); setSchedProfile(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
   }
   // 通知通道(D):保存当前所选平台通道;测试按钮发一条真实测试消息(用户配置的通道)。
   // dingtalk secret 支持钉在 URL query(secret=...)——保存原样,发送时由适配层处理。
@@ -915,7 +937,7 @@ function Panel(): ReturnType<typeof createElement> {
       if (s.length === 0) continue
       // 命名空间迁移(2026-10):步骤头 opencli_* 是正主;browser_* 旧头继续收——localStorage
       // 里的历史录制不随迁移改写,旧步骤必须仍然可回放
-      if (s.startsWith('opencli_') || s.startsWith('browser_')) await rpc('replay', { request: { step: s } } as unknown as Record<string, unknown>)
+      if (s.startsWith('opencli_') || s.startsWith('browser_')) await rpc('replay', { request: { step: s, ...(skipDecor ? { skipDecorative: true } : {}) } } as unknown as Record<string, unknown>)
       else await rpc('try-run', { request: { line: s } } as unknown as Record<string, unknown>)
     }
     showToast('replay ✓', true)
@@ -1263,6 +1285,7 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('input', { className: 'o4-in mono', style: { maxWidth: '110px' }, placeholder: 'cron', value: schedCron, onChange: (e: { target: { value: string } }) => setSchedCron(e.target.value) }),
           createElement('input', { className: 'o4-in', style: { maxWidth: '172px' }, placeholder: '🔔 watch 关键词', title: '逗号分隔,命中即通知', value: schedWatch, onChange: (e: { target: { value: string } }) => setSchedWatch(e.target.value) }),
           createElement('input', { className: 'o4-in mono', style: { maxWidth: '150px' }, placeholder: t2('qhPh'), title: t2('qhTitle'), value: schedQuiet, onChange: (e: { target: { value: string } }) => setSchedQuiet(e.target.value) }),
+          createElement('input', { className: 'o4-in mono', style: { maxWidth: '140px' }, placeholder: t2('profPh'), title: t2('profTitle'), value: schedProfile, onChange: (e: { target: { value: string } }) => setSchedProfile(e.target.value) }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
         ),
         // 通知通道节(D):平台下拉+URL+保存+测试(与 ctl notify set/test 同链)
@@ -1307,7 +1330,7 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('span', { className: 'o4-cron' }, s.cron),
                 createElement('span', null, `${t2('last')} ${hist[0]?.at?.slice(5, 16) ?? '—'}`,
                   // verdict 真实着色:空史不挂符号;有失败全红 ✗;有成功绿 ✓——此前恒亮 ✓,
-                  // 与时间线红失败行同屏自相矛盾(GUI 走查 2026-10-08)
+                  // 与时间线红失败行同屏自相矛盾(2026-10-08 界面逐项检查发现)
                   createElement('span', { style: { color: hist.length === 0 ? 'inherit' : (okN > 0 ? '#34C759' : '#FF6B63') } },
                     ` · ${okN}/${hist.length || 0}${hist.length === 0 ? '' : (okN > 0 ? ' ✓' : ' ✗')}`)),
                 createElement('span', { className: 'o4-bdg b' }, t2('retryN')(s.retry ?? 3)),
@@ -1321,6 +1344,7 @@ function Panel(): ReturnType<typeof createElement> {
                   createElement('option', { value: '' }, `${t2('qhLabel')}:${t2('qhOff')}`),
                   ...[...new Set([...QH_PRESETS, ...(s.quietHours !== undefined ? [s.quietHours] : [])])].map((q) => createElement('option', { key: q, value: q }, `${t2('qhLabel')} ${q}`))),
                 ...(s.source !== undefined ? [createElement('span', { className: 'o4-bdg', title: t2('nfSrcTip')(s.source) }, s.source)] : []),
+                ...(s.profile !== undefined ? [createElement('span', { className: 'o4-bdg b', title: t2('profTip')(s.profile) }, `👤 ${s.profile}`)] : []),
                 createElement('span', { style: { flex: '1' } }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
                 createElement(DiffToggle, { id: s.id, lang, label: t2('diffT') }),
@@ -1335,6 +1359,8 @@ function Panel(): ReturnType<typeof createElement> {
       ),
       // 运行轨迹:browser 命令全量 JSONL 落盘的时间线(轨迹回放,模块级组件经 props 拿 lang)
       createElement(TracePanel, { lang }),
+      // 事件历史:events-get 跨会话历史面——内存 30 条 ingest 之外,重启后仍可回看
+      createElement(EventsPanel, { lang }),
       createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '12px' } },
         createElement('div', { className: 'o4-card' },
           createElement('div', { className: 'o4-h3' }, createElement('span', { className: 'o4-miniico' }, ic('rec', true)), t2('recT')),
@@ -1345,6 +1371,8 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('div', { className: 'o4-tt' }, rec.name),
                 createElement('div', { className: 'o4-dd' }, `${rec.steps.length} 步 · ${rec.steps[0] ?? ''}`),
               ),
+              createElement('label', { title: t2('skipDecorTip'), style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#5F6873', flex: 'none', cursor: 'pointer' } },
+                createElement('input', { type: 'checkbox', checked: skipDecor, onChange: () => setSkipDecor(!skipDecor), style: { accentColor: '#4A9EFF', margin: '0' } }), t2('skipDecor')),
               createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void replayRecording(rec.id) } }, t2('replay')),
               createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void promoteRecording(rec.id) } }, '→'),
             )),
@@ -1376,7 +1404,7 @@ function Panel(): ReturnType<typeof createElement> {
   }
 
   /* ── 安全与设置 ── */
-/** 插件自检卡(0.1.2 P0-6/7):工具点名/入口在线/更新检查——'装上没效果'3 秒可见。 */
+/** 插件自检卡:工具点名/入口在线/更新检查——'装上没效果'3 秒可见。 */
 function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<typeof createElement> {
   const { sc, lang } = props
   const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
@@ -1476,7 +1504,7 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
         createElement('span', { className: 'o4-miniico' }, ic('refresh', true)),
         createElement('div', { style: { flex: '1' } },
           createElement('div', { style: { fontSize: '12.5px', fontWeight: '600' } }, t2('verT')),
-          createElement('div', { style: { fontSize: '11px', color: '#5F6873' } }, `${t2('verNow')} v0.4.1 · ${t2('channel')} · ${t2('updMarket')}`),
+          createElement('div', { style: { fontSize: '11px', color: '#5F6873' } }, `${t2('verNow')} v${PLUGIN_VERSION} · ${t2('channel')} · ${t2('updMarket')}`),
         ),
         createElement('span', { className: 'o4-bdg' }, typeof updState === 'string' && updState !== 'idle' && updState !== 'checking' ? updState : t2('upToDate')),
         createElement('button', { className: 'o4-btn ghost sm', disabled: updState === 'checking', onClick: () => { void checkUpdate() } }, updState === 'checking' ? t2('updating') : t2('checkUpd')),
@@ -1532,7 +1560,7 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
           ),
         ),
       ),
-      // Tabs(第五个 tab「画布」:全活动卡片流,任务 H+I+J)
+      // Tabs(第五个 tab「画布」:全活动卡片流)
       createElement('div', { className: 'o4-tabs' },
         ...([['ov', t2('tabOverview')], ['cmd', t2('tabCommands')], ['auto', t2('tabAuto')], ['sec', t2('tabSec')], ['cv', t2('tabCanvas')]] as Array<[string, string]>).map(([k, label]) =>
           createElement('button', { key: k, className: tab === k ? 'on' : '', onClick: () => setTab(k as typeof tab) }, label)),
@@ -1842,6 +1870,8 @@ function TracePanel(props: { lang: Lang }): ReturnType<typeof createElement> {
           createElement('span', { style: { flex: 'none', fontSize: '10.5px', color: '#5F6873', fontFamily: 'ui-monospace,Consolas,monospace' } }, traceClock(r.at)),
           shot !== null ? createElement('span', { title: '本步自动截图', style: { flex: 'none', fontSize: '10.5px', color: '#8B9AFF', fontFamily: 'ui-monospace,Consolas,monospace' } }, '[图]') : null,
           shot !== null ? createElement(ShotThumb, { path: shot }) : null,
+          // #59:装饰步(只改视觉的 scroll/hover)标注,与 trace_replay 时间线〔装饰〕同一口径
+          isDecorativeStep(r.cmd) ? createElement('span', { className: 'o4-bdg', title: tt('skipDecorTip'), style: { flex: 'none' } }, tt('decoTag')) : null,
           createElement('span', { style: { flex: '1', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.75)' } }, r.cmd),
           createElement('span', { className: 'o4-bdg', style: { flex: 'none' } }, `exit ${r.exitCode}`),
           createElement('span', { style: { flex: 'none', fontSize: '10.5px', color: '#5F6873' } }, `${r.ms}ms`),
@@ -1850,6 +1880,57 @@ function TracePanel(props: { lang: Lang }): ReturnType<typeof createElement> {
         openIdx === i ? createElement('div', { className: 'o4-tryout', style: { marginTop: '-2px', marginBottom: '4px' } },
           r.outHead.length > 0 ? r.outHead : '—') : null,
       ) })
+    ),
+  )
+}
+
+/**
+ * 事件历史卡:events-get 读 ~/.dsh/opencli-events.jsonl(+轮转档),新→旧展示最近 50 条。
+ * 与总览 watch 命中行(ingest-events 内存 30 条)分工:这里是跨会话历史——重启 dsh 后仍可
+ * 回看昨晚的命中/漂移/兜底/翻转/熔断。模块级组件经 props 拿 lang(TracePanel 同款)。
+ * 事件文本是宿主侧已组装好的中文事实串(与推送卡同源),不做二次翻译——英文面板只翻译卡头。
+ */
+function EventsPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
+  const { lang } = props
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
+  const [rows, setRows] = useState<IngestEvent[] | null>(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const load = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    const r = await rpc<EventsGetResult>('events-get', { request: { limit: 50 } })
+    setBusy(false)
+    if (r.ok && r.value !== undefined && r.value.ok && Array.isArray(r.value.events)) { setRows(r.value.events); setErr('') }
+    else setErr(r.ok ? (r.value?.error ?? tt('errReq')) : (r.error?.message ?? tt('errReq')))
+  }
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const r = await rpc<EventsGetResult>('events-get', { request: { limit: 50 } })
+      if (!alive) return
+      if (r.ok && r.value !== undefined && r.value.ok && Array.isArray(r.value.events)) setRows(r.value.events)
+      else setErr(r.ok ? (r.value?.error ?? tt('errReq')) : (r.error?.message ?? tt('errReq')))
+    })()
+    return () => { alive = false }
+  }, [])
+  // 事件类别色:失败/熔断/漂移=红,跳过/翻转/兜底=琥珀,其余(命中/变化/自愈/收件箱)=常规
+  const tone = (kind: string): string => (/failed|circuit|drift$/.test(kind) ? ' r' : /skipped|flip|fallback/.test(kind) ? ' w' : '')
+  return createElement('div', { className: 'o4-card' },
+    createElement('div', { className: 'o4-h3' },
+      createElement('span', { className: 'o4-miniico' }, ic('activity', true)), tt('evT'),
+      createElement('span', { className: 'rt' }, createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { void load() } }, ic('refresh', true), busy ? tt('checking') : tt('recheck'))),
+    ),
+    createElement('div', { className: 'o4-sub' }, tt('evSub')),
+    err.length > 0 ? createElement('div', { className: 'o4-load' }, err) : null,
+    rows !== null && rows.length === 0 && err.length === 0 ? createElement('div', { className: 'o4-load' }, tt('evEmpty')) : null,
+    rows === null && err.length === 0 ? createElement('div', { className: 'o4-load' }, tt('loading')) : null,
+    createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+      ...(rows ?? []).slice(0, 50).map((e, i) => createElement('div', { key: `${e.at}-${i}`, className: 'o4-qrow', style: { alignItems: 'center' }, title: `${e.kind}\n${e.at}\n${e.text}` },
+        createElement('span', { style: { flex: 'none', fontSize: '10.5px', color: '#5F6873', fontFamily: 'ui-monospace,Consolas,monospace' } }, canvasStamp(e.at)),
+        createElement('span', { className: `o4-bdg${tone(e.kind)}`, style: { flex: 'none' } }, e.kind),
+        createElement('span', { style: { flex: '1', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px', color: 'rgba(249,250,251,.75)' } }, e.text),
+      )),
     ),
   )
 }
@@ -1958,7 +2039,7 @@ async function fetchEvidenceCards(limit = 20): Promise<EvidenceGetItem[]> {
  *   渲染批次恒 ≤50),截图缩略图复用 shotCache(ShotThumb 现成链路);
  * 展开:点卡片展开完整步骤序列(stepsOfCard),再点收起;拖拽位移 >3px 后的 click 视为
  *   拖拽不吃点击(movedRef 判定);展开态 zIndex 提升盖住邻卡。
- * 证据卡(canvas P1):evidence-get 单独拉取(20 条封顶,与画布卡分源不混数据),按时间
+ * 证据卡:evidence-get 单独拉取(20 条封顶,与画布卡分源不混数据),按时间
  *   倒序与画布卡混排成一条流;before/after 双图并排(ShotThumb 现成 trace-shot 通道)+
  *   shotNote 免责行(o4-note),卡面即全量信息,不参与展开/翻页。
  */
@@ -2087,7 +2168,7 @@ function CanvasPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
     )
   }
 
-  // ── 证据卡(canvas P1):写操作证据包的卡面投影,复用 o4-cvcard 样式 ──
+  // ── 证据卡:写操作证据包的卡面投影,复用 o4-cvcard 样式 ──
   // verdict→色调:ok 绿 / fail 红 / blocked 黄(命令从未执行,与"执行了但失败"区分开)
   const evdTone = (v: EvidenceGetItem['verdict']): 'g' | 'r' | 'y' => (v === 'ok' ? 'g' : (v === 'blocked' ? 'y' : 'r'))
   // 双图列:标签 + 缩略图(缺侧占位色块,title 同 canvasNoShot;图片走 ShotThumb 的 trace-shot 通道)
@@ -2225,7 +2306,7 @@ function OnboardingWizard(props: {
     row('bridge', bridgeOn ? 'g' : 'r', 'BrowserBridge ' + (bridgeOn ? tt('bridgeOn') : tt('bridgeOff')),
       bridgeOn ? null : createElement('button', { className: 'o4-btn ghost sm', onClick: () => { window.open(RELEASES_URL, '_blank') } }, ic('ext', true), tt('obRelBtn'))),
     !bridgeOn ? createElement('div', { className: 'o4-note' }, tt('obBridgeHint')) : null,
-    // 降级可用面黄行(设计 §2.2-2):bridge 红时声明"现在还能跑什么",向导不再只有"装扩展"一种结局;
+    // 降级可用面黄行:bridge 红时声明"现在还能跑什么",向导不再只有"装扩展"一种结局;
     // 目录未载入时用无数字文案,不给猜出来的 N
     !bridgeOn && !extConnected
       ? row('zerocfg', 'y', adapters !== null ? tt('obZeroCfgN')(readonlySiteCount(adapters)) : tt('obZeroCfgNa'), null)
@@ -2266,7 +2347,7 @@ export function loginSitesFromAdapters(adapters: ReadonlyArray<AdapterInfo> | nu
 
 /** 零配置降级可用面(纯函数,导出供 tests/zerocfg.test.ts):无扩展时仍有只读命令的站点数。
  *  kinds 是 normalizeAdapterList 聚合的每站 access 集合,含 'read' 即计入——只做正向提示不做门控
- *  (设计 §2.1:漏标不该挡住一个实际能跑的命令,数字只用于"还能跑什么"的声明)。 */
+ *  (漏标不该挡住一个实际能跑的命令,数字只用于"还能跑什么"的声明)。 */
 export function readonlySiteCount(adapters: ReadonlyArray<AdapterInfo> | null): number {
   return (adapters ?? []).filter((a) => (a.kinds ?? []).includes('read')).length
 }

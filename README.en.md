@@ -10,7 +10,7 @@ English | [简体中文](README.zh.md)
 
 - For users: installation and panel walkthrough in [Getting Started](#getting-started); full capability list in [Feature Matrix](#feature-matrix)
 - For agents: SKILL.md ships with the package for in-session discovery; CLI entry point is `dsh-opencli-ctl`
-- For contributors: design docs, research, and acceptance records under [docs/](docs/)
+- For contributors: source, issues, and releases on [GitHub](https://github.com/IKEASven69/dsh-opencli)
 
 ## How It Works
 
@@ -80,7 +80,7 @@ Every browser and scheduled execution lands as JSONL traces; the canvas view agg
 
 ### Write Approval Gate
 
-Posting, deleting, and other write commands pop an approval prompt by default; execution requires explicit allow, with before/after screenshots archived as evidence. Unclear permission is treated as write (fail-closed). attack table of 22 rows (incl. 5 read-only controls) + 3 independent side-channels, each covered by a dedicated regression test, plus 200 reproducible fuzz iterations, invariant: **every allow ⟹ read-only intent** (see [Security Invariants](#security-invariants)).
+Posting, deleting, and other write commands pop an approval prompt by default; execution requires explicit allow, with before/after screenshots archived as evidence. Unclear permission is treated as write (fail-closed). An attack table of 22 rows (incl. 5 read-only controls) + 3 independent side-channels, each covered by a dedicated regression test, plus 200 reproducible fuzz iterations, invariant: **every allow ⟹ read-only intent** (see [Security Invariants](#security-invariants)).
 
 ## Feature Matrix
 
@@ -114,7 +114,20 @@ Posting, deleting, and other write commands pop an approval prompt by default; e
 
 - opencli ≤1.8.8 running `npm install` inside the plugin directory silently replaces the host link ([#2555](https://github.com/jackwener/opencli/issues/2555), fixed in 2.0) — on 1.8.x, install dependencies outside the repo
 - Before upgrading dsh to 0.2, check your profile `cordis.patch.yml` for references to uninstalled bundles — 0.2 exits silently on them
-- Panel chat sessions not listing plugin agent tools is dsh's preset-scoping architecture — see [docs/RESEARCH-20261030-dsh-preset-and-env.md](docs/RESEARCH-20261030-dsh-preset-and-env.md)
+- Panel chat sessions not listing plugin agent tools is dsh's preset-scoping architecture — those sessions can use the `dsh-opencli-ctl` command surface instead (see [For Agents](#for-agents))
+
+## Without the extension (zero-config fallback)
+
+When the BrowserBridge extension is not installed or not connected, the plugin does not fake a fallback; each command type is handled honestly:
+
+| Command type | Behavior without the extension |
+|---|---|
+| `site` pure-HTTP read commands (e.g. `site juejin hot`, `site hackernews best`) | Run as usual, unaffected |
+| `site` read commands that need a browser session | Not auto-degraded: reported as unavailable with two ways forward (install the extension / use pure-HTTP commands first). The anonymous CDP channel is off by default — attaching to existing tabs would carry your logged-in state, contradicting the "anonymous" promise |
+| `site` write commands and commands of unknown permission | Never degraded: without your logged-in identity a write is not a fallback, it would be forgery |
+| `opencli_*` / `chrome_*` primitives | Short-circuited before execution with what is missing, how to install it, and what happens next — no waiting for a timeout |
+
+The doctor diagnostics and the panel onboarding wizard both state what still works while the extension is missing. Once installed, the extension reconnects automatically and every capability returns immediately — no dsh restart needed.
 
 ## Configuration
 
@@ -127,9 +140,10 @@ Zero-config out of the box; fine-tuning:
 | Automation mode | Panel four-mode selector | standard |
 | Rate limits | `usagePolicy` (minDelay 750ms / concurrency 2 / burst 3 / cooldown 30s) | see left |
 | Scoped login | `authProfiles` (`allowedDomains`/`storageStatePath`) | none |
+
 ## Security Invariants
 
-The write approval gate is fail-closed: unclear permission is treated as write. attack table of 22 rows (incl. 5 read-only controls) + 3 independent side-channels, each covered by a dedicated regression test, plus 200 reproducible fuzz iterations, invariant: **every allow ⟹ read-only intent**. Sample shapes:
+The write approval gate is fail-closed: unclear permission is treated as write. An attack table of 22 rows (17 write/escalation shapes, each prompting for approval + 5 read-only controls) + 3 independent side-channels (`site_batch` / benchmark / canary, each with its own read-only gate), each covered by a dedicated regression test, plus 200 reproducible fuzz iterations, invariant: **every allow ⟹ read-only intent**. Sample shapes:
 
 | Attack shape | Behavior |
 |---|---|
@@ -139,7 +153,7 @@ The write approval gate is fail-closed: unclear permission is treated as write. 
 | `site_batch` mixing write commands | Whole batch rejected, zero shell calls |
 | benchmark / canary side-channel write commands | Built-in read-only gates |
 
-All tool output is truncated and truncated and noise-stripped to prevent context pollution; rate limits + automatic backoff; scoped login rejects cross-domain.
+All tool output is truncated and noise-stripped to prevent context pollution; rate limits + automatic backoff; scoped login rejects cross-domain.
 
 ## Tests & Verification
 
@@ -147,14 +161,14 @@ All tool output is truncated and truncated and noise-stripped to prevent context
 |---|---|
 | Unit/regression | vitest 450+ cases: approval invariant attack table + 200 fuzz / cron regression / direct transport / snapshot diff / export format / pre-submit gate |
 | Full review suite | 22 checks on a live environment covering rendering / real execution / state reconciliation / RPC ground truth (`full-review.cjs`); results record the host dsh version |
-| Full feature matrix | 26 end-to-end checks spanning session / direct transport / push / export / ctl full chain (`full-matrix.cjs`) |
-| UI walkthrough | 9-scene, 26-assertion pass with real browser mouse/keyboard (`ui-walkthrough.cjs`) |
+| Full feature matrix | Full-chain end-to-end checks spanning session / direct transport / push / export / ctl full chain; checks branch on the environment (`full-matrix.cjs`) |
+| UI walkthrough | 10-scene, 27-assertion pass with real browser mouse/keyboard (`ui-walkthrough.cjs`) |
 | Real-model E2E | Session-driven site commands / write rejection / NL intent mapping loop |
 
 ## Documentation
 
 - [CHANGELOG](CHANGELOG.md) · [SKILL.md](SKILL.md) (agent handbook) · [AGENT_INSTALL.md](AGENT_INSTALL.md) (agent self-install)
-- Development docs: [docs/](docs/) — design notes, research, acceptance records, internal conventions
+- Issues & feedback: [GitHub Issues](https://github.com/IKEASven69/dsh-opencli/issues)
 
 ## Scope
 

@@ -22,7 +22,7 @@ class StubShell extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
   resolve(req: unknown): unknown { return req }
   async run(spec: { command: unknown }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
-    const cmd = String(spec.command)
+    const cmd = String(Array.isArray(spec.command) ? spec.command.join(' ') : spec.command) // array 形态优先后回落路径传 argv 数组,归一回串判别
     if (cmd.includes('--version')) return { exitCode: 0, stdout: { text: '1.8.8\n' }, stderr: { text: '' } }
     if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: 'Daemon: running\nVersion: v1.8.7\nPort: 19825\n' }, stderr: { text: '' } }
     if (cmd.includes('list --format json')) return { exitCode: 0, stdout: { text: '[]' }, stderr: { text: '' } }

@@ -114,6 +114,15 @@ export interface IngestEvent {
   text: string
 }
 
+/** events-get RPC 结果(事件历史持久化,evidence-get 同款读侧投影):
+ *  ~/.dsh/opencli-events.jsonl(+ 轮转档 .1)按新→旧返回;文件不存在=空表,不是错误。
+ *  内存态 ingest-events 只有最近 30 条且不跨会话,本 RPC 是跨会话可回看的历史面。 */
+export interface EventsGetResult {
+  ok: boolean
+  events: IngestEvent[]
+  error?: string
+}
+
 /** approval-set RPC 请求/结果。 */
 export interface ApprovalSetRequest {
   enabled: boolean

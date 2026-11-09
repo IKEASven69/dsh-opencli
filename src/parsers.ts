@@ -199,7 +199,7 @@ export function approvalDecision(
 
 
 // ---------------------------------------------------------------------------
-// 无人值守可靠性(0.1.2 P0):采集回执与挑战识别(与 verifyResult 规则层同语义口径)
+// 无人值守可靠性:采集回执与挑战识别(与 verifyResult 规则层同语义口径)
 // ---------------------------------------------------------------------------
 
 /** 采集回执:每次定时采集的"真话三件套"——auth 状态/条目数/空结果(对齐上游 missing≠zero 语义)。 */
@@ -214,17 +214,122 @@ export interface Receipt {
   empty?: true
   /** 输出触及上限——可能被截断(#2698:调用方有权知道"自然翻完"与"被截断"的区别) */
   truncated?: true
+  /**
+   * partial=输出只是完整数据的一段/一页,还有更多没取到(typed 口径,对齐上游 2.0.3
+   * #2766:list 非 JSON 格式的分页页不是全量——上游在 JSON 外打 "Showing 1-25 of N;
+   * rerun with --offset" 提示,本层按同语义探测,见 looksPartialPage)。
+   */
+  partial?: true
+  /**
+   * unloaded=内容未渲染完就被读了(typed 口径,对齐上游 2.0.3 #2708「未载≠0」)。两条来源:
+   * ①上游 typed 失败码 COUNTS_NOT_LOADED(xiaohongshu note 交互计数未载即报错而非报 0)——直接采信;
+   * ②成功输出零条目且含加载中/骨架标记(looksUnloaded 近似)。无正向证据不标注,宁缺毋假。
+   */
+  unloaded?: true
+  /** degraded=适配器漂移后经 browser_* 原语兜底采集的数据(近似结果,非适配器结构化输出) */
+  degraded?: true
+  /**
+   * 停止原因(coverage 插件层近似):end=自然翻完 truncated=截断/分页未尽 error=失败。
+   * 未知恒 null——插件层拿不到上游 #2698 的真实覆盖元数据。
+   * **插件层近似,上游 #2698 设计落地后对齐字段语义。**
+   */
+  stop_reason?: 'end' | 'truncated' | 'error' | null
+  /**
+   * 剩余未读游标(coverage 插件层近似):仅当 #2766 式分页提示给出 --offset 值时可提取,
+   * 其余场景未知恒 null。
+   * **插件层近似,上游 #2698 设计落地后对齐字段语义。**
+   */
+  remaining_cursor?: string | number | null
+  /** 多账号隔离:本条采集使用的浏览器 profile/context 别名或 contextId(任务级透传) */
+  profile?: string
+  /**
+   * 上游 2.0 typed 失败码(失败回执才有;对齐 2.0.3 typed-fail 家族:#2708 COUNTS_NOT_LOADED、
+   * #2754 AUTH_REQUIRED,以及 EMPTY_RESULT/SECURITY_BLOCK/COMMAND_EXEC 等)——此前这类失败只能
+   * 落 auth_state:unknown,现在带上游原码;失败但拿不到 typed 码(1.x 文本/异常)时省键。
+   */
+  error_code?: string
 }
 
-/** 截断启发:输出达到读取上限的 95% 即标记可能截断(上游静默截断无信号,这是诚实的近似)。 */
+/**
+ * 2.0 typed 失败码提取:unwrapCli2 把 `{ok:false,error:{code,message,hint}}` 信封落成
+ * "CODE\nmessage\nhint" 形态的 stderr,首行为全大写下划线码即取用。'UNKNOWN' 是 unwrapCli2
+ * 缺码时的占位、'ERROR' 是泛词,都不算 typed;1.x 文本输出首行不是码形 → null(宁缺毋假)。
+ */
+export function typedErrorCode(stderr: string): string | null {
+  const first = stderr.trimStart().split('\n')[0]?.trim() ?? ''
+  if (!/^[A-Z][A-Z0-9_]{2,40}$/.test(first) || first === 'UNKNOWN' || first === 'ERROR') return null
+  return first
+}
+
+/**
+ * #2766 partial-page 口径探测:上游 list 非 JSON 格式在 stderr 打
+ * "Showing 1-25 of N commands; rerun with --offset 25 for more."——JSON 外的
+ * partial 标记(stdout 保持可解析)。命中即"输出只是一页,还有更多"。
+ */
+export function looksPartialPage(text: string): boolean {
+  return /Showing \d+-\d+ of \d+[^\n]*rerun with --offset \d+/i.test(text)
+}
+
+/** 从 #2766 分页提示提取下一页 offset(可解析则 remaining_cursor 有值;无提示=null)。 */
+export function cursorOfPartialPage(text: string): number | null {
+  const m = text.match(/rerun with --offset (\d+)/i)
+  if (m === null) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * #2708 unloaded 口径近似:输出含"加载中/骨架/水合"类标记,提示内容可能尚未渲染完就被
+ * 读取(数据或许马上就有,与真·空结果 empty 区分)。只在有正向标记时成立——宁缺毋假,
+ * 不把普通空结果误标成 unloaded。挑战页(just a moment 等)归 authRiskClass 的 risk_wall,
+ * 不在此重复计入。
+ */
+export function looksUnloaded(text: string): boolean {
+  return /加载中|正在加载|请稍候|skeleton|loading(?:\.\.\.|…)|hydrat(?:e|ion)/i.test(text)
+}
+
+/**
+ * coverage stop_reason 插件层近似(上游 #2698 设计落地后对齐字段语义):
+ * 失败 → error;截断启发命中或 #2766 分页未尽 → truncated;成功且输出可结构化计数 → end;
+ * 成功但非结构化(无从判断是否翻完)→ null(未知恒 null,不臆造"翻完了")。
+ */
+export function coverageStopReason(ok: boolean, truncatedOrPartial: boolean, structured: boolean): 'end' | 'truncated' | 'error' | null {
+  if (!ok) return 'error'
+  if (truncatedOrPartial) return 'truncated'
+  return structured ? 'end' : null
+}
+
+/**
+ * #59 装饰性步骤识别:只改变 CSS/视觉状态、不读不写数据的浏览器动作(滚动/悬停)。
+ * 步骤串形态兼容三种:录制步骤 `opencli_scroll down` / 旧头 `browser_hover 3`、
+ * 轨迹行 `browser dsh scroll down`(会话名在第二词)。回放时可整体跳过——跳过它们
+ * 不改变任何数据结果,只少了"像人一样"的视觉动作;数据读写步骤永不归入本类。
+ */
+export function isDecorativeStep(step: string): boolean {
+  const toks = step.trim().split(/\s+/)
+  const head = toks[0] ?? ''
+  const verb = head.startsWith('opencli_') ? head.slice('opencli_'.length)
+    : head.startsWith('browser_') ? head.slice('browser_'.length)
+      : head === 'browser' ? (toks[2] ?? '') // 轨迹行:browser <session> <verb> …
+        : ''
+  return verb === 'scroll' || verb === 'hover'
+}
+
+/**
+ * 截断启发:输出达到读取上限的 95% 即标记可能截断(上游静默截断无信号,这是诚实的近似)。
+ * 口径=UTF-8 字节(Buffer.byteLength)而非 UTF-16 字符数:读取上限(maxBytes)是字节口径,
+ * CJK 每字 3 字节,按字符数比对要 ~1.5 倍才报——纯中文被真实字节截断时永远漏标(0.1.2
+ * 发后审查 low 项);阈值语义不变,仍为上限的 95%。
+ */
 export function looksTruncated(text: string, limitBytes = 1_048_576): boolean {
-  return text.length >= Math.floor(limitBytes * 0.95)
+  return Buffer.byteLength(text, 'utf8') >= Math.floor(limitBytes * 0.95)
 }
 
-/** auth/风控分类(receipt 用;语义与 verifyResult 规则层一致,导出为单一口径)。 */
+/** auth/风控分类(receipt 用;语义与 verifyResult 规则层一致,导出为单一口径)。
+ *  SECURITY_BLOCK=上游 2.0.3 typed 风控拦截码(xiaohongshu note 等),归 risk_wall。 */
 export function authRiskClass(text: string): 'auth_wall' | 'risk_wall' | null {
   if (/请先登录|未登录|登录已过期|扫码登录|AUTH_REQUIRED|NOT_LOGGED_IN/i.test(text)) return 'auth_wall'
-  if (/验证码|人机验证|captcha|challenge|安全验证|滑动验证|just a moment|verifying your browser|access denied|anubis/i.test(text)) return 'risk_wall'
+  if (/验证码|人机验证|captcha|challenge|安全验证|滑动验证|just a moment|verifying your browser|access denied|anubis|SECURITY_BLOCK/i.test(text)) return 'risk_wall'
   return null
 }
 

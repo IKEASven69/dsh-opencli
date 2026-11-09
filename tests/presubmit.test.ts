@@ -3,7 +3,7 @@
  * 否则不配存在(教训记录 docs/LESSON-20261020-registry.md)。
  */
 import { describe, expect, it } from 'vitest'
-import { scanPrivacy, scanInternalWords, extractNumberClaims, detectDeletedFacts, verdict } from '../src/presubmit.ts'
+import { scanPrivacy, scanInternalWords, extractNumberClaims, detectDeletedFacts, verdict, parseClaimLedger, reconcileClaims, scanInflatedTerms } from '../src/presubmit.ts'
 
 /** #8007 当时实际提交的条目描述(节选,数字与前提问题原样保留) */
 const SUBMITTED_8007 = `description:
@@ -79,5 +79,66 @@ describe('安全交叉审查实证的漏网回归(2026-10-20)', () => {
   it('小写路径与行尾无分隔符的内部目录命中', () => {
     expect(scanPrivacy('moved to C:/codingprojects/foo').some((x) => x.rule === '本机路径')).toBe(true)
     expect(scanPrivacy('see docs in ~/.zcode end').some((x) => x.rule === '内部目录')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 对外声明逐条机器复核(release 打假自查;#8007 第三条失真「录屏回放」回归)
+// ---------------------------------------------------------------------------
+
+/** 复核记录样例:markdown 表格,声明 | 复现命令 | 当场输出 | 日期;含管道符转义单元格。 */
+const LEDGER_OK = `| 声明 | 复现命令 | 当场输出 | 日期 |
+|---|---|---|---|
+| 171 站 | node -e "console.log(1)" \\| head -1 | manifest sites: 171 | 2026-11-10 |
+| 1225 命令 | npm view @jackwener/opencli dist-tags | commands: 1,225 | 2026-11-10 |`
+
+describe('parseClaimLedger(复核记录解析)', () => {
+  it('表头与分隔行跳过;转义管道符还原;四列齐取', () => {
+    const r = parseClaimLedger(LEDGER_OK)
+    expect(r).toHaveLength(2)
+    expect(r[0]).toEqual({ claim: '171 站', command: 'node -e "console.log(1)" | head -1', output: 'manifest sites: 171', date: '2026-11-10' })
+    expect(r[1]!.output).toContain('1,225')
+  })
+})
+
+describe('scanInflatedTerms(名词夸大,#8007 录屏回放回归)', () => {
+  it('「录屏回放」命中 FAIL 且指向准确说法;正常「轨迹回放」不命中', () => {
+    expect(scanInflatedTerms('支持录屏回放').some((x) => x.level === 'FAIL')).toBe(true)
+    expect(scanInflatedTerms('支持 trace replay 与轨迹回放')).toEqual([])
+  })
+})
+
+describe('reconcileClaims(数字声明逐条机器对账)', () => {
+  const numbers170 = [{ claim: '170+', context: '…170+ 站…' }]
+  it('声明未复核(无记录)→ FAIL', () => {
+    const r = reconcileClaims(numbers170, [])
+    expect(r.some((x) => x.rule === '声明未复核' && x.level === 'FAIL')).toBe(true)
+  })
+  it('输出撑不住声明(#8007:宣称 180+、输出 170)→ FAIL「声明与复现输出不符」', () => {
+    const ledger = [{ claim: '180+ 站', command: 'cat manifest', output: 'sites: 170', date: '2026-11-10' }]
+    const r = reconcileClaims([{ claim: '180+', context: '' }], ledger)
+    expect(r.some((x) => x.rule === '声明与复现输出不符' && x.level === 'FAIL')).toBe(true)
+  })
+  it('"N+" 只要有 ≥N 的同单位数即过;千分位与空白归一', () => {
+    const ledger = [{ claim: '170+ 站', command: 'cat manifest', output: 'manifest sites: 171 站', date: '2026-11-10' }]
+    expect(reconcileClaims(numbers170, ledger)).toHaveLength(0)
+    const ledger2 = [{ claim: '1,225 命令', command: 'cat manifest', output: 'commands: 1,225 命令', date: '2026-11-10' }]
+    expect(reconcileClaims([{ claim: '1225 命令', context: '' }], ledger2)).toHaveLength(0)
+  })
+  it('单位不符不能互相撑数("200+ 站"拿"1225 命令"的输出)与裸数输出都 FAIL', () => {
+    const ledger = [{ claim: '200+ 命令', command: 'cat manifest', output: 'commands: 1225', date: '2026-11-10' }]
+    const r = reconcileClaims([{ claim: '200+', context: '' }], ledger)
+    expect(r.some((x) => x.rule === '声明与复现输出不符')).toBe(true)
+    const ledgerBare = [{ claim: '170+ 站', command: 'cat manifest', output: 'sites: 171', date: '2026-11-10' }]
+    expect(reconcileClaims(numbers170, ledgerBare).some((x) => x.rule === '声明与复现输出不符')).toBe(true)
+  })
+  it('记录不完整(缺输出/日期格式错)→ FAIL;文本已无此声明 → WARN「复核记录多余」', () => {
+    const ledger = [
+      { claim: '170+ 站', command: 'cat manifest', output: '', date: '2026-11-10' },
+      { claim: '99 条', command: 'x', output: '99', date: '2026-1-1' },
+    ]
+    const r = reconcileClaims(numbers170, ledger)
+    expect(r.filter((x) => x.rule === '复核记录不完整' && x.level === 'FAIL')).toHaveLength(2)
+    expect(r.some((x) => x.rule === '复核记录多余' && x.level === 'WARN')).toBe(true)
   })
 })

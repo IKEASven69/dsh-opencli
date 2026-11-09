@@ -17,11 +17,15 @@ class StubShell extends Service {
   resolve(req: unknown): unknown { return req }
   async run(spec: { command: string }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
     const cmd = Array.isArray(spec.command) ? spec.command.join(' ') : String(spec.command)
-    if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: 'Daemon: running\nVersion: v1.8.7\nPort: 19825\n' }, stderr: { text: '' } }
+    // daemon status:2.0.x JSON 信封+尾部升级横幅(0.1.3 C②:本机 `opencli daemon status` 实测形状)
+    if (cmd.includes('daemon status')) return { exitCode: 0, stdout: { text: DAEMON_STATUS_JSON }, stderr: { text: '' } }
     if (cmd.includes('list --format json')) return { exitCode: 0, stdout: { text: '[]' }, stderr: { text: '' } }
     return { exitCode: 0, stdout: { text: '{}\n' }, stderr: { text: '' } }
   }
 }
+
+/** 2.0.x daemon status 输出(JSON 信封 + 尾部升级横幅,真换行;字段名取自本机实测)。 */
+const DAEMON_STATUS_JSON = '{"ok":true,"data":{"ok":true,"pid":19616,"uptime":3600.5,"daemonVersion":"2.0.2","extensionConnected":true,"port":19825,"running":true,"stale":false}}\n\n  Extension update available: v1.0.26 → v1.0.27\n  Download: https://github.com/jackwener/opencli/releases\n'
 
 class StubTools extends Service {
   readonly registered = new Map<string, { execute: (a: unknown) => Promise<{ text: string }> }>()
@@ -122,31 +126,38 @@ describe('watch 关键词监控(主线 B 第一片)', () => {
     const origRun = S().runOpencli.bind(svc)
     S().runOpencli = async (...args: string[]) => {
       const a0 = Array.isArray(args[0]) ? args[0][0] : args[0]
-      if (a0 === 'daemon') return { exitCode: 0, stdout: 'Daemon: running\nVersion: 2.0.2\nExtension: connected\nPort: 19825\nn', stderr: '' }
+      if (a0 === 'daemon') return { exitCode: 0, stdout: DAEMON_STATUS_JSON, stderr: '' }
       return { exitCode: 0, stdout: '1 某大厂宣布全员降薪 热度984万 2 十一旅游推荐 热度500万', stderr: '' }
     }
-    // 直接桩 daemonStatus 方法(health-check 同款;wrapper 途径已被证实在本文件不可靠)
+    // 直接桩 daemonStatus 方法(health-check 同款;wrapper 途径已被证实在本文件不可靠);
+    // finally 还原(0.1.3 C③:proxy 是同一实例,不还原会靠用例顺序兜底污染后续用例)
     const S1 = S() as unknown as { daemonStatus: () => Promise<{ running?: boolean; version?: string; extension?: string } | null> }
-    const origDs = S1.daemonStatus.bind(S1)
+    const origDs = S1.daemonStatus
     S1.daemonStatus = async () => ({ running: true, version: '2.0.2', extension: 'connected' })
-    const dsProbe = await (S() as unknown as { daemonStatus: () => Promise<unknown> }).daemonStatus()
-    console.error('[dbg-fix] ds after method stub=' + JSON.stringify(dsProbe))
-    const eventsBefore = S().ingestEventList.length
-    await S().runSiteCommand(site, id)
-    await S().runSiteCommand(site, id)
-    expect(S().ingestEventList.length).toBeGreaterThanOrEqual(eventsBefore + 1)
-    expect(S().ingestEventList[0]?.kind).toBe('watch-hit')
-    expect(S().ingestEventList[0]?.text).toContain('降薪')
-    // 不含关键词:无新事件
-    S().runOpencli = async (...args: string[]) => {
-      const a0 = Array.isArray(args[0]) ? args[0][0] : args[0]
-      if (a0 === 'daemon') return { exitCode: 0, stdout: 'Daemon: running\nVersion: 2.0.2\nExtension: connected\nPort: 19825\nn', stderr: '' }
-return { exitCode: 0, stdout: '1 某明星官宣结婚 热度442万', stderr: '' }
+    try {
+      const eventsBefore = S().ingestEventList.length
+      await S().runSiteCommand(site, id)
+      await S().runSiteCommand(site, id)
+      // 精确计数(0.1.3 C④ 收紧回 toBe):两次采集各命中一次 → 恰 +2 条 watch-hit。
+      // 同输出两跑无快照 diff(不发 snap-diff)、非结构化输出不构成漂移序列——没有其他合法事件源,
+      // 事件重复/多播类回归在这里必须红
+      expect(S().ingestEventList.length).toBe(eventsBefore + 2)
+      expect(S().ingestEventList.slice(0, 2).map((e) => e.kind)).toEqual(['watch-hit', 'watch-hit'])
+      expect(S().ingestEventList[0]?.text).toContain('降薪')
+      // 不含关键词:无新事件
+      S().runOpencli = async (...args: string[]) => {
+        const a0 = Array.isArray(args[0]) ? args[0][0] : args[0]
+        if (a0 === 'daemon') return { exitCode: 0, stdout: DAEMON_STATUS_JSON, stderr: '' }
+        return { exitCode: 0, stdout: '1 某明星官宣结婚 热度442万', stderr: '' }
+      }
+      const n = S().ingestEventList.length
+      await S().runSiteCommand(site, id)
+      // 非结构化输出变化只折规模摘要、不发 snap-diff 事件;watch 未命中 → 零新事件
+      expect(S().ingestEventList.length).toBe(n)
+    } finally {
+      S1.daemonStatus = origDs
+      S().runOpencli = origRun as Svc['runOpencli']
     }
-    const n = S().ingestEventList.length
-    await S().runSiteCommand(site, id)
-    expect(S().ingestEventList.length).toBe(n)
-    S().runOpencli = origRun as Svc['runOpencli']
     // 定时链路落轨迹(GUI 走查 2026-10-08 修复):runSiteCommand 每次尝试都应写 schedule 行,
     // 否则「运行轨迹」看不到定时执行的真实失败输出,复盘断链
     const traceDir2 = process.env.DSH_OPENCLI_TRACE_DIR ?? ''
@@ -176,15 +187,18 @@ describe('ingest-events RPC(排序/形状/上限契约:总览 watch 命中行依
     let seq = 0
     S().runOpencli = async (...args: string[]) => {
       const a0 = Array.isArray(args[0]) ? args[0][0] : args[0]
-      if (a0 === 'daemon') return { exitCode: 0, stdout: 'Daemon: running\nVersion: 2.0.2\nExtension: connected\nPort: 19825\nn', stderr: '' }
+      if (a0 === 'daemon') return { exitCode: 0, stdout: DAEMON_STATUS_JSON, stderr: '' }
       { seq++; return { exitCode: 0, stdout: seq === 1 ? '旧词出现' : '新词出现', stderr: '' } }
     }
+    // daemonStatus 方法桩:与 runOpencli 桩同一 finally 还原(0.1.3 C③)
     const S2 = S() as unknown as { daemonStatus: () => Promise<{ running?: boolean; version?: string; extension?: string } | null> }
+    const origDs2 = S2.daemonStatus
     S2.daemonStatus = async () => ({ running: true, version: '2.0.2', extension: 'connected' })
     try {
       await S().runSiteCommand(site, r.id!)
       await S().runSiteCommand(site, r.id!)
     } finally {
+      S2.daemonStatus = origDs2
       S().runOpencli = orig as Svc2['runOpencli']
       await svc.scheduleRemove({ id: r.id! })
     }
@@ -613,17 +627,23 @@ describe('cronMatches(模拟使用 Finding 2.1 回归)', () => {
 describe('opencli_doctor 工具(AGENT_INSTALL.md 的自检闭环)', () => {
   it('四层诊断:CLI/daemon 绿,扩展未连接给装扩展指引,失败层编号列出下一步', async () => {
     const Sd = svc as unknown as { daemonStatus: () => Promise<{ running?: boolean; version?: string; extension?: string } | null> }
+    const origDsD = Sd.daemonStatus
     Sd.daemonStatus = async () => ({ running: true, version: 'v1.8.7', extension: 'not connected' })
-    const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('opencli_doctor')!
-    expect(tool).toBeDefined()
-    const r = await tool.execute({})
-    expect(r.text).toContain('✓ CLI')
-    expect(r.text).toContain('✓ daemon:v1.8.7')
-    // 桩的 daemon status 无 Extension 行 → 判未连接,给"加载解压缩的扩展"指引
-    expect(r.text).toContain('✗ BrowserBridge:扩展未连接')
-    expect(r.text).toContain('加载解压缩的扩展')
-    expect(r.text).toContain('下一步')
-    // 插件层常绿:审批门状态在输出里
-    expect(r.text).toMatch(/插件:.*审批门 (开|关)/)
+    try {
+      const tool = (ctx.tools as unknown as { registered: Map<string, { execute: (a: unknown) => Promise<{ text: string }> }> }).registered.get('opencli_doctor')!
+      expect(tool).toBeDefined()
+      const r = await tool.execute({})
+      expect(r.text).toContain('✓ CLI')
+      expect(r.text).toContain('✓ daemon:v1.8.7')
+      // daemonStatus 方法桩直接给 extension:'not connected'(解析后的对象字段,非 daemon status 文本里
+      // 缺 Extension 行)→ 判未连接,给"加载解压缩的扩展"指引
+      expect(r.text).toContain('✗ BrowserBridge:扩展未连接')
+      expect(r.text).toContain('加载解压缩的扩展')
+      expect(r.text).toContain('下一步')
+      // 插件层常绿:审批门状态在输出里
+      expect(r.text).toMatch(/插件:.*审批门 (开|关)/)
+    } finally {
+      Sd.daemonStatus = origDsD // 还原(0.1.3 C③):proxy 是同一实例,不还原会污染文件内后续用例
+    }
   })
 })

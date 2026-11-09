@@ -52,7 +52,10 @@ class StubShell extends Service {
   static seq: string[] = []
   async run(spec: { command: string }): Promise<{ exitCode: number; stdout: { text: string }; stderr: { text: string } }> {
     const cmdStr = Array.isArray(spec.command) ? spec.command.join(' ') : String(spec.command)
-    if (/daemon status/.test(cmdStr)) return { exitCode: 0, stdout: { text: 'Daemon: running\nnVersion: 2.0.2\nnExtension: connected\nnPort: 19825\nn' }, stderr: { text: '' } }
+    // daemon status:2.0.x JSON 信封+尾部升级横幅(0.1.3 C② 实测形状;真换行)。旧桩 1.x 文本里的
+    // '\nn' 是损坏的伪换行(行首多出字面 n,锚定行首的 /^Version:/m 在其上为 false,解析器靠未锚定
+    // 正则侥幸通过)——随形状升级一并消除(C⑧)
+    if (/daemon status/.test(cmdStr)) return { exitCode: 0, stdout: { text: '{"ok":true,"data":{"ok":true,"pid":19616,"uptime":3600.5,"daemonVersion":"2.0.2","extensionConnected":true,"port":19825,"running":true,"stale":false}}\n\n  Extension update available: v1.0.26 → v1.0.27\n  Download: https://github.com/jackwener/opencli/releases\n' }, stderr: { text: '' } }
     const n = StubShell.seq.length
     StubShell.seq.push(spec.command)
     if (n === 0) return { exitCode: 0, stdout: { text: '请完成验证后继续操作 安全验证' }, stderr: { text: '' } }

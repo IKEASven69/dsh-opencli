@@ -118,6 +118,28 @@ describe('ctl 脚本端到端(真实子进程)', () => {
     expect(intent).toEqual({ kind: 'schedule-add', site: 'site juejin hot', cron: '0 9 * * *', watch: 'AI' })
   })
 
+  // 0.1.3 C⑤:0.1.2 新增旗标的端到端回归。--no-jitter/--preflight 是无参数值的布尔旗标,
+  // 早期 flag() 取「下一个 token」实现在旗标置于末位时取到 undefined 而静默失效(审查修为 has());
+  // 两条用例分别把两个布尔旗标放到 argv 最末位锁住该回归,并验投递的意图能过消费者侧闭集门。
+  it('schedule add 旗标全集:--quiet-hours/--notify-level/--preflight + 末位 --no-jitter → 意图逐字段正确', () => {
+    const r = ctl('schedule', 'add', '--site', 'site zhihu hot', '--cron', '30 8 * * *', '--quiet-hours', '23:00-07:00', '--notify-level', 'quiet', '--preflight', '--no-wait', '--no-jitter')
+    expect(r.status).toBe(0)
+    const out = JSON.parse(r.stdout) as { delivered: boolean; stem: string }
+    expect(out.delivered).toBe(true)
+    const intent = JSON.parse(readFileSync(join(dir, out.stem + '.json'), 'utf8')) as Intent
+    expect(intent).toEqual({ kind: 'schedule-add', site: 'site zhihu hot', cron: '30 8 * * *', quietHours: '23:00-07:00', notifyLevel: 'quiet', preflight: true, jitter: false })
+    expect(parseIntent(intent)).toEqual(intent) // 消费者侧闭集门原样放行(类型/取值都在白名单内)
+  })
+
+  it('末位 --preflight 同样生效;未给的布尔旗标不落键(缺省≠false,不覆写任务既有值)', () => {
+    const r = ctl('schedule', 'add', '--site', 'site v2ex hot', '--cron', '0 7 * * *', '--no-wait', '--preflight')
+    expect(r.status).toBe(0)
+    const { stem } = JSON.parse(r.stdout) as { stem: string }
+    const intent = JSON.parse(readFileSync(join(dir, stem + '.json'), 'utf8')) as Record<string, unknown>
+    expect(intent).toEqual({ kind: 'schedule-add', site: 'site v2ex hot', cron: '0 7 * * *', preflight: true })
+    expect('jitter' in intent).toBe(false)
+  })
+
   it('--wait 语义等价覆盖:投递(--no-wait)→消费→读 result(同步等待路径由真机验收覆盖)', async () => {
     const drop = ctl('notify', 'set', '--feishu', 'https://open.feishu.cn/hook/x', '--no-wait')
     const { stem } = JSON.parse(drop.stdout) as { stem: string }

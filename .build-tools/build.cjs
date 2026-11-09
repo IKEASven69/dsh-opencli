@@ -32,6 +32,13 @@ for (const f of files) {
   fs.writeFileSync(path.join(tmpDir, f.replace(/\.ts$/, '.js')), code)
 }
 
+// 发布物卫生:esbuild 打包时在每个模块段首写一行源路径注释(`// .build-tools/tmp-src/x.js`、
+// `// .build-tools/knowledge/x.json`),把本仓内部构建管线的目录结构带进 npm 包。这类整行注释
+// 只含一个指向构建临时区的路径、与运行行为无关,产物落盘前整行剥掉;源码注释不受影响
+// (只匹配「整行仅为 tmp-src/ 或 knowledge/ 路径」的形态,cwd 在仓库根或 .build-tools 内均适用)。
+const BUILD_PATH_COMMENT = /^\s*\/\/ (?:\.build-tools\/)?(?:tmp-src|knowledge)\/[\w./-]+\s*$/
+const stripBuildPathComments = (code) => code.split('\n').filter((l) => !BUILD_PATH_COMMENT.test(l)).join('\n')
+
 esbuild.buildSync({
   entryPoints: [path.join(tmpDir, 'index.js')],
   bundle: true,
@@ -41,7 +48,9 @@ esbuild.buildSync({
   external: ['@deepseek-ai/*', 'react', 'react/*', '@receptron/*', 'onnxruntime-*'],
   outfile: path.join(outDir, 'index.js'),
 })
-console.log(`lib/index.js  ${(fs.statSync(path.join(outDir, 'index.js')).size / 1024).toFixed(1)} kB`)
+const indexOut = path.join(outDir, 'index.js')
+fs.writeFileSync(indexOut, stripBuildPathComments(fs.readFileSync(indexOut, 'utf8')))
+console.log(`lib/index.js  ${(fs.statSync(indexOut).size / 1024).toFixed(1)} kB`)
 
 esbuild.buildSync({
   entryPoints: [path.join(tmpDir, 'client.js')],
@@ -52,7 +61,7 @@ esbuild.buildSync({
   external: ['@deepseek-ai/*', 'react', 'react/*', '@receptron/*', 'onnxruntime-*'],
   outfile: path.join(__dirname, 'tmp-client.cjs'),
 })
-const cjsBody = fs.readFileSync(path.join(__dirname, 'tmp-client.cjs'), 'utf8')
+const cjsBody = stripBuildPathComments(fs.readFileSync(path.join(__dirname, 'tmp-client.cjs'), 'utf8'))
 const clientWrapped = `window.__ModuleLoader__.load({
 \tid: ${JSON.stringify(pkgName)},
 \tfactory: (require) => {

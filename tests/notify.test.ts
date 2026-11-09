@@ -358,7 +358,11 @@ describe('notifyConfig 持久化(评审修复:统一走 saveState,不再独立�
     expect(c.channels[1]!.type).toBe('dsh')
   })
   it('saveNotifyConfig 是空操作(废弃签名保留 import 兼容,写入由调用方 saveState 管)', async () => {
-    await saveNotifyConfig('nonexistent', { channels: [] }) // 不抛不写
+    // 0.1.3 C⑧:原用例零 expect(只证不抛)。补两条可证伪断言:resolve 为 undefined(不抛),
+    // 且目标路径**没有被写出**——「空操作」若回退成真写入(读-改-写竞态源头复活),这里红
+    const probe = join(tmpdir(), `dsh-opencli-save-noop-probe-${process.pid}-${Date.now()}.json`)
+    await expect(saveNotifyConfig(probe, { channels: [{ type: 'dsh', enabled: true }] })).resolves.toBeUndefined()
+    await expect(readFile(probe, 'utf8')).rejects.toThrow() // 文件不存在 = 没写盘
   })
 })
 
