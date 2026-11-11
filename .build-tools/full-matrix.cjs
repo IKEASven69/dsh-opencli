@@ -53,7 +53,7 @@ const cli = (args) => {
   // ⑤来源/④级别:建任务(quiet+chat 来源)
   const add = await rpc('opencli', 'schedule-add', { request: { site: 'site juejin hot', cron: '0 9 * * *', source: 'chat', notifyLevel: 'quiet', watch: 'AI', notify: true } })
   const sid = add.value?.id
-  check('④级别', 'schedule-add 带 source+notifyLevel', add.value?.ok === true && !!sid, JSON.stringify(add.value).slice(0, 80))
+  check('④级别', 'schedule-add 带 source+notifyLevel', add.value?.ok === true && !!sid, JSON.stringify(add.value ?? null).slice(0, 80))
   const sl = await rpc('opencli', 'schedule-list', {})
   const row = (sl.value?.schedules ?? []).find((s) => s.id === sid)
   check('⑤来源', '任务行带 source=chat', row?.source === 'chat', JSON.stringify(row?.source))
@@ -92,10 +92,10 @@ const cli = (args) => {
   check('B-NL', '映射质量:site/cron/watch 三字段合理', intent?.site === 'site bilibili hot' && typeof intent?.cron === 'string' && intent?.cron.split(' ').length === 5 && typeof intent?.watch === 'string', JSON.stringify(intent))
   if (intent && intent.kind === 'schedule-add') {
     const applied = await rpc('opencli', 'inbox-intent', { request: { intent: { ...intent, source: 'chat' } } })
-    check('B-NL', '确认执行真实建任务(inbox-intent)', applied.ok && applied.value?.ok === true && !!applied.value?.value?.id, JSON.stringify(applied.value).slice(0, 80))
+    check('B-NL', '确认执行真实建任务(inbox-intent)', applied.ok && applied.value?.ok === true && !!applied.value?.value?.id, JSON.stringify(applied.value ?? null).slice(0, 80))
     // 闭集防线:伪造字段必须被拒
     const evil = await rpc('opencli', 'inbox-intent', { request: { intent: { kind: 'eval', code: '1+1' } } })
-    check('B-NL', '闭集防线:eval 意图拒绝', evil.value?.ok === false, JSON.stringify(evil.value).slice(0, 80))
+    check('B-NL', '闭集防线:eval 意图拒绝', evil.value?.ok === false, JSON.stringify(evil.value ?? null).slice(0, 80))
     // 清理刚建的任务
     const sid2 = applied.value?.value?.id
     if (sid2) await rpc('opencli', 'schedule-remove', { request: { id: sid2 } })
@@ -108,7 +108,7 @@ const cli = (args) => {
   const channels = (cfgBefore.value?.config?.channels ?? []).filter((c) => c.type !== 'webhook')
   channels.push({ type: 'webhook', url: 'http://127.0.0.1:19999/dead', enabled: true, platform: 'feishu' })
   const cfgSet = await rpc('opencli', 'notify-config', { request: { channels } })
-  check('D-渠道', '保存带 platform 的通道', cfgSet.ok && cfgSet.value?.ok === true && (cfgSet.value?.config?.channels ?? []).some((c) => c.platform === 'feishu'), JSON.stringify(cfgSet.value?.config).slice(0, 100))
+  check('D-渠道', '保存带 platform 的通道', cfgSet.ok && cfgSet.value?.ok === true && (cfgSet.value?.config?.channels ?? []).some((c) => c.platform === 'feishu'), JSON.stringify(cfgSet.value?.config ?? null).slice(0, 100))
   // notify test(死端口 → 诚实失败)
   const nt = await rpc('opencli', 'notify-test', {}, 120000)
   check('D-渠道', 'notify test 死端口诚实失败', nt.value?.ok === false, nt.value?.error?.slice(0, 60))
@@ -131,7 +131,7 @@ const cli = (args) => {
   const ctl = (...a) => execFileSync(process.execPath, [require('node:path').resolve(__dirname, '..', 'bin', 'dsh-opencli-ctl.cjs'), ...a, '--timeout', '45'], { encoding: 'utf8', env: process.env })
   try {
     const st = JSON.parse(ctl('status'))
-    check('F-生态', 'ctl status', st.ok === true && st.value?.plugin === 'dsh-opencli', JSON.stringify(st.value ?? st).slice(0, 80))
+    check('F-生态', 'ctl status', st.ok === true && st.value?.plugin === 'dsh-opencli', JSON.stringify(st.value ?? st ?? null).slice(0, 80))
     const ra = JSON.parse(ctl('schedule', 'add', '--site', 'site zhihu hot', '--cron', '0 8 * * *', '--watch', 'AI', '--source', 'agent', '--no-wait'))
     check('F-生态', 'ctl schedule add(--source agent)', ra.ok === true && ra.delivered === true)
     // 等消费者执行
