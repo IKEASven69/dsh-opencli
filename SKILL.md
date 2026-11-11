@@ -13,6 +13,8 @@
 | "盯住热榜,'降价'一出现就告诉我" | `ctl schedule add --site "<站点命令>" --cron "<频率>" --watch "降价"`(watch 命中→🔔推送+面板事件) |
 | "把这次的采集整理成报告,注明来源" | `ctl report build --id <scheduleId>`(每节=命令+时间+快照路径,零模型改写) |
 | "上次那个任务跑成功了没" | `ctl schedule list`(含历史与成败摘要);面板"自动化"页有图形化时间线 |
+| "昨晚的推送/失败我想回看" | 事件台账:`~/.dsh/opencli-events.jsonl`(逐行 JSON,5MB 轮转);面板自动化页有事件面板。kind 一看就懂:`watch-hit`(关键词命中)/`snap-diff`(变化)/`daemon-flip`(版本翻转)/`adapter-drift`(疑似改版)/`daemon-selfheal`(自愈 restart)/`circuit-open`(系统级熔断) |
+| "这个任务用小号跑,别动我大号" | 建任务时带 `--profile <浏览器 profile 别名>`(上游 OpenCLI 原生多账号隔离;profile 未连接会如实失败,不会偷偷换号) |
 | "帮我测一下通知通道通了没" | `ctl notify test`(诚实回报每个通道成败) |
 | "这个网站没有你要的命令" | 见文末"现场创作适配器" |
 
@@ -24,6 +26,7 @@
 
 ```
 ctl schedule add --site "site juejin hot" --cron "0 9 * * *" [--watch "AI,大模型"] [--notify true|false] [--retry 3]
+                   [--notify-level quiet] [--quiet-hours 23:00-07:00] [--preflight] [--keep 50] [--backoff-ms 15000] [--profile <别名|contextId>]
 ctl schedule list            # 全部任务+运行历史
 ctl schedule run --id <id>   # 立即跑一次(真实采集)
 ctl schedule remove --id <id>
@@ -33,9 +36,32 @@ ctl report build --id <scheduleId>
 ctl status                   # 插件版本/任务数/通道数
 ```
 
+任务级可靠性旗标(按需加,不配也有合理默认):
+- `--notify-level quiet`:只推命中/变化/失败,例行成功不刷屏;
+- `--quiet-hours 23:00-07:00`:静默窗(跨夜 OK)——窗内通知暂存(上限 20),出窗首跑合并推送一条 😴 摘要;
+- `--preflight`:每次采集前先 whoami 快检登录态,未登录→⏸ 跳过本 tick(任务保留,不烧重试);
+- `--backoff-ms`:风控退避起点(默认 15s,下限 120s);`--keep`:快照留存份数(5-500,默认 50)。
+
 cron 五段(分 时 日 月 周)。超时用 `--timeout <秒>` 调;若报"插件消费者未运行",提示用户打开 dsh 面板(插件随面板进程运行)。
 
 安全提醒:ctl 只接受白名单结构化意图(建删任务/配通道/出报告/状态),**不能**执行任意代码;写命令类操作(发帖/删评)不在 ctl 面内——那些必须经插件工具的审批门,人工确认才执行。
+
+## 外部消费者:MCP 自host 端点(0.1.3,只读知识面)
+
+插件随面板进程起一个本机 MCP Streamable-HTTP 端点,供 dsh 之外的消费者(其他 agent/脚本)读站点知识:
+
+- 发现:`~/.dsh/opencli-mcp-auth.json`(含 url/port/token,0600;停机即删);
+- 认证:每请求 `Authorization: Bearer <token>`;工具只读两只:`knowledge_list` / `knowledge_get`,无写面;
+- 三步:initialize → tools/list → tools/call;批请求上限 20 条,超出逐条回错不静默吞;客户端声明不认识的协议版本会被钳回服务端支持版本(不假兼容)。
+
+```
+curl -X POST http://127.0.0.1:<port>/mcp -H "authorization: Bearer <token>" -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"knowledge_get","arguments":{"site":"zhihu"}}}'
+```
+
+## 无人值守可靠性(内置,无需配置)
+
+任务健康预检(daemon 死→自动拉起;扩展断连→⏸ 诚实跳过任务保留);daemon 版本翻转/执行期断连→**单次自动 restart 重探重跑**(退避防循环);同签名系统级失败(断连/权限)→**跨任务熔断开窗**(默认 30 分钟,后续任务单行短路不刷屏,事件里给 canary 诊断入口);验证码类失败赠一次自解等待;以上全记事件台账,回看即知发生了什么。
 
 ## 有工具会话:全部工具速查
 
