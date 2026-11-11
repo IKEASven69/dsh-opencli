@@ -293,7 +293,7 @@ function isDecorativeStep(step) {
 }
 
 // .build-tools/tmp-src/version.js
-var PLUGIN_VERSION = "0.1.2";
+var PLUGIN_VERSION = "0.1.3";
 
 // .build-tools/tmp-src/canvas.js
 var CANVAS_PAGE_DEFAULT = 50;
