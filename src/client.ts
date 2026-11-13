@@ -11,13 +11,15 @@ import { createElement, useEffect, useRef, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
-  AuditListResult, DaemonStartResult, EventsGetResult, EvidenceGetItem, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult,
+  AuditListResult, DaemonStartResult, EventsGetResult, EvidenceGetItem, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, RunInboxEntry, RunInboxListResult, SettingsResult,
   TraceLine, TraceListResult,
 } from './types.ts'
 import { siteIconOf } from './site-icons.ts'
 import { healthOf } from './knowledge.ts'
 // #59 装饰步识别与宿主侧同一口径(纯函数单一来源;只引此函数,打包按需摇树)
 import { isDecorativeStep } from './parsers.ts'
+// 回显脱敏(通知配置面):面板与服务端同一口径(redact 纯函数,凭据只出遮蔽段)
+import { describeNotifyChannel } from './redact.ts'
 // 版本单一来源(version.ts):「版本与更新」卡不再把写入当时的当前版本写死——
 // 曾有 v0.4.1 字面量残留,与同屏自检卡(version.ts 常量)互相矛盾
 import { PLUGIN_VERSION } from './version.ts'
@@ -45,6 +47,14 @@ const STR = {
     nlT: '自然语言指挥台', nlSub: '一句话描述你想做的事,确认后由插件执行(用你当前的模型,一次调用)',
     nlPh: '例:每天早9点把掘金热榜存档,AI 相关的推送给我', nlGo: '映射', nlMapping: '映射中…',
     nlApply: '确认执行', nlDiscard: '放弃', nlNoExpl: '(模型未给说明)', nlErrNoLlm: '宿主未提供 llm 服务(需要 dsh web 宿主)', nlApplied: '✓ 已执行', nfUrlPh: 'webhook URL(钉钉加签可带 &secret=…)', nfSave: '保存通道', nfTest: '测试', nfSaved: '✓ 通道已保存', nfTestOk: '✓ 测试消息已送达', nfTestFail: '✗ 测试失败',
+    // 推送通道(0.1.4 候选 1):Bark/ntfy/Pushover 预设——凭据独立字段或写在服务器 URL path
+    // (归一层拆出,URL 以无凭据形态落盘);回显走遮蔽摘要,完整凭据不回显
+    nfPushSel: '推送通道…', nfEcho: '已配通道', nfEchoNone: '未配置',
+    nfServerPh: (t: string) => t === 'bark' ? 'Bark 服务器,如 https://api.day.app(可带 /<key>)' : t === 'ntfy' ? 'ntfy 服务器,如 https://ntfy.sh(可带 /<topic>)' : '官方端点固定,留空即可',
+    nfCredPh: (t: string) => t === 'bark' ? 'device_key(或写在服务器 URL path)' : t === 'ntfy' ? 'topic(或写在服务器 URL path)' : '应用 token(app token)',
+    nfExtraPh: (t: string) => t === 'bark' ? '声音/分组/加密走意图文件/state.json(可选)' : t === 'ntfy' ? 'access token tk_…(可选)' : 'user key(用户键)',
+    nfNeedCred: '凭据未填:填在凭据框,或写在服务器 URL path', nfPushoverNeed: 'pushover 需要 token 与 user key 成对填写',
+    nfTplPh: 'JSON 模板(可选,{{title}}/{{body}} 值级注入)', nfTplTip: '占位符 {{title}}/{{body}}/{{at}}/{{ok}}/{{site}}/{{source}}/{{watchHits}} 按值做 JSON 转义注入;渲染结果非法 JSON 会如实报错不回退;仅「通用」平台生效',
 
     diffT: '📊 变化', diffEmpty: '还没有两次采集的对比——再跑一次就有了', diffNone: '无变化',
     csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`, nfLevel: '级别', nfLevelAll: '全部', nfLevelQuiet: '仅变化', nfLevelTip: 'quiet=只推命中/变化/失败;all=例行也推', diffWeek: '近 7 天', diffAdded: '新增', diffGone: '消失', diffMoved: '位移', scTitle: '插件自检', scSub: '工具注册点名 + 入口在线 + 宿主匹配——“装上没效果”3 秒可见', scOk: '全部正常', scTools: (n: number) => `${n} 个工具已注册`, scConflict: (n: number) => `${n} 个工具撞名让位`, scDaemon: 'daemon', scCtl: 'ctl 收件箱', scPanel: '面板 RPC', scUpdate: (v: string) => `有新版本 v${v}`, scUpgradeTip: '复制升级命令到剪贴板(不自动执行——升级是你的显式决策)', scCurrent: (v: string) => `当前 v${v}`, qhLabel: '静默', qhOff: '关', qhTip: '窗内通知暂存,出窗合并推送', qhSetFail: '静默时段格式:HH:MM-HH:MM', qhPh: '😴 静默 23:00-07:00', qhTitle: '跨夜如 23:00-07:00;窗内暂存出窗合并',
@@ -89,6 +99,13 @@ const STR = {
     traceT: '运行轨迹', traceSub: '每条 browser 命令逐步落盘(~/.dsh/opencli-traces),复盘"上次为什么失败"', traceEmpty: '暂无轨迹——跑一条 browser 命令后这里会长出来',
     // 事件历史:ingest 事件追加落盘 ~/.dsh/opencli-events.jsonl,events-get 读回;重启不丢
     evT: '事件历史', evSub: '通知事件跨会话可回看(~/.dsh/opencli-events.jsonl):watch 命中 / 漂移与兜底 / daemon 翻转 / 熔断 / 自愈,重启不丢', evEmpty: '暂无历史事件——定时任务跑起来后,命中/失败/漂移会记在这里',
+    // 运行级收件箱(0.1.4 候选 5):一次执行一条,runHistory 查询时合成;展开详情即标已读,
+    // 归档=无损降级(沉底仍可点开只读);无产出的 run 已自动归档不占未读
+    ibT: '结果收件箱', ibSub: '定时任务一次执行一条 · 点开详情即标已读 · 归档沉底仍可看(只读);无产出的 run 已自动归档不打扰',
+    ibEmpty: '暂无执行记录——定时任务跑起来后,这里会一条一条长出来',
+    ibMarkAll: '全部标已读', ibArchiveRead: '归档已读', ibArchive: '归档', ibArchived: '已归档', ibAuto: '自动', ibUnread: '未读',
+    ibTrace: '执行轨迹', ibNoTrace: '该日无轨迹记录', ibDigest: (d: string) => `当日早报:digest-${d}.md(~/.dsh/opencli-reports)`,
+    ibStOk: '成功', ibStFail: '失败', ibStSkip: '跳过', ibStEmpty: '空产出',
     // 多账号登录态隔离:上游 OpenCLI 2.0.3 原生 --profile/contextId 路由(CLI 2.0.3 dist 读源与 doctor 探针核实)
     profPh: '👤 profile(可选)', profTitle: '浏览器 profile 别名或 contextId(opencli profile list 可查)——多账号登录态隔离:经上游 OpenCLI 原生 --profile 路由,不同 profile 即不同 Chrome 档案,cookie/存储各自独立;须先打开该 Chrome 档案并启用 OpenCLI 扩展,未连接时任务如实失败,不回落到别的账号', profTip: (p: string) => `本任务经 OPENCLI_PROFILE=${p} 路由到该浏览器 profile(上游原生隔离)`,
     // #59 补完:装饰步(只改视觉的 scroll/hover)回放可跳过
@@ -140,6 +157,14 @@ const STR = {
     nlT: 'Natural-language console', nlSub: 'Describe what you want in one line, review the mapped intent, then apply (uses your current model, one call)',
     nlPh: 'e.g. archive juejin hot every day at 9am and ping me on AI news', nlGo: 'Map', nlMapping: 'Mapping…',
     nlApply: 'Apply', nlDiscard: 'Discard', nlNoExpl: '(no explanation from model)', nlErrNoLlm: 'Host provides no llm service (dsh web host required)', nlApplied: '✓ applied', nfUrlPh: 'webhook URL (dingtalk secret via &secret=…)', nfSave: 'Save', nfTest: 'Test', nfSaved: '✓ channel saved', nfTestOk: '✓ test delivered', nfTestFail: '✗ test failed',
+    // Push-channel presets (0.1.4 candidate 1): Bark/ntfy/Pushover — credentials as separate
+    // fields or embedded in the server URL path (split server-side); echo is masked, never full
+    nfPushSel: 'push channel…', nfEcho: 'channels', nfEchoNone: 'none configured',
+    nfServerPh: (t: string) => t === 'bark' ? 'Bark server, e.g. https://api.day.app (may include /<key>)' : t === 'ntfy' ? 'ntfy server, e.g. https://ntfy.sh (may include /<topic>)' : 'official endpoint fixed, leave empty',
+    nfCredPh: (t: string) => t === 'bark' ? 'device_key (or in server URL path)' : t === 'ntfy' ? 'topic (or in server URL path)' : 'application token',
+    nfExtraPh: (t: string) => t === 'bark' ? 'sound/group/encryption via intent file/state.json (optional)' : t === 'ntfy' ? 'access token tk_… (optional)' : 'user key',
+    nfNeedCred: 'credential missing: fill the field, or embed it in the server URL path', nfPushoverNeed: 'pushover needs token and user key together',
+    nfTplPh: 'JSON template (optional, {{title}}/{{body}} value-level)', nfTplTip: 'Placeholders {{title}}/{{body}}/{{at}}/{{ok}}/{{site}}/{{source}}/{{watchHits}} are injected JSON-safe; invalid rendered JSON fails honestly (no silent fallback); generic platform only',
 
     diffT: 'Diff', diffEmpty: 'No pairs yet — run one more collection', diffNone: 'no change',
     csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`, nfLevel: 'level', nfLevelAll: 'all', nfLevelQuiet: 'changes', nfLevelTip: 'quiet=hits/changes/failures only; all=routine too', diffWeek: 'last 7 days', diffAdded: 'added', diffGone: 'gone', diffMoved: 'moved', scTitle: 'Plugin self-check', scSub: 'Tool registration roll-call + entries online + host match — "installed but no effect" visible in 3s', scOk: 'All good', scTools: (n: number) => `${n} tools registered`, scConflict: (n: number) => `${n} name conflicts yielded`, scDaemon: 'daemon', scCtl: 'ctl inbox', scPanel: 'panel RPC', scUpdate: (v: string) => `new version v${v} available`, scUpgradeTip: 'copy upgrade command to clipboard (never auto-runs — upgrading is your explicit call)', scCurrent: (v: string) => `current v${v}`, qhLabel: 'quiet', qhOff: 'off', qhTip: 'notifications during the window are merged and sent after it ends', qhSetFail: 'quiet hours format: HH:MM-HH:MM', qhPh: '😴 quiet 23:00-07:00', qhTitle: 'overnight ok e.g. 23:00-07:00; merged after window',
@@ -183,6 +208,14 @@ const STR = {
     traceT: 'Run trace', traceSub: 'every browser command logged to ~/.dsh/opencli-traces — replay why the last run failed', traceEmpty: 'No traces yet — they appear after the first browser command',
     // Event history : ingest events appended to ~/.dsh/opencli-events.jsonl, read back via events-get; survives restarts
     evT: 'Event history', evSub: 'Notification events kept across sessions (~/.dsh/opencli-events.jsonl): watch hits / drift & fallback / daemon flips / circuit breaks / self-heal — survives restarts', evEmpty: 'No events yet — hits, failures and drift are logged here once schedules run',
+    // Run-level inbox (0.1.4 candidate 5): one entry per scheduled run, synthesized from runHistory;
+    // expanding the detail marks it read, archive = lossless demotion (sunk rows stay openable, read-only);
+    // no-output runs are auto-archived and never count as unread
+    ibT: 'Results inbox', ibSub: 'One entry per scheduled run · opening the detail marks it read · archived rows sink to the bottom and stay readable (read-only); no-output runs are auto-archived',
+    ibEmpty: 'No runs yet — entries appear here once schedules run',
+    ibMarkAll: 'Mark all read', ibArchiveRead: 'Archive read', ibArchive: 'Archive', ibArchived: 'Archived', ibAuto: 'auto', ibUnread: 'unread',
+    ibTrace: 'Run trace', ibNoTrace: 'No trace recorded for that day', ibDigest: (d: string) => `Daily digest: digest-${d}.md (~/.dsh/opencli-reports)`,
+    ibStOk: 'ok', ibStFail: 'fail', ibStSkip: 'skip', ibStEmpty: 'empty',
     // Multi-account login isolation: native upstream OpenCLI 2.0.3 --profile/contextId routing
     profPh: '👤 profile (optional)', profTitle: 'Browser profile alias or contextId (see opencli profile list) — multi-account login isolation via native upstream OpenCLI --profile routing: each profile is a separate Chrome profile with its own cookies/storage; open that Chrome profile with the OpenCLI extension enabled first — if it is not connected the run fails honestly instead of falling back to another account', profTip: (p: string) => `Routed to browser profile via OPENCLI_PROFILE=${p} (native upstream isolation)`,
     // #59 completion: decorative (visual-only scroll/hover) steps can be skipped on replay
@@ -624,6 +657,16 @@ function Panel(): ReturnType<typeof createElement> {
   const [nfPlatform, setNfPlatform] = useState('feishu')
   const [nfUrl, setNfUrl] = useState('')
   const [nfBusy, setNfBusy] = useState(false)
+  // 推送通道(0.1.4 候选 1):Bark/ntfy/Pushover 预设 + 凭据两格(凭据框/附加框)——
+  // 服务器 URL 可带凭据 path 段(归一层拆出,落盘无凭据形态)
+  const [nfPushType, setNfPushType] = useState('')
+  const [nfPushServer, setNfPushServer] = useState('')
+  const [nfPushCred, setNfPushCred] = useState('')
+  const [nfPushExtra, setNfPushExtra] = useState('')
+  // webhook generic JSON 模板(值级注入;仅通用平台生效)
+  const [nfTpl, setNfTpl] = useState('')
+  // 已配通道回显(遮蔽摘要;describeNotifyChannel,完整凭据不回显)
+  const [nfEcho, setNfEcho] = useState<string[] | null>(null)
   const [schedSite, setSchedSite] = useState('')
   const [schedCron, setSchedCron] = useState('0 9 * * *')
   const [schedWatch, setSchedWatch] = useState('')
@@ -713,7 +756,7 @@ function Panel(): ReturnType<typeof createElement> {
     })
   }, [])
   // 进入自动化 tab 即拉任务列表:此前仅在增删改后拉取,面板重开/刷新后已有任务不显示(真机复现)
-  useEffect(() => { if (tab === 'auto') void loadSchedules() }, [tab])
+  useEffect(() => { if (tab === 'auto') { void loadSchedules(); void loadNotifyEcho() } }, [tab])
   useEffect(() => { if (tab === 'sec' && cdp === null) { void rpc<{ found: boolean; endpoint: string | null; hint?: string }>('browser-cdp').then((r) => { if (r.ok && r.value !== undefined) setCdp(r.value) }) } }, [tab, cdp])
   useEffect(() => { if (tab === 'sec' && selfCheck === null) { void rpc<SelfCheckResult>('self-check').then((r) => { if (r.ok && r.value !== undefined) setSelfCheck(r.value) }) } }, [tab, selfCheck])
 
@@ -849,10 +892,40 @@ function Panel(): ReturnType<typeof createElement> {
     setNfBusy(true)
     const cfg = await rpc<{ config?: { channels: Array<Record<string, unknown>> } }>('notify-config')
     const channels = (cfg.value?.config?.channels ?? []).filter((c) => c.type !== 'webhook')
-    channels.push({ type: 'webhook', url: nfUrl.trim(), enabled: true, platform: nfPlatform })
+    const tpl = nfTpl.trim()
+    channels.push({ type: 'webhook', url: nfUrl.trim(), enabled: true, platform: nfPlatform, ...(tpl.length > 0 ? { template: tpl } : {}) })
     const r = await rpc<{ ok: boolean; error?: string }>('notify-config', { request: { channels } } as unknown as Record<string, unknown>)
     setNfBusy(false)
+    if (r.ok && r.value?.ok !== false) { setNfTpl(''); void loadNotifyEcho() }
     showToast(r.ok && (r.value?.ok !== false) ? t2('nfSaved') : (r.value?.error ?? t2('errReq')), r.ok)
+  }
+  // 已配通道回显(遮蔽摘要):进入自动化 tab 拉一次,保存后刷新;拉取失败静默保持 null
+  const loadNotifyEcho = async (): Promise<void> => {
+    const r = await rpc<{ config?: { channels: Array<Record<string, unknown>> } }>('notify-config')
+    const list = r.value?.config?.channels
+    if (Array.isArray(list)) setNfEcho(list.map((c) => describeNotifyChannel(c as Parameters<typeof describeNotifyChannel>[0])))
+  }
+  // 推送通道(Bark/ntfy/Pushover):同类型单条替换。凭据独立字段或写在服务器 URL path
+  // (归一层拆出,URL 以无凭据形态落盘);面板侧先做能本判的必填校验,拆解语义在服务端
+  const savePushNotify = async (): Promise<void> => {
+    if (nfBusy || nfPushType === '') return
+    const cred = nfPushCred.trim()
+    const extra = nfPushExtra.trim()
+    const server = nfPushServer.trim()
+    const urlHasPath = (u: string): boolean => { try { return new URL(u).pathname.replace(/\/+/g, '').length > 0 } catch { return false } }
+    if ((nfPushType === 'bark' || nfPushType === 'ntfy') && (server.length === 0 || (cred.length === 0 && !urlHasPath(server)))) { showToast(t2('nfNeedCred'), false); return }
+    if (nfPushType === 'pushover' && (cred.length === 0 || extra.length === 0)) { showToast(t2('nfPushoverNeed'), false); return }
+    setNfBusy(true)
+    const cfg = await rpc<{ config?: { channels: Array<Record<string, unknown>> } }>('notify-config')
+    const channels = (cfg.value?.config?.channels ?? []).filter((c) => c.type !== nfPushType)
+    if (nfPushType === 'bark') channels.push({ type: 'bark', url: server, ...(cred.length > 0 ? { deviceKey: cred } : {}), enabled: true })
+    else if (nfPushType === 'ntfy') channels.push({ type: 'ntfy', url: server, ...(cred.length > 0 ? { topic: cred } : {}), ...(extra.length > 0 ? { token: extra } : {}), enabled: true })
+    else channels.push({ type: 'pushover', token: cred, user: extra, enabled: true })
+    const r = await rpc<{ ok: boolean; error?: string }>('notify-config', { request: { channels } } as unknown as Record<string, unknown>)
+    setNfBusy(false)
+    const okAll = r.ok && r.value?.ok !== false
+    if (okAll) { setNfPushCred(''); setNfPushExtra(''); void loadNotifyEcho() }
+    showToast(okAll ? t2('nfSaved') : (r.value?.error ?? t2('errReq')), okAll)
   }
   const testNotify = async (): Promise<void> => {
     if (nfBusy) return
@@ -1288,14 +1361,34 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('input', { className: 'o4-in mono', style: { maxWidth: '140px' }, placeholder: t2('profPh'), title: t2('profTitle'), value: schedProfile, onChange: (e: { target: { value: string } }) => setSchedProfile(e.target.value) }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
         ),
-        // 通知通道节(D):平台下拉+URL+保存+测试(与 ctl notify set/test 同链)
+        // 通知通道节(D):平台下拉+URL+保存+测试(与 ctl notify set/test 同链);模板输入
+        // 仅通用平台生效(平台预设请求形状固定,模板被忽略——占位符值级 JSON 注入)
         createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' } },
           createElement('select', { className: 'o4-in', style: { maxWidth: '108px' }, value: nfPlatform, onChange: (e: { target: { value: string } }) => setNfPlatform(e.target.value) },
             ...([['feishu', '飞书'], ['dingtalk', '钉钉'], ['wecom', '企业微信'], ['telegram', 'Telegram'], ['generic', '通用']] as Array<[string, string]>).map(([v, label]) => createElement('option', { key: v, value: v }, label))),
           createElement('input', { className: 'o4-in mono', style: { flex: '1', minWidth: '160px' }, placeholder: t2('nfUrlPh'), value: nfUrl, onChange: (e: { target: { value: string } }) => setNfUrl(e.target.value) }),
+          createElement('input', { className: 'o4-in mono', style: { flex: '1', minWidth: '180px' }, placeholder: t2('nfTplPh'), title: t2('nfTplTip'), value: nfTpl, onChange: (e: { target: { value: string } }) => setNfTpl(e.target.value) }),
           createElement('button', { className: 'o4-btn sm', disabled: nfBusy || nfUrl.trim().length === 0, onClick: () => { void saveNotify() } }, t2('nfSave')),
           createElement('button', { className: 'o4-btn ghost sm', disabled: nfBusy, onClick: () => { void testNotify() } }, t2('nfTest')),
         ),
+        // 推送通道节(0.1.4 候选 1):Bark/ntfy/Pushover——凭据独立字段或写在服务器 URL path
+        // (保存后由归一层拆出,URL 以无凭据形态落盘);保存后回显遮蔽摘要,完整凭据不回显
+        createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' } },
+          createElement('select', { className: 'o4-in', style: { maxWidth: '108px' }, value: nfPushType, onChange: (e: { target: { value: string } }) => setNfPushType(e.target.value) },
+            createElement('option', { value: '' }, t2('nfPushSel')),
+            createElement('option', { value: 'bark' }, 'Bark'),
+            createElement('option', { value: 'ntfy' }, 'ntfy'),
+            createElement('option', { value: 'pushover' }, 'Pushover')),
+          ...(nfPushType === '' ? [] : [
+            createElement('input', { key: 'srv', className: 'o4-in mono', style: { flex: '1', minWidth: '150px' }, placeholder: (t2('nfServerPh') as unknown as (t: string) => string)(nfPushType), value: nfPushServer, onChange: (e: { target: { value: string } }) => setNfPushServer(e.target.value) }),
+            createElement('input', { key: 'cred', className: 'o4-in mono', style: { flex: '1', minWidth: '150px' }, placeholder: (t2('nfCredPh') as unknown as (t: string) => string)(nfPushType), value: nfPushCred, onChange: (e: { target: { value: string } }) => setNfPushCred(e.target.value) }),
+            createElement('input', { key: 'extra', className: 'o4-in mono', style: { flex: '1', minWidth: '130px' }, placeholder: (t2('nfExtraPh') as unknown as (t: string) => string)(nfPushType), value: nfPushExtra, onChange: (e: { target: { value: string } }) => setNfPushExtra(e.target.value) }),
+            createElement('button', { key: 'save', className: 'o4-btn sm', disabled: nfBusy, onClick: () => { void savePushNotify() } }, t2('nfSave')),
+          ]),
+        ),
+        // 已配通道回显(遮蔽摘要):凭据只出尾 4 位,完整凭据/URL path 不回显
+        createElement('div', { className: 'o4-sub', style: { marginBottom: '10px' } },
+          `${t2('nfEcho')}:${nfEcho === null ? '…' : nfEcho.length > 0 ? ` ${nfEcho.join(' · ')}` : ` ${t2('nfEchoNone')}`}`),
         // 批量操作条:全选/反选 + 来源过滤常驻;批量启用/停用仅在有选中(>0)时出现
         createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', alignItems: 'center', flexWrap: 'wrap' } },
           createElement('input', { type: 'checkbox', title: t2('batchSelect'), checked: allSel, onChange: toggleSelAll, style: { accentColor: '#4A9EFF', cursor: 'pointer', margin: '0', flex: 'none' } }),
@@ -1359,6 +1452,8 @@ function Panel(): ReturnType<typeof createElement> {
       ),
       // 运行轨迹:browser 命令全量 JSONL 落盘的时间线(轨迹回放,模块级组件经 props 拿 lang)
       createElement(TracePanel, { lang }),
+      // 结果收件箱(0.1.4 候选 5):run 级条目+已读/归档(点开详情即标已读;归档沉底可回看)
+      createElement(InboxPanel, { lang }),
       // 事件历史:events-get 跨会话历史面——内存 30 条 ingest 之外,重启后仍可回看
       createElement(EventsPanel, { lang }),
       createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '12px' } },
@@ -1934,6 +2029,139 @@ function EventsPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
     ),
   )
 }
+
+/**
+ * 结果收件箱卡(0.1.4 候选 5 ④):定时任务 run 条目(inbox-list 查询时合成),一次执行
+ * 一条。交互=#12632 语义:点行展开详情即标已读(再点收起);「全部标已读」「归档已读」
+ * 两个入口(#27871 教训:批量入口必须显式存在);单条「归档」按钮。归档=无损降级——
+ * 沉入「已归档」区仍可点开只读视图(详情=轨迹深链 trace-get + 回执),数据一个字节不动。
+ * 模块级组件经 props 拿 lang(TracePanel 同款);事件文本不二次翻译,只翻卡头。
+ */
+function InboxPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
+  const { lang } = props
+  const tt = (k: keyof typeof STR.zh): string => (STR[lang][k] ?? STR.zh[k]) as string
+  const [rows, setRows] = useState<RunInboxEntry[] | null>(null)
+  const [unread, setUnread] = useState(0)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  const [traces, setTraces] = useState<TraceLine[] | null>(null)
+  const [traceErr, setTraceErr] = useState('')
+  const load = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    const r = await rpc<RunInboxListResult>('inbox-list')
+    setBusy(false)
+    if (r.ok && r.value !== undefined && r.value.ok) { setRows(r.value.entries); setUnread(r.value.unread); setErr('') }
+    else setErr(r.ok ? (r.value?.error ?? tt('errReq')) : (r.error?.message ?? tt('errReq')))
+  }
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const r = await rpc<RunInboxListResult>('inbox-list')
+      if (!alive) return
+      if (r.ok && r.value !== undefined && r.value.ok) { setRows(r.value.entries); setUnread(r.value.unread) }
+      else if (alive) setErr(r.ok ? (r.value?.error ?? tt('errReq')) : (r.error?.message ?? tt('errReq')))
+    })()
+    return () => { alive = false }
+  }, [])
+  const markAll = async (): Promise<void> => {
+    setBusy(true)
+    await rpc<{ ok: boolean; marked: number }>('inbox-read', {})
+    setBusy(false)
+    await load()
+  }
+  const archiveRead = async (): Promise<void> => {
+    setBusy(true)
+    await rpc<{ ok: boolean; archived: number }>('inbox-archive', {})
+    setBusy(false)
+    setOpenKey(null); setTraces(null)
+    await load()
+  }
+  const archiveOne = async (e: RunInboxEntry): Promise<void> => {
+    setBusy(true)
+    await rpc<{ ok: boolean; archived: number }>('inbox-archive', { request: { task: e.task, at: e.at } })
+    setBusy(false)
+    setOpenKey(null); setTraces(null)
+    await load()
+  }
+  // 点行=展开详情即标已读(候选 5 ②);同时取该 run 的执行轨迹(trace 深链,跳过行无)
+  const openEntry = async (e: RunInboxEntry): Promise<void> => {
+    const key = `${e.task}|${e.at}`
+    const closing = openKey === key
+    setOpenKey(closing ? null : key)
+    setTraces(null); setTraceErr('')
+    if (closing) return
+    if (e.traceDate !== undefined) {
+      const r = await rpc<TraceListResult>('trace-get', { request: { date: e.traceDate } })
+      if (r.ok && r.value !== undefined && r.value.ok) {
+        // 只投影本 run 的轨迹行:cmd 以 schedule 前缀 + 时间贴近条目 at(±2 分钟),其余行是
+        // 同日其他活动,不混入——宁少展示不张冠李戴
+        const t0 = new Date(e.at).getTime()
+        const near = r.value.traces.filter((l) => Math.abs(new Date(l.at).getTime() - t0) <= 120_000 && l.cmd.includes('schedule'))
+        setTraces(near.length > 0 ? near : [])
+      } else setTraceErr(tt('ibNoTrace'))
+    }
+    if (!e.read) {
+      await rpc<{ ok: boolean; marked: number }>('inbox-read', { request: { task: e.task, at: e.at } })
+      setRows((prev) => prev === null ? prev : prev.map((x) => x.task === e.task && x.at === e.at ? { ...x, read: true } : x))
+      setUnread((n) => Math.max(0, n - (e.archived ? 0 : 1)))
+    }
+  }
+  const stBadge = (e: RunInboxEntry): { label: string; cls: string } => {
+    const cls = e.status === 'ok' ? '' : e.status === 'empty' ? ' w' : e.status === 'skip' ? ' w' : ' r'
+    const label = e.status === 'ok' ? tt('ibStOk') : e.status === 'fail' ? tt('ibStFail') : e.status === 'skip' ? tt('ibStSkip') : tt('ibStEmpty')
+    return { label, cls }
+  }
+  const entryRow = (e: RunInboxEntry, i: number): ReturnType<typeof createElement> => {
+    const st = stBadge(e)
+    const key = `${e.task}|${e.at}`
+    return createElement('div', { key: `${key}-${i}`, style: { display: 'contents' } },
+      createElement('div', { className: 'o4-qrow', style: { alignItems: 'center', opacity: e.archived ? 0.72 : 1 }, title: `${e.site}\n${e.at}\n${e.summary}`, onClick: () => { void openEntry(e) } },
+        createElement('span', { className: `o4-dot${e.status === 'ok' ? ' g' : e.status === 'fail' ? ' r' : ' y'}`, style: { flex: 'none' } }),
+        e.read !== true && e.archived !== true ? createElement('span', { className: 'o4-bdg b', style: { flex: 'none' } }, tt('ibUnread')) : null,
+        createElement('span', { className: `o4-bdg${st.cls}`, style: { flex: 'none' } }, st.label),
+        e.archived ? createElement('span', { className: 'o4-bdg', style: { flex: 'none' } }, `${tt('ibArchived')}${e.archivedBy === 'auto' ? ` · ${tt('ibAuto')}` : ''}`) : null,
+        createElement('span', { style: { flex: 'none', fontSize: '10.5px', color: '#5F6873', fontFamily: 'ui-monospace,Consolas,monospace' } }, e.at.slice(5, 16)),
+        createElement('span', { style: { flex: '1', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px', color: 'rgba(249,250,251,.75)' } }, `${e.site} — ${e.summary}`),
+        !e.archived ? createElement('button', { className: 'o4-btn ghost sm', style: { flex: 'none' }, onClick: (ev: { stopPropagation: () => void }) => { ev.stopPropagation(); void archiveOne(e) } }, tt('ibArchive')) : null,
+      ),
+      openKey === key ? createElement('div', { className: 'o4-tryout', style: { marginTop: '-2px', marginBottom: '4px' } },
+        createElement('div', null, e.summary),
+        e.receipt !== undefined ? createElement('div', { style: { color: '#5F6873', fontSize: '10.5px', marginTop: '3px' } },
+          `🧾 auth=${e.receipt.auth_state}${e.receipt.items !== undefined ? ` · ${e.receipt.items} 条` : ''} · ${e.receipt.bytes}B${e.receipt.empty === true ? ' · ⚠ 空结果' : ''}${e.receipt.stop_reason != null ? ` · stop=${e.receipt.stop_reason}` : ''}`) : null,
+        e.digestDate !== undefined ? createElement('div', { style: { color: '#5F6873', fontSize: '10.5px', marginTop: '3px' } }, (tt('ibDigest') as unknown as (d: string) => string)(e.digestDate)) : null,
+        createElement('div', { style: { color: '#8B9AFF', fontSize: '10.5px', marginTop: '4px' } }, tt('ibTrace')),
+        traceErr.length > 0 ? createElement('div', { style: { color: '#5F6873', fontSize: '10.5px' } }, traceErr) : null,
+        ...(traces ?? []).slice(0, 8).map((l, li) => createElement('div', { key: li, style: { fontSize: '10.5px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.7)' } },
+          `${l.at.slice(11, 19)} ${l.cmd} · exit ${l.exitCode} · ${l.ms}ms`)),
+      ) : null,
+    )
+  }
+  const live = (rows ?? []).filter((e) => !e.archived)
+  const archived = (rows ?? []).filter((e) => e.archived)
+  return createElement('div', { className: 'o4-card' },
+    createElement('div', { className: 'o4-h3' },
+      createElement('span', { className: 'o4-miniico' }, ic('activity', true)), tt('ibT'),
+      unread > 0 ? createElement('span', { className: 'o4-bdg b', style: { marginLeft: '6px' } }, `${tt('ibUnread')} ${unread}`) : null,
+      createElement('span', { className: 'rt' },
+        createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { void markAll() } }, tt('ibMarkAll')),
+        createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { void archiveRead() } }, tt('ibArchiveRead')),
+        createElement('button', { className: 'o4-btn ghost sm', disabled: busy, onClick: () => { void load() } }, ic('refresh', true), busy ? tt('checking') : tt('recheck')),
+      ),
+    ),
+    createElement('div', { className: 'o4-sub' }, tt('ibSub')),
+    err.length > 0 ? createElement('div', { className: 'o4-load' }, err) : null,
+    rows !== null && rows.length === 0 && err.length === 0 ? createElement('div', { className: 'o4-load' }, tt('ibEmpty')) : null,
+    rows === null && err.length === 0 ? createElement('div', { className: 'o4-load' }, tt('loading')) : null,
+    createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, ...live.map((e, i) => entryRow(e, i))),
+    archived.length > 0 ? createElement('div', { style: { marginTop: '8px' } },
+      createElement('div', { className: 'o4-sub', style: { marginBottom: '6px' } }, `${tt('ibArchived')} · ${archived.length}`),
+      createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, ...archived.map((e, i) => entryRow(e, live.length + i))),
+    ) : null,
+  )
+}
+
 
 /* ── 画布纯函数(任务 H+I+J,导出供 tests/canvas.test.ts 直接单测;组件渲染部分留给
        GUI 人工验收——client 侧无组件测试基建,shouldShowOnboarding 先例) ── */

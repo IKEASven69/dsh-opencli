@@ -18,7 +18,7 @@ export interface NlContext {
   commands: string[]
   /** 现有任务(id+site,≤20 条) */
   schedules: Array<{ id: string; site: string }>
-  /** 已配通知通道类型(webhook/email/dsh) */
+  /** 已配通知通道类型(webhook/email/dsh/bark/ntfy/pushover) */
   channels: string[]
 }
 
@@ -30,7 +30,7 @@ const INTENT_SCHEMA = `可用意图(闭集,JSON 对象,不得添加任何其他�
 {"kind":"schedule-remove","id":"任务id"}
 {"kind":"schedule-run","id":"任务id"}
 {"kind":"schedule-list"}
-{"kind":"notify-set","channels":[{"type":"webhook|email|dsh","url":"...","to":"...","enabled":true}]}
+{"kind":"notify-set","channels":[{"type":"webhook|email|dsh|bark|ntfy|pushover","url":"...","to":"...","enabled":true}]}
 {"kind":"notify-test"}
 {"kind":"report-build","id":"任务id"}
 {"kind":"status"}`

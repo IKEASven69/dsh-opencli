@@ -49,6 +49,21 @@ describe('buildPayload 各平台载荷', () => {
     const tg = buildPayload('telegram', 'https://api.telegram.org/botT/send?chat=42', 't', 'b', at)
     expect(JSON.parse(tg.init.body)).toMatchObject({ chat_id: '42', text: 't\nb' })
   })
+  it('telegram 升级(0.1.4 候选 1):存储面拆出的 token 由 opts 回拼官方 path 形态;parse_mode 透传', () => {
+    // 归一层把 bot<token> 段拆出(url 不落 token),send 期回拼:三种官方/习惯形态
+    const a = buildPayload('telegram', 'https://api.telegram.org/sendMessage?chat=42', 't', 'b', at, Date.now(), { telegramToken: 'TOK' })
+    expect(a.url).toBe('https://api.telegram.org/botTOK/sendMessage?chat=42')
+    const b = buildPayload('telegram', 'https://api.telegram.org?chat=42', 't', 'b', at, Date.now(), { telegramToken: 'TOK' })
+    expect(b.url).toBe('https://api.telegram.org/botTOK/sendMessage?chat=42') // 无 method 段补官方默认 /sendMessage
+    const c = buildPayload('telegram', 'https://api.telegram.org/send?chat=42', 't', 'b', at, Date.now(), { telegramToken: 'T' })
+    expect(c.url).toBe('https://api.telegram.org/botT/send?chat=42') // 既有手拼形态原样保真
+    const d = buildPayload('telegram', 'https://api.telegram.org/sendMessage?chat=42', 't', 'b', at, Date.now(), { telegramToken: 'TOK', parseMode: 'MarkdownV2' })
+    expect(JSON.parse(d.init.body)).toMatchObject({ chat_id: '42', parse_mode: 'MarkdownV2' })
+    // 无 token(既有手拼 URL 直传)行为不变;parse_mode 缺省不带键
+    const e = buildPayload('telegram', 'https://api.telegram.org/botT/send?chat=42', 't', 'b', at)
+    expect(e.url).toBe('https://api.telegram.org/botT/send?chat=42')
+    expect(JSON.parse(e.init.body).parse_mode).toBeUndefined()
+  })
   it('generic 保持 0.4.5 信封 {title,body,at}', () => {
     const g = buildPayload('generic', 'http://x/hook', 't', 'b', at)
     expect(JSON.parse(g.init.body)).toEqual({ title: 't', body: 'b', at })

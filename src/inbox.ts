@@ -9,7 +9,8 @@
  * 安全纪律:
  *  - 意图是**白名单结构化数据**,绝不 eval;未知 kind/多余字段一律拒(闭集校验);
  *  - 单文件 ≤16KB、收件箱待处理 ≤200 条(防灌爆);
- *  - 处理完的意图移入 processed/(轮转保留 100),同 stem 写 <stem>.result.json 供 ctl --wait 取回;
+ *  - 处理完的意图移入 processed/(轮转保留 100),同 stem 写 <stem>.result.json 供 ctl --wait 取回
+ *    (根目录 .result.json 同样轮转保留 100,0.1.4 候选 5 ⑤随车卫生:此前写后无人清,只增不减);
  *  - 每次消费(成败均)落 ingest 事件,面板时间线可见——人机协同的每一步都有账。
  * @module dsh-opencli/inbox
  */
@@ -21,13 +22,51 @@ import { mkdir, readdir, readFile, rename, writeFile, rm } from 'node:fs/promise
 /** 收件箱目录(测试可用 DSH_OPENCLI_INBOX_DIR 覆盖)。 */
 export const inboxDir = (): string => process.env.DSH_OPENCLI_INBOX_DIR ?? join(homedir(), '.dsh', 'opencli-inbox')
 
+/**
+ * notify-set 单条通道(0.1.4 候选 1:webhook/email/dsh 之外新增 push 类预设 bark/ntfy/
+ * pushover)。字段白名单闭集:凭据类字段(deviceKey/topic/token/user/telegramToken)独立
+ * 字段传递,由 normalizeNotifyConfig 做 URL path 凭据拆解与语义校验(优先级范围/枚举),
+ * 这层只做类型闭集校验。
+ */
+export interface NotifySetChannel {
+  type: 'webhook' | 'email' | 'dsh' | 'bark' | 'ntfy' | 'pushover'
+  url?: string
+  to?: string
+  enabled?: boolean
+  deviceKey?: string
+  topic?: string
+  token?: string
+  user?: string
+  telegramToken?: string
+  parseMode?: string
+  template?: string
+  group?: string
+  level?: string
+  sound?: string
+  priority?: number
+  device?: string
+  ciphertext?: string
+  iv?: string
+}
+
+/** notify-set 字段白名单(与 NotifySetChannel 一一对应;parseIntent 的闭集校验依据)。 */
+const NOTIFY_SET_FIELDS: readonly string[] = [
+  'type', 'url', 'to', 'enabled', 'deviceKey', 'topic', 'token', 'user', 'telegramToken',
+  'parseMode', 'template', 'group', 'level', 'sound', 'priority', 'device', 'ciphertext', 'iv',
+]
+const NOTIFY_SET_STR_FIELDS = NOTIFY_SET_FIELDS.filter((k) => k !== 'type' && k !== 'enabled' && k !== 'priority')
+
 /** 意图(闭集):kind 与字段全部显式,多余字段=拒绝。 */
 export type Intent =
   | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string }
   | { kind: 'schedule-remove'; id: string }
   | { kind: 'schedule-run'; id: string }
   | { kind: 'schedule-list' }
-  | { kind: 'notify-set'; channels: Array<{ type: 'webhook' | 'email' | 'dsh'; url?: string; to?: string; enabled?: boolean }> }
+  /** 运行级收件箱轻量意图(0.1.4 候选 5 ④,与 src/runinbox.ts 的 run 条目同一语义):
+   *  task+at 都给=单条;省 at=该任务全部(读)或全部已读(归档);都省=全部任务。 */
+  | { kind: 'schedule-read'; task?: string; at?: string }
+  | { kind: 'schedule-archive'; task?: string; at?: string }
+  | { kind: 'notify-set'; channels: NotifySetChannel[] }
   | { kind: 'notify-test' }
   | { kind: 'report-build'; id: string }
   | { kind: 'undo'; stem: string }
@@ -50,6 +89,8 @@ export interface IntentExecutor {
   scheduleRemove(id: string): Promise<{ ok: boolean; error?: string }>
   scheduleRun(id: string): Promise<{ ok: boolean; error?: string }>
   scheduleList(): Promise<{ ok: boolean; schedules?: Array<Record<string, unknown>>; error?: string }>
+  scheduleRead(i: Extract<Intent, { kind: 'schedule-read' }>): Promise<{ ok: boolean; marked?: number; error?: string }>
+  scheduleArchive(i: Extract<Intent, { kind: 'schedule-archive' }>): Promise<{ ok: boolean; archived?: number; error?: string }>
   notifySet(channels: Intent extends never ? never : Extract<Intent, { kind: 'notify-set' }>['channels']): Promise<{ ok: boolean; error?: string }>
   notifyTest(): Promise<{ ok: boolean; error?: string }>
   reportBuild(id: string): Promise<{ ok: boolean; path?: string; error?: string }>
@@ -90,18 +131,36 @@ export function parseIntent(raw: unknown): Intent | null {
       return allow(['kind', 'id']) && str(o.id) ? { kind: 'schedule-run', id: o.id } : null
     case 'schedule-list':
       return allow(['kind']) ? { kind: 'schedule-list' } : null
+    // 运行级收件箱轻量意图(候选 5 ④):task/at 均可选字符串;at 必须与 task 成对
+    // (单条定位键=task+at,光给 at 无锚点不合法)——白名单闭集,多余字段拒
+    case 'schedule-read':
+    case 'schedule-archive': {
+      if (!allow(['kind', 'task', 'at'])) return null
+      if (o.at !== undefined && !str(o.at)) return null
+      if (o.task !== undefined && !str(o.task)) return null
+      if (o.at !== undefined && o.task === undefined) return null
+      return { kind: o.kind, ...(o.task !== undefined ? { task: o.task } : {}), ...(o.at !== undefined ? { at: o.at } : {}) } as Extract<Intent, { kind: 'schedule-read' }> | Extract<Intent, { kind: 'schedule-archive' }>
+    }
     case 'notify-set': {
       if (!allow(['kind', 'channels']) || !Array.isArray(o.channels) || o.channels.length === 0) return null
       const channels: Extract<Intent, { kind: 'notify-set' }>['channels'] = []
       for (const c of o.channels) {
         if (c === null || typeof c !== 'object') return null
         const cc = c as Record<string, unknown>
-        if (!Object.keys(cc).every((k) => ['type', 'url', 'to', 'enabled'].includes(k))) return null
-        if (cc.type !== 'webhook' && cc.type !== 'email' && cc.type !== 'dsh') return null
-        if (cc.url !== undefined && typeof cc.url !== 'string') return null
-        if (cc.to !== undefined && typeof cc.to !== 'string') return null
+        // 字段白名单闭集(NotifySetChannel);语义校验(type 枚举范围/优先级区间)在 normalizeNotifyConfig
+        if (!Object.keys(cc).every((k) => NOTIFY_SET_FIELDS.includes(k))) return null
+        if (cc.type !== 'webhook' && cc.type !== 'email' && cc.type !== 'dsh' && cc.type !== 'bark' && cc.type !== 'ntfy' && cc.type !== 'pushover') return null
+        for (const k of NOTIFY_SET_STR_FIELDS) {
+          if (cc[k] !== undefined && typeof cc[k] !== 'string') return null
+        }
+        if (cc.priority !== undefined && (typeof cc.priority !== 'number' || !Number.isFinite(cc.priority))) return null
         if (cc.enabled !== undefined && typeof cc.enabled !== 'boolean') return null
-        channels.push({ type: cc.type, ...(cc.url !== undefined ? { url: cc.url } : {}), ...(cc.to !== undefined ? { to: cc.to } : {}), ...(cc.enabled !== undefined ? { enabled: cc.enabled } : {}) })
+        channels.push({
+          type: cc.type,
+          ...(cc.enabled !== undefined ? { enabled: cc.enabled } : {}),
+          ...(cc.priority !== undefined ? { priority: cc.priority } : {}),
+          ...Object.fromEntries(NOTIFY_SET_STR_FIELDS.filter((k) => cc[k] !== undefined).map((k) => [k, cc[k]])),
+        } as NotifySetChannel)
       }
       return { kind: 'notify-set', channels }
     }
@@ -142,6 +201,15 @@ export async function applyIntent(intent: Intent, ex: IntentExecutor): Promise<I
       case 'schedule-list': {
         const r = await ex.scheduleList()
         return r.ok ? { ok: true, at, kind: intent.kind, value: r.schedules ?? [] } : { ok: false, at, kind: intent.kind, error: r.error ?? '读取失败' }
+      }
+      // 运行级收件箱(0.1.4 候选 5 ④):value 带计数(marked/archived),agent 可直接回话
+      case 'schedule-read': {
+        const r = await ex.scheduleRead(intent)
+        return r.ok ? { ok: true, at, kind: intent.kind, value: { marked: r.marked ?? 0 } } : { ok: false, at, kind: intent.kind, error: r.error ?? '标记失败' }
+      }
+      case 'schedule-archive': {
+        const r = await ex.scheduleArchive(intent)
+        return r.ok ? { ok: true, at, kind: intent.kind, value: { archived: r.archived ?? 0 } } : { ok: false, at, kind: intent.kind, error: r.error ?? '归档失败' }
       }
       case 'notify-set': {
         const r = await ex.notifySet(intent.channels)
@@ -208,6 +276,11 @@ export async function drainInbox(ex: IntentExecutor, opts: { maxFiles?: number }
     }
     try {
       await writeFile(join(dir, `${stem}.result.json`), JSON.stringify(result), 'utf8')
+      // 根目录 .result.json 轮转(0.1.4 候选 5 ⑤随车卫生):此前写后无人清,12 天 102 份
+      // 只增不减(唯一读者 undo 的 stem 取回与 ctl --wait);对齐 processed/ 100 上限惯例——
+      // stem=`${Date.now()}-随机`,字典序=时间序,只留最近 100 份
+      const results = (await readdir(dir)).filter((f) => f.endsWith('.result.json')).sort()
+      if (results.length > 100) for (const o of results.slice(0, results.length - 100)) await rm(join(dir, o), { force: true }).catch(() => {})
       // 归档轮转:processed/ 只留最近 100 份
       const processedDir = join(dir, 'processed')
       await mkdir(processedDir, { recursive: true })

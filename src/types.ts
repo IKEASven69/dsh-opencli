@@ -123,6 +123,41 @@ export interface EventsGetResult {
   error?: string
 }
 
+/** run 条目四态(0.1.4 候选 5,运行级收件箱):ok=成功有产出/fail=失败/skip=预检跳过/empty=成功无产出。 */
+export type RunInboxStatus = 'ok' | 'fail' | 'skip' | 'empty'
+
+/** 一条 run 条目(0.1.4 候选 5 ①,对齐 Codex automation_runs #24245 条目模型)。
+ *  形状单一来源在 runinbox.ts(合成逻辑与其同文件);types.ts 只放跨 RPC 投影,面板取数用。 */
+export interface RunInboxEntry {
+  /** 任务 id(稳定键前半) */
+  task: string
+  /** 任务命令行(显示名) */
+  site: string
+  /** run 时间 ISO(稳定键后半) */
+  at: string
+  status: RunInboxStatus
+  /** 结论摘要(runHistory 行原文,已脱敏) */
+  summary: string
+  /** trace 深链:本地日期键 yyyymmdd(跳过行无轨迹,省键) */
+  traceDate?: string
+  /** report 深链:本地日期 YYYY-MM-DD(当日早报文件日期指针) */
+  digestDate?: string
+  /** 回执(typed 状态判定依据;省键=行无回执) */
+  receipt?: import('./parsers.ts').Receipt
+  read: boolean
+  archived: boolean
+  /** 归档来源:auto=无产出自动归档 / manual=手动(省键=旧数据) */
+  archivedBy?: 'manual' | 'auto'
+}
+
+/** inbox-list RPC 结果(新→旧;unread=未读且未归档计数,归档不产生红点噪音)。 */
+export interface RunInboxListResult {
+  ok: boolean
+  entries: RunInboxEntry[]
+  unread: number
+  error?: string
+}
+
 /** approval-set RPC 请求/结果。 */
 export interface ApprovalSetRequest {
   enabled: boolean

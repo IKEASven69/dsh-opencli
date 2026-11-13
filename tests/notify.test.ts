@@ -1,16 +1,22 @@
-// 通知通道层测试:三通道桩化收发(webhook/email/dsh)、出口清洗(scrubLocalPaths)、
-// 正文组装(buildNotifyBody)与配置持久化(notifyConfig 读写)。
+// 通知通道层测试:通道桩化收发(webhook/email/dsh + push 类 bark/ntfy/pushover)、出口清洗
+// (scrubLocalPaths)、正文组装(buildNotifyBody)与配置持久化(notifyConfig 读写)、
+// 0.1.4 候选 1 的通道面(429 有界退避/webhook 模板值级注入/URL path 凭据拆解/回显遮敏)。
 // 网络零外发:fetch 注入桩、SMTP 会话注入脚本化假会话,不真连任何服务器。
 // 纯函数段不构造 OpencliService;文件尾部的「任务 E 集成」段构造(独立 STATE/TRACE/SHOTS
 // 目录隔离,zerocfg 同款),桩掉全局 fetch 后经 runSiteCommand 走通调度→通知全链。
 import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest'
 import {
   WebhookChannel, EmailChannel, DshNotifyChannel, SocketSession,
+  BarkChannel, NtfyChannel, PushoverChannel,
   scrubLocalPaths, buildNotifyBody,
   buildNotifyChannels, sendViaChannels,
   normalizeNotifyConfig, normalizeNotifyConfigForSave, loadNotifyConfig, saveNotifyConfig,
+  renderWebhookTemplate, parseRetryAfterMs, splitTrailingPathSegment, splitTelegramBotUrl,
+  NOTIFY_BACKOFF_MAX_MS, NOTIFY_TEMPLATE_MAX,
   type SmtpSession, type SmtpReply, type NotifyChannel, type IngestEvent,
 } from '../src/notify.ts'
+import { maskSecretTail, describeNotifyChannel } from '../src/redact.ts'
+import { parseIntent } from '../src/inbox.ts'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis'
 import { OpencliService } from '../lib/index.js'
@@ -396,6 +402,397 @@ describe('buildNotifyChannels / sendViaChannels', () => {
       { name: 'good', ok: true },
       { name: 'bad', ok: false, error: 'HTTP 500' },
     ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 0.1.4 候选 1:429 有界退避(共享件)
+// ---------------------------------------------------------------------------
+
+/** 序列桩:按调用次序返回预设响应(带 headers/body),捕获每次请求供断言。 */
+function stubFetchSeq(resps: Array<{ status: number; headers?: Record<string, string>; body?: string }>): { fetch: typeof fetch; calls: FetchCall[] } {
+  const calls: FetchCall[] = []
+  let i = 0
+  const f = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} })
+    const r = resps[Math.min(i, resps.length - 1)]!
+    i++
+    return { status: r.status, headers: r.headers, text: async () => r.body ?? '' } as unknown as Response
+  }) as unknown as typeof fetch
+  return { fetch: f, calls }
+}
+
+describe('parseRetryAfterMs / 429 有界退避(§九.1 统一口径:≤5s 就地重试一次,>5s 如实失败)', () => {
+  it('telegram 体字段 parameters.retry_after 优先,Retry-After 头兜底,HTTP-date 不支持', () => {
+    expect(parseRetryAfterMs(undefined, JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 3 } }))).toBe(3000)
+    expect(parseRetryAfterMs('7', '')).toBe(7000)
+    expect(parseRetryAfterMs('Wed, 21 Oct 2026 07:28:00 GMT', '')).toBeUndefined()
+    expect(parseRetryAfterMs(undefined, 'not json')).toBeUndefined()
+    // 负数/非有限值按无信号处理
+    expect(parseRetryAfterMs(undefined, JSON.stringify({ parameters: { retry_after: -1 } }))).toBeUndefined()
+  })
+
+  it('telegram 429 + retry_after=0:就地重试一次,第二次 200 记 ok(共 2 次调用)', async () => {
+    const { fetch, calls } = stubFetchSeq([
+      { status: 429, body: JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 0 } }) },
+      { status: 200, body: JSON.stringify({ ok: true }) },
+    ])
+    const ch = new WebhookChannel('https://api.telegram.org/botT/send?chat=42', fetch, 'telegram')
+    const r = await ch.send('t', 'b')
+    expect(r).toEqual({ ok: true })
+    expect(calls.length).toBe(2)
+  })
+
+  it('retry_after=9(>5s 上限):单发如实失败并附等待值,不重试', async () => {
+    const { fetch, calls } = stubFetchSeq([{ status: 429, body: JSON.stringify({ parameters: { retry_after: 9 } }) }])
+    const ch = new WebhookChannel('https://api.telegram.org/botT/send?chat=42', fetch, 'telegram')
+    const r = await ch.send('t', 'b')
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('9s 后重试')
+    expect(r.error).toContain(String(NOTIFY_BACKOFF_MAX_MS / 1000))
+    expect(calls.length).toBe(1)
+  })
+
+  it('Retry-After 头(ntfy/pushover 口径)≤5s 就地重试;无退避信号单发失败;重试仍 429 如实失败', async () => {
+    const a = stubFetchSeq([{ status: 429, headers: { 'retry-after': '1' } }, { status: 200 }])
+    expect(await new NtfyChannel('https://ntfy.sh', 'topic', a.fetch).send('t', 'b')).toEqual({ ok: true })
+    expect(a.calls.length).toBe(2)
+    const b = stubFetchSeq([{ status: 429 }])
+    const rb = await new NtfyChannel('https://ntfy.sh', 'topic', b.fetch).send('t', 'b')
+    expect(rb.ok).toBe(false)
+    expect(rb.error).toContain('未带退避信号')
+    expect(b.calls.length).toBe(1)
+    const c = stubFetchSeq([{ status: 429, headers: { 'retry-after': '0' } }, { status: 429 }])
+    const rc = await new PushoverChannel('tok', 'usr', c.fetch).send('t', 'b')
+    expect(rc.ok).toBe(false)
+    expect(rc.error).toContain('仍被限')
+    expect(c.calls.length).toBe(2)
+  })
+
+  it('可选出站代理:HTTPS_PROXY 已设但宿主解析不到 undici → 如实退回直连(fetch 无 dispatcher)', async () => {
+    // undici 不在本仓依赖(零依赖纪律):动态 import 失败即直连;代理仅在宿主进程可解析 undici 时生效
+    const prev = process.env.HTTPS_PROXY
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:9999'
+    try {
+      const { fetch, calls } = stubFetchSeq([{ status: 200 }])
+      const ch = new BarkChannel('https://api.day.app', 'devkey', fetch)
+      const r = await ch.send('t', 'b')
+      expect(r).toEqual({ ok: true })
+      expect(calls.length).toBe(1)
+      expect((calls[0]?.init as Record<string, unknown>).dispatcher).toBeUndefined()
+    } finally {
+      if (prev === undefined) delete process.env.HTTPS_PROXY
+      else process.env.HTTPS_PROXY = prev
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 0.1.4 候选 1:Bark / ntfy / Pushover 通道(send 形状 + 凭据不进 URL + 错误文案)
+// ---------------------------------------------------------------------------
+
+describe('BarkChannel(POST /push JSON 体,device_key 不进 URL)', () => {
+  it('send 形状:POST {server}/push,body 含 device_key/title/body,URL 无凭据;200 记 ok', async () => {
+    const { fetch, calls } = stubFetchSeq([{ status: 200, body: JSON.stringify({ code: 200, message: 'success' }) }])
+    const ch = new BarkChannel('https://api.day.app', 'devKeyAbc123', fetch, { group: 'dsh', level: 'timeSensitive' })
+    const r = await ch.send('[dsh-opencli] zhihu hot 2026-11-12 09:05', '结果:成功')
+    expect(r).toEqual({ ok: true })
+    expect(ch.name).toBe('bark:api.day.app')
+    expect(calls.length).toBe(1)
+    // 纪律断言:凭据(device_key)在请求体,请求 URL 是无凭据的 /push
+    expect(calls[0]?.url).toBe('https://api.day.app/push')
+    expect(String(calls[0]?.url)).not.toContain('devKeyAbc123')
+    expect((calls[0]?.init.headers as Record<string, string>)['content-type']).toBe('application/json')
+    const payload = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>
+    expect(payload.device_key).toBe('devKeyAbc123')
+    expect(payload.title).toBe('[dsh-opencli] zhihu hot 2026-11-12 09:05')
+    expect(payload.body).toBe('结果:成功')
+    expect(payload.group).toBe('dsh')
+    expect(payload.level).toBe('timeSensitive')
+  })
+
+  it('HTTP 200 但 body code!=200 → 如实报错;code 缺失/非 JSON 按 200 即成(响应形状官方未载,不误杀)', async () => {
+    const a = stubFetchSeq([{ status: 200, body: JSON.stringify({ code: 400, message: 'bad key' }) }])
+    const ra = await new BarkChannel('https://api.day.app', 'k', a.fetch).send('t', 'b')
+    expect(ra).toEqual({ ok: false, error: 'bark code 400' })
+    const b = stubFetchSeq([{ status: 200 }])
+    expect(await new BarkChannel('https://api.day.app', 'k', b.fetch).send('t', 'b')).toEqual({ ok: true })
+  })
+
+  it('端到端加密透传:ciphertext 给出 → 密文体(device_key+ciphertext+iv),title/body 不再明文出现', async () => {
+    const { fetch, calls } = stubFetchSeq([{ status: 200 }])
+    const ch = new BarkChannel('https://api.day.app', 'devKeyAbc123', fetch, { ciphertext: 'base64==cipher', iv: 'base64==iv' })
+    await ch.send('t', 'b')
+    const payload = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>
+    expect(payload.device_key).toBe('devKeyAbc123')
+    expect(payload.ciphertext).toBe('base64==cipher')
+    expect(payload.iv).toBe('base64==iv')
+    expect(payload.title).toBeUndefined()
+    expect(payload.body).toBeUndefined()
+  })
+
+  it('非 200 如实报错;URL 非法不抛出且错误文案不回显 URL 原文;URL 非法退回裸名', async () => {
+    const a = stubFetchSeq([{ status: 502 }])
+    expect(await new BarkChannel('https://api.day.app', 'k', a.fetch).send('t', 'b')).toEqual({ ok: false, error: 'HTTP 502' })
+    const broken = (async () => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
+    const rb = await new BarkChannel('https://api.day.app', 'k', broken).send('t', 'b')
+    expect(rb).toEqual({ ok: false, error: 'fetch failed' })
+    const rc = await new BarkChannel('::::', 'k', stubFetchSeq([{ status: 200 }]).fetch).send('t', 'b')
+    expect(rc.ok).toBe(false)
+    expect(rc.error).toContain('URL 非法')
+    expect(rc.error).not.toContain('::::')
+    expect(new BarkChannel('::::', 'k', stubFetchSeq([{ status: 200 }]).fetch).name).toBe('bark')
+    // 自host 反代子路径保留:POST /bark/push
+    const d = stubFetchSeq([{ status: 200 }])
+    await new BarkChannel('https://ex.com/bark', 'k', d.fetch).send('t', 'b')
+    expect(d.calls[0]?.url).toBe('https://ex.com/bark/push')
+  })
+})
+
+describe('NtfyChannel(根路径 JSON publishing,topic 进 body + Bearer 头)', () => {
+  it('send 形状:POST 根路径,{topic,title,message,priority,tags} 在体,topic 不进 URL', async () => {
+    const { fetch, calls } = stubFetchSeq([{ status: 200 }])
+    const ch = new NtfyChannel('https://ntfy.sh', 'mySecretTopic', fetch, { token: 'tk_AbCdEfGh', priority: 4 })
+    const r = await ch.send('标题', '正文')
+    expect(r).toEqual({ ok: true })
+    expect(ch.name).toBe('ntfy:ntfy.sh')
+    expect(calls.length).toBe(1)
+    // topic 即密码(publish.md 逐字):请求 URL 是根路径,topic 在体
+    expect(calls[0]?.url).toBe('https://ntfy.sh/')
+    expect(String(calls[0]?.url)).not.toContain('mySecretTopic')
+    expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe('Bearer tk_AbCdEfGh')
+    const payload = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>
+    expect(payload.topic).toBe('mySecretTopic')
+    expect(payload.title).toBe('标题')
+    expect(payload.message).toBe('正文')
+    expect(payload.priority).toBe(4)
+    expect(payload.tags).toEqual(['bell'])
+  })
+
+  it('无 token 不带 Authorization 头;priority 缺省 3;自host 子路径保留', async () => {
+    const a = stubFetchSeq([{ status: 200 }])
+    await new NtfyChannel('https://ntfy.sh', 'tp', a.fetch).send('t', 'b')
+    expect((a.calls[0]?.init.headers as Record<string, string>).authorization).toBeUndefined()
+    expect(JSON.parse(String(a.calls[0]?.init.body)).priority).toBe(3)
+    const b = stubFetchSeq([{ status: 200 }])
+    await new NtfyChannel('https://ex.com/ntfy', 'tp', b.fetch).send('t', 'b')
+    expect(b.calls[0]?.url).toBe('https://ex.com/ntfy/')
+  })
+
+  it('URL 非法不抛出且错误文案不回显 URL 原文(topic 即密码)', async () => {
+    const r = await new NtfyChannel('::::', 'tp', stubFetchSeq([{ status: 200 }]).fetch).send('t', 'b')
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('URL 非法')
+    expect(r.error).not.toContain('::::')
+  })
+})
+
+describe('PushoverChannel(凭据走 POST body,官方端点固定;429 月配额如实报错)', () => {
+  it('send 形状:POST 官方端点,{token,user,title,message} 在体,凭据不进 URL', async () => {
+    const { fetch, calls } = stubFetchSeq([{ status: 200, body: JSON.stringify({ status: 1, request: 'uuid' }) }])
+    const ch = new PushoverChannel('appToken123456', 'userKey654321', fetch, { priority: 1, device: 'pixel' })
+    const r = await ch.send('标题', '正文')
+    expect(r).toEqual({ ok: true })
+    expect(ch.name).toBe('pushover:api.pushover.net')
+    expect(calls.length).toBe(1)
+    expect(calls[0]?.url).toBe('https://api.pushover.net/1/messages.json')
+    expect(String(calls[0]?.url)).not.toContain('appToken123456')
+    const payload = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>
+    expect(payload.token).toBe('appToken123456')
+    expect(payload.user).toBe('userKey654321')
+    expect(payload.title).toBe('标题')
+    expect(payload.message).toBe('正文')
+    expect(payload.priority).toBe(1)
+    expect(payload.device).toBe('pixel')
+  })
+
+  it('200 但 status!=1 → 服务端 errors 文案如实透传(不含凭据);非 200 报状态码', async () => {
+    const a = stubFetchSeq([{ status: 200, body: JSON.stringify({ status: 0, errors: ['user identifier is invalid'] }) }])
+    expect(await new PushoverChannel('tok', 'usr', a.fetch).send('t', 'b')).toEqual({ ok: false, error: 'pushover: user identifier is invalid' })
+    const b = stubFetchSeq([{ status: 400, body: JSON.stringify({ status: 0 }) }])
+    expect(await new PushoverChannel('tok', 'usr', b.fetch).send('t', 'b')).toEqual({ ok: false, error: 'HTTP 400' })
+  })
+
+  it('网络异常不抛出,返回 error(旁路纪律)', async () => {
+    const broken = (async () => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
+    expect(await new PushoverChannel('tok', 'usr', broken).send('t', 'b')).toEqual({ ok: false, error: 'fetch failed' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 0.1.4 候选 1:webhook 模板(值级 JSON-safe 注入 + 渲染后 JSON.parse 校验)
+// ---------------------------------------------------------------------------
+
+describe('renderWebhookTemplate(值级注入,白名单闭集)', () => {
+  it('值级 JSON-safe:引号/换行经 JSON.stringify 转义,渲染结果恒为合法 JSON 内容', () => {
+    const out = renderWebhookTemplate('{"text":"{{title}}:{{body}}"}', { title: 'a"b\\c', body: 'x\ny', at: 'T' })
+    expect(() => JSON.parse(out)).not.toThrow()
+    expect((JSON.parse(out) as { text: string }).text).toBe('a"b\\c:x\ny')
+  })
+
+  it('白名单:七个变量可用;白名单外占位符原样保留(不猜测补全);缺席变量渲染为空串', () => {
+    const vars = { title: 't', body: 'b', at: 'T', ok: true, site: 'zhihu hot', source: 'ctl', watchHits: ['ai', 'agent'] }
+    expect(renderWebhookTemplate('{{title}}|{{body}}|{{at}}|{{ok}}|{{site}}|{{source}}', vars)).toBe('t|b|T|true|zhihu hot|ctl')
+    // 非字符串值整值注入 JSON 字面量:数组 → ["ai","agent"](slice 口径会把 true 吃成 ru)
+    expect(renderWebhookTemplate('"hits":{{watchHits}}', vars)).toBe('"hits":["ai","agent"]')
+    expect(renderWebhookTemplate('{{nope}} {{title}}', vars)).toBe('{{nope}} t')
+    expect(renderWebhookTemplate('{"ok":{{ok}}}', { title: 't', body: 'b', at: 'T' })).toBe('{"ok":}')
+  })
+
+  it('通道装配:渲染体直发(content-type json);非法 JSON 如实报错且不发(不静默回退)', async () => {
+    const good = stubFetchSeq([{ status: 200 }])
+    const ch = new WebhookChannel('https://hook.example.com/x', good.fetch, 'generic', { template: '{"text":"{{title}} {{body}}","ok":{{ok}}}' })
+    const r = await ch.send('t1', 'b1', { ok: true })
+    expect(r).toEqual({ ok: true })
+    expect(good.calls.length).toBe(1)
+    expect(JSON.parse(String(good.calls[0]?.init.body))).toEqual({ text: 't1 b1', ok: true })
+    const bad = stubFetchSeq([{ status: 200 }])
+    const rb = await new WebhookChannel('https://hook.example.com/x', bad.fetch, 'generic', { template: '{"ok":{{ok}}}' }).send('t', 'b')
+    expect(rb.ok).toBe(false)
+    expect(rb.error).toContain('非法 JSON')
+    expect(bad.calls.length).toBe(0) // 不静默回退固定 payload:渲染失败即失败,零外发
+  })
+
+  it('模板仅 generic 平台生效:平台预设(feishu)形状固定,模板忽略', async () => {
+    const { fetch, calls } = stubFetchSeq([{ status: 200 }])
+    const ch = new WebhookChannel('https://open.feishu.cn/hook', fetch, 'feishu', { template: '{"x":1}' })
+    await ch.send('t', 'b')
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ msg_type: 'text', content: { text: 't\nb' } })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 0.1.4 候选 1:URL path 凭据拆解(存储面)与回显遮蔽(展示面)
+// ---------------------------------------------------------------------------
+
+describe('splitTrailingPathSegment / splitTelegramBotUrl(凭据不随 URL 落盘)', () => {
+  it('bark/ntfy 官方分享形态:末段凭据拆出,base 无凭据;幂等', () => {
+    expect(splitTrailingPathSegment('https://api.day.app/yourKey123')).toEqual({ base: 'https://api.day.app', credential: 'yourKey123' })
+    expect(splitTrailingPathSegment('https://ntfy.sh/myTopic')).toEqual({ base: 'https://ntfy.sh', credential: 'myTopic' })
+    // 反代子路径:拆末段保留前缀
+    expect(splitTrailingPathSegment('https://ex.com/bark/myKey')).toEqual({ base: 'https://ex.com/bark', credential: 'myKey' })
+    expect(splitTrailingPathSegment('https://ntfy.sh')).toEqual({ base: 'https://ntfy.sh' })
+    expect(splitTrailingPathSegment('::::')).toEqual({ base: '::::' })
+    // 已拆形态再过一遍无变化(normalize 幂等的依据)
+    expect(splitTrailingPathSegment('https://api.day.app')).toEqual({ base: 'https://api.day.app' })
+  })
+
+  it('telegram bot<token> 段拆出,URL 不落 token;三种官方/习惯形态都能回拼', () => {
+    expect(splitTelegramBotUrl('https://api.telegram.org/botTOK/sendMessage?chat=42')).toEqual({ base: 'https://api.telegram.org/sendMessage?chat=42', token: 'TOK' })
+    expect(splitTelegramBotUrl('https://api.telegram.org/botTOK?chat=42')).toEqual({ base: 'https://api.telegram.org?chat=42', token: 'TOK' })
+    expect(splitTelegramBotUrl('https://api.telegram.org/hook')).toEqual({ base: 'https://api.telegram.org/hook' })
+    expect(splitTelegramBotUrl('::::')).toEqual({ base: '::::' })
+  })
+})
+
+describe('normalizeNotifyConfig 新通道(bark/ntfy/pushover)+ telegram token 拆解(白名单闭合)', () => {
+  it('bark:URL path 凭据拆出落独立字段;level 白名单外丢弃;ciphertext/iv 透传', () => {
+    const c = normalizeNotifyConfig({ channels: [
+      { type: 'bark', url: 'https://api.day.app/myKeyAbc', enabled: true, group: 'g', level: 'TimeSensitive', sound: 'bell', ciphertext: 'c==', iv: 'i==' },
+      { type: 'bark', url: 'https://api.day.app', deviceKey: 'explicitKey', enabled: true },
+    ] })
+    expect(c.channels[0]).toEqual({ type: 'bark', enabled: true, url: 'https://api.day.app', deviceKey: 'myKeyAbc', group: 'g', sound: 'bell', ciphertext: 'c==', iv: 'i==' })
+    expect(c.channels[0]!.level).toBeUndefined() // level 只认官方四档(大小写敏感),非法丢弃
+    expect(c.channels[1]).toEqual({ type: 'bark', enabled: true, url: 'https://api.day.app', deviceKey: 'explicitKey' })
+  })
+
+  it('ntfy/pushover:topic/token/priority 归一;pushover 不收 url,priority emergency(2) 拒收', () => {
+    const c = normalizeNotifyConfig({ channels: [
+      { type: 'ntfy', url: 'https://ntfy.sh/myTop', token: 'tk_x', priority: 4, enabled: true },
+      { type: 'ntfy', url: 'https://ntfy.sh', topic: 'tp', priority: 9, enabled: true }, // 9 越界丢弃
+      { type: 'pushover', token: 'a', user: 'b', priority: 2, url: 'https://evil.example', enabled: true }, // 2 需无界等待,不开放
+      { type: 'pushover', token: 'a', user: 'b', priority: -2, enabled: true },
+    ] })
+    expect(c.channels[0]).toEqual({ type: 'ntfy', enabled: true, url: 'https://ntfy.sh', topic: 'myTop', token: 'tk_x', priority: 4 })
+    expect(c.channels[1]).toEqual({ type: 'ntfy', enabled: true, url: 'https://ntfy.sh', topic: 'tp' })
+    expect(c.channels[2]).toEqual({ type: 'pushover', enabled: true, token: 'a', user: 'b' })
+    expect(c.channels[3]).toEqual({ type: 'pushover', enabled: true, token: 'a', user: 'b', priority: -2 })
+  })
+
+  it('webhook telegram:bot<token> 从 URL 拆出落独立字段,platform 显式落 telegram;非 telegram URL 原样', () => {
+    const c = normalizeNotifyConfig({ channels: [
+      { type: 'webhook', url: 'https://api.telegram.org/botTOK/sendMessage?chat=42', enabled: true },
+      { type: 'webhook', url: 'https://hook.example.com/abc', enabled: true },
+      { type: 'webhook', url: 'https://hook.example.com/x', enabled: true, template: 'x'.repeat(NOTIFY_TEMPLATE_MAX + 1), parseMode: 'Bogus' },
+      { type: 'webhook', url: 'https://hook.example.com/y', enabled: true, template: '{"a":1}', parseMode: 'HTML' },
+    ] })
+    expect(c.channels[0]).toEqual({ type: 'webhook', enabled: true, url: 'https://api.telegram.org/sendMessage?chat=42', platform: 'telegram', telegramToken: 'TOK' })
+    expect(c.channels[1]).toEqual({ type: 'webhook', enabled: true, url: 'https://hook.example.com/abc' })
+    expect(c.channels[2]).toEqual({ type: 'webhook', enabled: true, url: 'https://hook.example.com/x' }) // 超长模板/非法 parseMode 丢弃
+    expect(c.channels[3]).toEqual({ type: 'webhook', enabled: true, url: 'https://hook.example.com/y', template: '{"a":1}', parseMode: 'HTML' })
+  })
+
+  it('归一幂等:已拆形态再过一遍无变化;未知 type 仍整条丢弃', () => {
+    const once = normalizeNotifyConfig({ channels: [
+      { type: 'bark', url: 'https://api.day.app/k1', enabled: true },
+      { type: 'webhook', url: 'https://api.telegram.org/botT/send?chat=1', enabled: true },
+      { type: 'sms', enabled: true },
+    ] })
+    expect(normalizeNotifyConfig(once)).toEqual(once)
+    expect(once.channels.length).toBe(2)
+  })
+
+  it('装配:新通道实例化带主机名;凭据缺失跳过不炸', () => {
+    const channels = buildNotifyChannels({ channels: [
+      { type: 'bark', url: 'https://api.day.app', deviceKey: 'k', enabled: true },
+      { type: 'bark', url: 'https://api.day.app', enabled: true }, // 缺 deviceKey → 跳过
+      { type: 'ntfy', url: 'https://ntfy.sh', topic: 't', enabled: true },
+      { type: 'ntfy', url: 'https://ntfy.sh', enabled: true }, // 缺 topic → 跳过
+      { type: 'pushover', token: 'a', user: 'b', enabled: true },
+      { type: 'pushover', token: 'a', enabled: true }, // 缺 user → 跳过
+    ] }, { emit: () => {} })
+    expect(channels.map((c) => c.name)).toEqual(['bark:api.day.app', 'ntfy:ntfy.sh', 'pushover:api.pushover.net'])
+  })
+})
+
+describe('redact(回显遮蔽:中间段遮蔽只留尾 4,完整凭据/URL path 不回显)', () => {
+  it('maskSecretTail:长值首2+****+尾4;短值整段遮蔽', () => {
+    expect(maskSecretTail('sk_abcdefgh1234')).toBe('sk****1234')
+    expect(maskSecretTail('short')).toBe('****')
+  })
+
+  it('describeNotifyChannel:各通道摘要素;凭据永不完整出现', () => {
+    const out = [
+      describeNotifyChannel({ type: 'bark', url: 'https://api.day.app', deviceKey: 'sk_deviceKeyAbc' }),
+      describeNotifyChannel({ type: 'ntfy', url: 'https://ntfy.sh', topic: 'topicAbcdefg', token: 'tk_tokenAbc123' }),
+      describeNotifyChannel({ type: 'pushover', token: 'appToken123456', user: 'userKey654321' }),
+      describeNotifyChannel({ type: 'webhook', url: 'https://api.telegram.org/sendMessage', telegramToken: 'botTokenAbc123' }),
+      describeNotifyChannel({ type: 'email', url: 'smtps://user%40ex:apppass@smtp.ex.com:465' }),
+      describeNotifyChannel({ type: 'dsh' }),
+    ]
+    expect(out[0]).toBe('bark api.day.app · key sk****yAbc')
+    expect(out[1]).toBe('ntfy ntfy.sh · topic to****defg · token tk****c123')
+    expect(out[2]).toBe('pushover · token ap****3456 · user us****4321')
+    expect(out[3]).toBe('webhook api.telegram.org · bot bo****c123')
+    expect(out[4]).toBe('email smtp.ex.com:465 · 凭据 ****') // host 含端口(自host 场景可辨,redact 口径)
+    expect(out[5]).toBe('dsh')
+    for (const s of out) {
+      expect(s).not.toContain('sk_deviceKeyAbc')
+      expect(s).not.toContain('topicAbcdefg')
+      expect(s).not.toContain('tk_tokenAbc123')
+      expect(s).not.toContain('appToken123456')
+      expect(s).not.toContain('userKey654321')
+      expect(s).not.toContain('botTokenAbc123')
+      expect(s).not.toContain('apppass')
+    }
+  })
+})
+
+describe('parseIntent notify-set 白名单同步(闭集;bark/ntfy/pushover 可过,未知字段/type 拒)', () => {
+  it('新通道类型与凭据字段可过闭集校验,字段类型不符拒绝', () => {
+    const ok = parseIntent({ kind: 'notify-set', channels: [
+      { type: 'bark', url: 'https://api.day.app', deviceKey: 'k', enabled: true },
+      { type: 'ntfy', url: 'https://ntfy.sh', topic: 't', token: 'tk_x', priority: 3 },
+      { type: 'pushover', token: 'a', user: 'b' },
+      { type: 'webhook', url: 'https://hook.example/x', template: '{"a":1}', parseMode: 'HTML', telegramToken: 'T' },
+    ] })
+    expect(ok).not.toBeNull()
+    expect(ok?.kind).toBe('notify-set')
+    // 未知字段(闭集外)整条拒;凭据字段非串拒;priority 非数拒;未知 type 拒
+    expect(parseIntent({ kind: 'notify-set', channels: [{ type: 'bark', evil: 1 }] })).toBeNull()
+    expect(parseIntent({ kind: 'notify-set', channels: [{ type: 'bark', deviceKey: 5 }] })).toBeNull()
+    expect(parseIntent({ kind: 'notify-set', channels: [{ type: 'ntfy', priority: 'high' }] })).toBeNull()
+    expect(parseIntent({ kind: 'notify-set', channels: [{ type: 'sms' }] })).toBeNull()
   })
 })
 

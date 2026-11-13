@@ -1,8 +1,13 @@
 /**
- * 通知通道层:定时任务/watch 命中的结果外送(webhook / email / dsh 面板)。
+ * 通知通道层:定时任务/watch 命中的结果外送(webhook / email / dsh 面板 + push 类预设
+ * Bark / ntfy / Pushover)。
  * 通道是安全边界——通知会进群机器人、邮箱等不可控转发面,正文里任何本机路径
  * (~/.dsh 下的状态/轨迹文件名本身就是用户指纹)与 token 都必须在出口处清洗,
  * 宁可多删不可漏一条(scrubLocalPaths 是所有通道共享的最后闸,buildNotifyBody 默认已调)。
+ * 凭据面纪律(0.1.4 候选 1):凭据绝不进请求 URL——SCRUB_RULES 的 URL 参数规则只洗
+ * query 不覆盖 path 段,bark device_key / ntfy topic / telegram token 一旦拼进 path 即落在
+ * 脱敏链覆盖范围之外;push 类通道一律 POST 体带凭据(ntfy topic 进 body + Bearer 头),
+ * telegram 是官方设计例外(token 必在 path,TLS 网络面安全,存储/回显/错误文案三面不落)。
  * 本模块不感知 OpencliService:通道纯函数化 + 会话/事件入口注入,接线由服务层完成。
  * @module dsh-opencli/notify
  */
@@ -13,10 +18,111 @@ import { dirname } from 'node:path'
 import { buildPayload, platformOk, platformOf, type PlatformId } from './channels.ts'
 import type { IngestEvent } from './types.ts'
 
-/** 通知通道统一接口:send 永不抛异常,失败以 { ok: false, error } 返回——通知是旁路,不能拖死调度主链。 */
+/** webhook 模板渲染的调度侧变量(白名单闭集,与模板占位符 {{key}} 一一对应):
+ * 全部来自已过 scrub 链的 buildNotifyBody/调度段——site/watchHits 是用户自己的任务配置词,
+ * dispatch 侧仍再过一遍 scrubLocalPaths(「没有忘了洗的口子」纪律的顺延,不指望上游)。 */
+export interface NotifyTemplateVars { ok?: boolean; site?: string; source?: string; watchHits?: string[] }
+
+/** 通知通道统一接口:send 永不抛异常,失败以 { ok: false, error } 返回——通知是旁路,不能拖死调度主链。
+ * vars 是 webhook 模板渲染的可选变量(其余通道忽略);错误文案永不回显请求 URL/凭据原文。 */
 export interface NotifyChannel {
   name: string
-  send(title: string, body: string): Promise<{ ok: boolean; error?: string }>
+  send(title: string, body: string, vars?: NotifyTemplateVars): Promise<{ ok: boolean; error?: string }>
+}
+
+// ---------------------------------------------------------------------------
+// HTTP 通道共享件:有界 429 退避 / 可选出站代理
+// ---------------------------------------------------------------------------
+
+/** 退避上限(0.1.4 通知面统一口径):任何通道返回显式退避信号(429+Retry-After/retry_after)时,
+ * 等待值 ≤5s 才就地重试一次;>5s 如实失败并附等待值——重试会拉长调度 tick,旁路纪律不允许无界等。 */
+export const NOTIFY_BACKOFF_MAX_MS = 5_000
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, ms) })
+
+/**
+ * 429 显式退避信号解析(秒 → 毫秒):Telegram 读体字段 parameters.retry_after(Bot API
+ * ResponseParameters「number of seconds left to wait」,429 体 {ok:false,error_code:429,
+ * parameters:{retry_after:N}}),其余通道(ntfy/Pushover)读 Retry-After 头。头只认数字秒,
+ * HTTP-date 形态不支持(如实当无信号,单发失败)。
+ */
+export function parseRetryAfterMs(retryAfterHeader: string | undefined, bodyText: string): number | undefined {
+  try {
+    const j = JSON.parse(bodyText) as { parameters?: { retry_after?: unknown } }
+    const n = Number(j.parameters?.retry_after)
+    if (Number.isFinite(n) && n >= 0) return n * 1000
+  } catch { /* 非 JSON 体:走头 */ }
+  if (retryAfterHeader !== undefined && /^\d{1,4}$/.test(retryAfterHeader.trim())) return Number(retryAfterHeader.trim()) * 1000
+  return undefined
+}
+
+/** 桩兼容的响应读取(旧测试桩是 {status} 简单对象,无 headers/text——WebhookChannel 同款判定)。 */
+async function responseTextOf(res: unknown): Promise<string> {
+  const t = (res as { text?: unknown }).text
+  return typeof t === 'function' ? await (res as Response).text() : ''
+}
+function responseHeaderOf(res: unknown, name: string): string | undefined {
+  const h = (res as { headers?: unknown }).headers
+  if (h === null || typeof h !== 'object') return undefined
+  if (typeof (h as { get?: unknown }).get === 'function') return (h as { get: (n: string) => string | null }).get(name) ?? undefined
+  // 桩兼容:测试桩/部分 polyfill 的 headers 是普通对象——键不区分大小写兜底
+  for (const [k, v] of Object.entries(h as Record<string, unknown>)) {
+    if (k.toLowerCase() === name.toLowerCase() && typeof v === 'string') return v
+  }
+  return undefined
+}
+function statusOf(res: unknown): number {
+  return typeof (res as { status?: unknown }).status === 'number' ? (res as { status: number }).status : 0
+}
+
+/**
+ * HTTP 通道共用的单发(带一次有界 429 退避):
+ *  - 429 无退避信号:单发如实失败(不猜等待时间);
+ *  - 信号 ≤5s:就地等待后重试一次(新 AbortSignal),仍 429 如实失败(最多重试一次);
+ *  - 信号 >5s:如实失败并附等待值。成功路径返回最终响应,由通道自写成功判定。
+ */
+async function postOnceWithBackoff(once: () => Promise<unknown>): Promise<{ status: number; text: string; error?: string }> {
+  let res = await once()
+  let text = await responseTextOf(res)
+  if (statusOf(res) === 429) {
+    const wait = parseRetryAfterMs(responseHeaderOf(res, 'retry-after'), text)
+    if (wait === undefined) return { status: 429, text, error: 'HTTP 429(限流,响应未带退避信号)' }
+    if (wait > NOTIFY_BACKOFF_MAX_MS) return { status: 429, text, error: `HTTP 429(限流:建议 ${Math.ceil(wait / 1000)}s 后重试——等待值超过就地退避上限 ${NOTIFY_BACKOFF_MAX_MS / 1000}s,如实失败)` }
+    await sleep(wait + 25)
+    res = await once()
+    text = await responseTextOf(res)
+    if (statusOf(res) === 429) return { status: 429, text, error: 'HTTP 429(限流:就地退避重试一次后仍被限)' }
+  }
+  return { status: statusOf(res), text }
+}
+
+/**
+ * 可选出站代理(env HTTPS_PROXY/HTTP_PROXY):Telegram 官方 API 在 CN 部署必须走代理
+ * (本机 api.telegram.org SSL 连接失败 exit 35 实测)。undici ProxyAgent 按运行时可用性
+ * 动态解析(计算属性名 import,打包器不解析非字面量 specifier——undici 不进 package.json,
+ * 零依赖纪律不变):宿主进程解析不到 undici 时如实退回直连,即「代理仅在可解析 undici 时
+ * 生效」;daemon 改代理环境变量后需重启进程才重读(env 注入路径与自愈链交互待核)。
+ * HTTPS(CONNECT)代理不看请求 URL,token 在 path 的 telegram 网络面不受影响;HTTP 代理
+ * 会看 URL——文档要求配 https:// 形态代理。
+ */
+let proxyAgentCache: { px: string; agentP: Promise<unknown> } | null = null
+async function proxyDispatcher(): Promise<unknown> {
+  const px = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy
+  if (px === undefined || px.length === 0) return undefined
+  if (proxyAgentCache === null || proxyAgentCache.px !== px) {
+    const spec = ['un', 'dici'].join('')
+    proxyAgentCache = {
+      px,
+      agentP: import(spec).then((m) => new (m as { ProxyAgent: new (uri: string) => unknown }).ProxyAgent(px)).catch(() => undefined),
+    }
+  }
+  return await proxyAgentCache.agentP
+}
+
+/** fetch init 附加代理 dispatcher(有代理时);dispatcher 不在标准 RequestInit 类型里,结构注入。 */
+async function withProxy(init: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const d = await proxyDispatcher()
+  return d === undefined ? init : { ...init, dispatcher: d }
 }
 
 // ---------------------------------------------------------------------------
@@ -26,10 +132,23 @@ export interface NotifyChannel {
 /** webhook 收端超时:慢收端不能挂住调度 tick(与 SMTP 步骤超时同口径)。 */
 const WEBHOOK_TIMEOUT_MS = 10_000
 
+/** WebhookChannel 的平台适配选项(normalize 层归一后透传)。 */
+export interface WebhookOpts {
+  /** generic 平台的 JSON 模板(值级 JSON-safe 注入,渲染后 JSON.parse 校验)。
+   * 仅 generic 生效:平台预设(feishu/dingtalk/wecom/telegram)请求形状固定,模板忽略。 */
+  template?: string
+  /** telegram bot token:官方设计 token 必在 URL path(TLS 网络面安全);存储面已拆独立字段
+   * (url 不落 token),send 期由 buildPayload 回拼。错误文案永不回显 URL/token。 */
+  telegramToken?: string
+  /** telegram 可选 parse_mode(MarkdownV2/HTML/Markdown)。 */
+  parseMode?: string
+}
+
 /**
  * Webhook 通道:POST JSON {title, body, at} 到任意收端(群机器人自建 webhook 等)。
  * fetch 构造期注入是为了单测桩掉真实网络;成功判定收窄到唯一 200——收端规范各异
  * (301/204/500 各有意义),只认明确成功码,失败带状态码方便排障。
+ * 429 显式退避信号(Retry-After 头 / telegram 体 retry_after)走共享有界退避(≤5s 就地重试一次)。
  */
 export class WebhookChannel implements NotifyChannel {
   readonly name: string
@@ -38,6 +157,7 @@ export class WebhookChannel implements NotifyChannel {
     private readonly url: string,
     private readonly fetchImpl: typeof globalThis.fetch = globalThis.fetch.bind(globalThis),
     private readonly platform: PlatformId = 'generic',
+    private readonly opts: WebhookOpts = {},
   ) {
     // name 带主机名:多 webhook 通道时结果日志能区分;URL 非法不在构造期炸(send 里兜)
     let host = ''
@@ -47,15 +167,31 @@ export class WebhookChannel implements NotifyChannel {
       : (host.length > 0 ? `${platform}:${host}` : platform)
   }
 
-  async send(title: string, body: string): Promise<{ ok: boolean; error?: string }> {
+  async send(title: string, body: string, vars?: NotifyTemplateVars): Promise<{ ok: boolean; error?: string }> {
     try {
       const at = new Date().toISOString()
-      const { url, init } = buildPayload(this.platform, this.url, title, body, at)
-      const res = await this.fetchImpl(url, { ...init, signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS) })
-      // 兼容旧测试桩:Response 形简单对象(无 text())时按空体处理——generic 平台 200 即成不受影响
-      const respText = typeof (res as { text?: unknown }).text === 'function' ? await res.text() : ''
-      const verdict = platformOk(this.platform, res.status, respText)
-      return verdict.ok ? { ok: true } : { ok: false, error: verdict.error ?? `HTTP ${res.status}` }
+      let url = this.url
+      let init: { method: 'POST'; headers: Record<string, string>; body: string }
+      if (this.platform === 'generic' && this.opts.template !== undefined && this.opts.template.length > 0) {
+        // 模板渲染:值级 JSON-safe 注入后必须整体过 JSON.parse——非法即如实失败,不静默回退
+        // 固定 payload(宿主 c-ling/dsh-plugin-notify 字符串替换拼坏 JSON 实证 + Gatus
+        // 花括号→方括号迁移史:占位符语法与 JSON 本体冲突是同类工具的坑)
+        const rendered = renderWebhookTemplate(this.opts.template, { title, body, at, ...vars })
+        try { JSON.parse(rendered) } catch {
+          return { ok: false, error: 'webhook 模板渲染结果非法 JSON(检查占位符与引号;未静默回退固定 payload)' }
+        }
+        init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: rendered }
+      } else {
+        const built = buildPayload(this.platform, this.url, title, body, at, Date.now(), { telegramToken: this.opts.telegramToken, parseMode: this.opts.parseMode })
+        url = built.url
+        init = built.init
+      }
+      const sendOnce = async (): Promise<unknown> =>
+        this.fetchImpl(url, await withProxy({ ...init, signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS) }) as RequestInit)
+      const r = await postOnceWithBackoff(sendOnce)
+      if (r.error !== undefined) return { ok: false, error: r.error }
+      const verdict = platformOk(this.platform, r.status, r.text)
+      return verdict.ok ? { ok: true } : { ok: false, error: verdict.error ?? `HTTP ${r.status}` }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : 'webhook 发送失败' }
     }
@@ -321,6 +457,225 @@ export class DshNotifyChannel implements NotifyChannel {
 }
 
 // ---------------------------------------------------------------------------
+// 通道四~六:push 类预设(bark / ntfy / pushover)
+// ---------------------------------------------------------------------------
+
+/** push 类通道收端超时:与 webhook 同 10s 口径(慢收端不能挂住调度 tick)。 */
+const PUSH_TIMEOUT_MS = WEBHOOK_TIMEOUT_MS
+
+/**
+ * Bark 通道(iOS push,自host 友好):POST {server}/push + JSON 体——官方 V2 主推形态
+ * (API_V2.md「users should use the new REST API」),device_key 在请求体不进 URL。GET 形态
+ * 的 key+内容全在 path(反代/服务端访问日志可见),而 SCRUB_RULES 只洗 query 不覆盖 path 段
+ * ——「凭据不进请求 URL」是纪律不是可选项。响应体形状官方未载(待核):按 HTTP 200 判定,
+ * body code==200 作增强校验、code 非 200 时如实报错(200 但非 JSON 按送达,不误杀)。
+ * 端到端加密(官方 encryption.md,AES-128-CBC)做参数透传不强推:ciphertext 给出时以密文体
+ * 发送(title/body 不再明文出现,iv 随参数外传);密钥只在用户 App 内配置,本侧不持有。
+ */
+export class BarkChannel implements NotifyChannel {
+  readonly name: string
+
+  constructor(
+    private readonly serverUrl: string,
+    private readonly deviceKey: string,
+    private readonly fetchImpl: typeof globalThis.fetch = globalThis.fetch.bind(globalThis),
+    private readonly opts: { group?: string; level?: string; sound?: string; ciphertext?: string; iv?: string } = {},
+  ) {
+    // name 只取 host:结果日志能区分多通道,且不回显凭据(与 WebhookChannel 构造纪律同款)
+    let host = ''
+    try { host = new URL(serverUrl).host } catch { host = '' }
+    this.name = host.length > 0 ? `bark:${host}` : 'bark'
+  }
+
+  async send(title: string, body: string): Promise<{ ok: boolean; error?: string }> {
+    let base: URL
+    // URL 解析失败不回显原文(泄漏链:notify-test 把 error 原样拼进面板返回值,EmailChannel 同款纪律)
+    try { base = new URL(this.serverUrl) } catch { return { ok: false, error: 'Bark 服务器 URL 非法:需 https://<host> 形态(URL 原文不回显,防凭据泄漏)' } }
+    const encrypted = this.opts.ciphertext !== undefined && this.opts.ciphertext.length > 0
+    const bodyObj: Record<string, unknown> = encrypted
+      ? { device_key: this.deviceKey, ciphertext: this.opts.ciphertext, ...(this.opts.iv !== undefined && this.opts.iv.length > 0 ? { iv: this.opts.iv } : {}) }
+      : {
+          device_key: this.deviceKey,
+          title,
+          body,
+          ...(this.opts.group !== undefined ? { group: this.opts.group } : {}),
+          ...(this.opts.level !== undefined ? { level: this.opts.level } : {}),
+          ...(this.opts.sound !== undefined ? { sound: this.opts.sound } : {}),
+        }
+    // 自host 反代子路径保留(https://ex.com/bark → POST /bark/push);官方形态根路径 → /push
+    const target = new URL(`${base.pathname.replace(/\/+$/, '')}/push`, base).toString()
+    const sendOnce = async (): Promise<unknown> =>
+      this.fetchImpl(target, await withProxy({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bodyObj), signal: AbortSignal.timeout(PUSH_TIMEOUT_MS) }) as RequestInit)
+    try {
+      const r = await postOnceWithBackoff(sendOnce)
+      if (r.error !== undefined) return { ok: false, error: r.error }
+      if (r.status !== 200) return { ok: false, error: `HTTP ${r.status}` }
+      try {
+        const j = JSON.parse(r.text) as { code?: unknown }
+        if (j.code !== undefined && Number(j.code) !== 200) return { ok: false, error: `bark code ${String(j.code)}` }
+      } catch { /* 200 但非 JSON:响应形状官方未载,按送达 */ }
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : 'bark 发送失败' }
+    }
+  }
+}
+
+/**
+ * ntfy 通道(self-host topics):根路径 JSON publishing——topic 进请求体不进 URL
+ * (publish.md 逐字:「the topic is essentially a password」,PUT/POST /<topic> 形态把密码
+ * 放 URL path,中转/日志面可见;JSON publishing 是凭据面最优形态)。认证走
+ * Authorization: Bearer 头(access token,tk_ 前缀),不做 ?auth= query 兜底(头不可用的
+ * 场景本通道也不该发)。成功判定 HTTP 200;消息体官方上限 4096 字节(我方正文 ≤500 天然兼容),
+ * 超限服务端自动转附件,不在此截断。优先级 1-5 缺省 3(default)。
+ */
+export class NtfyChannel implements NotifyChannel {
+  readonly name: string
+
+  constructor(
+    private readonly serverUrl: string,
+    private readonly topic: string,
+    private readonly fetchImpl: typeof globalThis.fetch = globalThis.fetch.bind(globalThis),
+    private readonly opts: { token?: string; priority?: number } = {},
+  ) {
+    let host = ''
+    try { host = new URL(serverUrl).host } catch { host = '' }
+    this.name = host.length > 0 ? `ntfy:${host}` : 'ntfy'
+  }
+
+  async send(title: string, body: string): Promise<{ ok: boolean; error?: string }> {
+    let base: URL
+    try { base = new URL(this.serverUrl) } catch { return { ok: false, error: 'ntfy 服务器 URL 非法:需 https://<host> 形态(URL 原文不回显,topic 即密码)' } }
+    const bodyObj: Record<string, unknown> = { topic: this.topic, title, message: body, priority: this.opts.priority ?? 3, tags: ['bell'] }
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    if (this.opts.token !== undefined && this.opts.token.length > 0) headers.authorization = `Bearer ${this.opts.token}`
+    // 自host 子路径保留并补尾斜杠(https://ex.com/ntfy → POST /ntfy/;官方根路径 → POST /)
+    const target = new URL(`${base.pathname.replace(/\/+$/, '')}/`, base).toString()
+    const sendOnce = async (): Promise<unknown> =>
+      this.fetchImpl(target, await withProxy({ method: 'POST', headers, body: JSON.stringify(bodyObj), signal: AbortSignal.timeout(PUSH_TIMEOUT_MS) }) as RequestInit)
+    try {
+      const r = await postOnceWithBackoff(sendOnce)
+      if (r.error !== undefined) return { ok: false, error: r.error }
+      return r.status === 200 ? { ok: true } : { ok: false, error: `HTTP ${r.status}` }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : 'ntfy 发送失败' }
+    }
+  }
+}
+
+/** pushover 官方端点(固定;HTTPS 必须,凭据走 POST body 官方明示「never as URL query parameters」)。 */
+const PUSHOVER_ENDPOINT = 'https://api.pushover.net/1/messages.json'
+
+/**
+ * Pushover 通道(国际面):五通道中凭据面最干净——token/user 全在 POST body。success =
+ * HTTP 200 {status:1};4xx {status:0, errors:[…]} 服务端文案如实透传(字段名级,不含凭据);
+ * 429 月配额(免费 1 万条/月)走共享有界退避,无 Retry-After 时如实报错。emergency
+ * priority=2 需 retry/expire 无界等待,与旁路纪律冲突,normalize 层拒收(不开放)。
+ */
+export class PushoverChannel implements NotifyChannel {
+  readonly name = 'pushover:api.pushover.net'
+
+  constructor(
+    private readonly token: string,
+    private readonly user: string,
+    private readonly fetchImpl: typeof globalThis.fetch = globalThis.fetch.bind(globalThis),
+    private readonly opts: { device?: string; priority?: number; sound?: string } = {},
+  ) {}
+
+  async send(title: string, body: string): Promise<{ ok: boolean; error?: string }> {
+    const bodyObj: Record<string, unknown> = {
+      token: this.token,
+      user: this.user,
+      title,
+      message: body,
+      ...(this.opts.device !== undefined ? { device: this.opts.device } : {}),
+      ...(this.opts.priority !== undefined ? { priority: this.opts.priority } : {}),
+      ...(this.opts.sound !== undefined ? { sound: this.opts.sound } : {}),
+    }
+    const sendOnce = async (): Promise<unknown> =>
+      this.fetchImpl(PUSHOVER_ENDPOINT, await withProxy({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bodyObj), signal: AbortSignal.timeout(PUSH_TIMEOUT_MS) }) as RequestInit)
+    try {
+      const r = await postOnceWithBackoff(sendOnce)
+      if (r.error !== undefined) return { ok: false, error: r.error }
+      if (r.status !== 200) return { ok: false, error: `HTTP ${r.status}` }
+      try {
+        const j = JSON.parse(r.text) as { status?: unknown; errors?: unknown }
+        if (j.status !== 1) {
+          const errs = Array.isArray(j.errors) ? j.errors.map(String).join(';') : 'status!=1'
+          return { ok: false, error: `pushover: ${errs}` }
+        }
+      } catch { /* 200 但非 JSON:按送达 */ }
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : 'pushover 发送失败' }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// webhook 模板(值级 JSON-safe 注入)与 URL path 凭据拆解
+// ---------------------------------------------------------------------------
+
+/** webhook 模板长度上限(normalize 超长丢弃;与 ntfy 消息体官方上限同量级)。 */
+export const NOTIFY_TEMPLATE_MAX = 4096
+
+/** 模板内置变量白名单(闭集):{{key}} 只认这七个——全部来自已 scrub 的 buildNotifyBody/调度段;
+ * 白名单外的占位符原样保留(不猜测补全,黑箱执行是红线)。 */
+const TEMPLATE_VAR_KEYS: readonly string[] = ['title', 'body', 'at', 'ok', 'site', 'source', 'watchHits']
+
+/**
+ * 值级 JSON-safe 注入:字符串值 {{key}} → JSON.stringify(value).slice(1, -1)——值变成 JSON
+ * 字符串字面量的「内容」(引号/换行自动转义),模板怎么拼都不会产出非法 JSON(宿主
+ * c-ling/dsh-plugin-notify 增补 {{json:key}} 的同语义;Gatus 花括号→方括号迁移史是占位符
+ * 与 JSON 冲突的第二独立证据)。非字符串值(ok 布尔/watchHits 数组)整值注入 JSON 字面量
+ * (true / ["a","b"]——slice 口径会把 true 吃成 ru,字符串/非字符串必须分型)。
+ * 白名单外的 {{…}} 原样保留;变量缺席(notify-test 未给 ok)渲染为空串——模板强依赖缺席
+ * 变量时会渲染出非法 JSON,由渲染后的 JSON.parse 校验如实报错,不静默回退。不引模板引擎
+ * (notify.ts 零依赖纪律,Uptime Kuma Liquid 是反面教材)。
+ */
+export function renderWebhookTemplate(tpl: string, vars: { title: string; body: string; at: string } & NotifyTemplateVars): string {
+  const bag = vars as unknown as Record<string, unknown>
+  return tpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, key: string) => {
+    if (!TEMPLATE_VAR_KEYS.includes(key)) return m
+    const v = bag[key]
+    if (v === undefined || v === null) return ''
+    return typeof v === 'string' ? JSON.stringify(v).slice(1, -1) : JSON.stringify(v)
+  })
+}
+
+/**
+ * 拆 URL 最后一段非空路径(bark 官方分享形态 https://api.day.app/<key>、ntfy 形态
+ * https://ntfy.sh/<topic>):返回去掉该段的 base 与该段原文;无路径段时 credential 为
+ * undefined。存储面拆解(§九.1 跨通道必答题:凭据不随 URL 落 state.json),send 期也绝不
+ * 回拼进 URL。URL 非法时原样返回(由通道 send 期如实报错)。
+ */
+export function splitTrailingPathSegment(raw: string): { base: string; credential?: string } {
+  let u: URL
+  try { u = new URL(raw) } catch { return { base: raw } }
+  const trimmed = u.pathname.replace(/\/+$/, '')
+  const i = trimmed.lastIndexOf('/')
+  const last = i >= 0 ? trimmed.slice(i + 1) : ''
+  if (last.length === 0) return { base: `${u.origin}${u.search}`.replace(/\/+$/, '') }
+  return { base: `${u.origin}${i > 0 ? trimmed.slice(0, i) : ''}${u.search}`.replace(/\/+$/, ''), credential: last }
+}
+
+/**
+ * 拆 telegram 官方形态 URL 的 bot token(path 段 bot<token>,官方设计 token 必在 path):
+ * 返回去掉 bot 段的 base 与 token,send 期由 buildPayload 重组(TLS 网络面安全;存储面/
+ * 面板回显/错误文案三面不落 token)。无 bot 段(非 telegram 形态)原样返回。URL 非法原样返回。
+ */
+export function splitTelegramBotUrl(raw: string): { base: string; token?: string } {
+  let u: URL
+  try { u = new URL(raw) } catch { return { base: raw } }
+  const segs = u.pathname.split('/').filter((s) => s.length > 0)
+  const bi = segs.findIndex((s) => /^bot(.+)$/.test(s))
+  if (bi < 0) return { base: raw }
+  const token = /^bot(.+)$/.exec(segs[bi]!)![1]!
+  const rest = segs.filter((_, idx) => idx !== bi)
+  return { base: `${u.origin}${rest.length > 0 ? `/${rest.join('/')}` : ''}${u.search}`.replace(/\/+$/, ''), token }
+}
+
+// ---------------------------------------------------------------------------
 // 出口清洗与正文组装
 // ---------------------------------------------------------------------------
 
@@ -400,8 +755,8 @@ export interface NotifyResultInfo {
   reportPath?: string
 }
 
-/** 通知正面上限:超长截断(收端对长度各有上限,500 字以内通吃)。 */
-const NOTIFY_BODY_MAX = 500
+/** 通知正面上限:超长截断(收端对长度各有上限,500 字以内通吃;日结早报 compact 卡同口径复用)。 */
+export const NOTIFY_BODY_MAX = 500
 
 /**
  * 组装通知:标题含站点+时间,正文含结果 ok/fail、watch 命中、报告文件名,≤500 字。
@@ -438,15 +793,45 @@ export function buildNotifyBody(
 // 配置持久化(state.json 的 notifyConfig 段)
 // ---------------------------------------------------------------------------
 
-/** 单条通道配置。type 决定必填字段:webhook 要 url;email 要 url(SMTP)+ to;dsh 无参。 */
+/**
+ * 单条通道配置。type 决定必填字段:webhook 要 url;email 要 url(SMTP)+ to;dsh 无参;
+ * bark 要 url(服务器)+ deviceKey(可由 URL path 拆出);ntfy 要 url + topic(可拆);
+ * pushover 要 token + user(端点官方固定,无 url)。凭据类字段(deviceKey/topic/token/
+ * user/telegramToken)永不进 send 期请求 URL(见类注释),存储面为独立字段而非 URL path。
+ */
 export interface NotifyChannelConfig {
-  type: 'webhook' | 'email' | 'dsh'
+  type: 'webhook' | 'email' | 'dsh' | 'bark' | 'ntfy' | 'pushover'
   /** webhook 的平台预设(0.4.6 D):不填按 URL 推断,推断不出走 generic */
   platform?: 'generic' | 'feishu' | 'dingtalk' | 'wecom' | 'telegram'
-  /** webhook 收端地址 / email 的 SMTP URL(smtp:// 或 smtps://)。 */
+  /** webhook 收端地址 / email 的 SMTP URL / bark·ntfy 的服务器地址(凭据段已在归一时拆出)。 */
   url?: string
   /** email 收件人。 */
   to?: string
+  /** bark device_key(凭据;POST /push JSON 体,不进 URL)。 */
+  deviceKey?: string
+  /** ntfy topic(topic 即密码,进 body 不进 URL)。 */
+  topic?: string
+  /** ntfy access token(Bearer 头)/ pushover app token(POST 体)。 */
+  token?: string
+  /** pushover user key(POST 体)。 */
+  user?: string
+  /** telegram bot token:官方 URL path 必带,存储面拆出独立字段(url 不落 token),send 期回拼。 */
+  telegramToken?: string
+  /** telegram 可选 parse_mode(MarkdownV2/HTML/Markdown 白名单)。 */
+  parseMode?: string
+  /** webhook(generic)JSON 模板:值级 JSON-safe 注入,渲染后 JSON.parse 校验,非法如实失败不回退。 */
+  template?: string
+  /** bark 可选透传参数(官方 API_V2)。 */
+  group?: string
+  level?: string
+  sound?: string
+  /** bark 端到端加密透传(AES-128-CBC,官方 encryption.md;ciphertext+iv,密钥留在用户 App)。 */
+  ciphertext?: string
+  iv?: string
+  /** ntfy 优先级 1-5(缺省 3)/ pushover -2..1(emergency 2 需无界等待,不开放)。 */
+  priority?: number
+  /** pushover 目标设备名(可选)。 */
+  device?: string
   enabled: boolean
 }
 
@@ -454,9 +839,29 @@ export interface NotifyConfig {
   channels: NotifyChannelConfig[]
 }
 
+const BARK_LEVELS: readonly string[] = ['critical', 'active', 'timeSensitive', 'passive']
+const TELEGRAM_PARSE_MODES: readonly string[] = ['MarkdownV2', 'HTML', 'Markdown']
+
+/** 有界字符串:非空且 ≤max 才收(配置白名单纪律:超长/非串按未提供处理,不截断不猜)。 */
+const boundedStr = (v: unknown, max: number): string | undefined =>
+  typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined
+
+/** 有界整数(优先级类字段):越界/非整按未提供处理。 */
+const boundedInt = (v: unknown, lo: number, hi: number): number | undefined =>
+  typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : undefined
+
+/** telegram host 判定(平台推断同源:归一层在拆 token 时顺带把 platform 落成显式 telegram)。 */
+const isTelegramHost = (url: string): boolean => {
+  try { return /(^|\.)telegram\.org$/.test(new URL(url).hostname) } catch { return false }
+}
+
 /**
  * 配置归一化:state.json 是用户可手改的文件,读进来先过白名单——未知 type、非字符串
  * url/to 整条丢弃而不是抛错,通知是旁路,坏一条配置不能废掉整个加载(loadState 同款容错)。
+ * 凭据拆解(0.1.4 候选 1):bark/ntfy 的 URL path 凭据段与 telegram 的 bot<token> 段在此
+ * 拆成独立字段、原始 URL 以无凭据形态落盘——用户按官方习惯粘贴的 URL 不泄漏凭据到
+ * 存储面,面板回显只出遮蔽摘要(redact.ts describeNotifyChannel)。幂等:已拆形态再过
+ * 一遍无变化。
  */
 export function normalizeNotifyConfig(raw: unknown): NotifyConfig {
   if (raw === null || typeof raw !== 'object') return { channels: [] }
@@ -465,15 +870,87 @@ export function normalizeNotifyConfig(raw: unknown): NotifyConfig {
   const channels: NotifyChannelConfig[] = []
   for (const c of list) {
     if (c === null || typeof c !== 'object') continue
-    const o = c as { type?: unknown; url?: unknown; to?: unknown; enabled?: unknown }
-    if (o.type !== 'webhook' && o.type !== 'email' && o.type !== 'dsh') continue
-    channels.push({
-      type: o.type,
-      url: typeof o.url === 'string' && o.url.length > 0 ? o.url : undefined,
-      to: typeof o.to === 'string' && o.to.length > 0 ? o.to : undefined,
-      enabled: o.enabled === true,
-      ...(o.platform === 'feishu' || o.platform === 'dingtalk' || o.platform === 'wecom' || o.platform === 'telegram' || o.platform === 'generic' ? { platform: o.platform } : {}),
-    })
+    const o = c as Record<string, unknown>
+    if (o.type !== 'webhook' && o.type !== 'email' && o.type !== 'dsh' && o.type !== 'bark' && o.type !== 'ntfy' && o.type !== 'pushover') continue
+    const type = o.type
+    const enabled = o.enabled === true
+    const platform = o.platform === 'feishu' || o.platform === 'dingtalk' || o.platform === 'wecom' || o.platform === 'telegram' || o.platform === 'generic' ? o.platform : undefined
+    let url = boundedStr(o.url, 2048)
+    if (type === 'bark') {
+      let deviceKey = boundedStr(o.deviceKey, 256)
+      if (url !== undefined && deviceKey === undefined) {
+        // 官方分享形态 https://api.day.app/<key>:拆出 device_key,URL 存无凭据 base
+        const s = splitTrailingPathSegment(url)
+        url = s.base
+        deviceKey = s.credential
+      }
+      const group = boundedStr(o.group, 64)
+      const level = o.level !== undefined && BARK_LEVELS.includes(o.level as string) ? (o.level as (typeof BARK_LEVELS)[number]) : undefined
+      const sound = boundedStr(o.sound, 64)
+      const ciphertext = boundedStr(o.ciphertext, 4096)
+      const iv = boundedStr(o.iv, 64)
+      channels.push({
+        type, enabled, ...(url !== undefined ? { url } : {}), ...(deviceKey !== undefined ? { deviceKey } : {}),
+        ...(group !== undefined ? { group } : {}),
+        ...(level !== undefined ? { level } : {}),
+        ...(sound !== undefined ? { sound } : {}),
+        ...(ciphertext !== undefined ? { ciphertext } : {}),
+        ...(iv !== undefined ? { iv } : {}),
+      })
+    } else if (type === 'ntfy') {
+      let topic = boundedStr(o.topic, 256)
+      if (url !== undefined && topic === undefined) {
+        // https://ntfy.sh/<topic>:topic 即密码,拆出独立字段
+        const s = splitTrailingPathSegment(url)
+        url = s.base
+        topic = s.credential
+      }
+      const token = boundedStr(o.token, 256)
+      const priority = boundedInt(o.priority, 1, 5)
+      channels.push({
+        type, enabled, ...(url !== undefined ? { url } : {}), ...(topic !== undefined ? { topic } : {}),
+        ...(token !== undefined ? { token } : {}),
+        ...(priority !== undefined ? { priority } : {}),
+      })
+    } else if (type === 'pushover') {
+      // 端点官方固定:不接受 url(配置里给了也丢,凭据面最干净的通道没有自host)
+      const token = boundedStr(o.token, 64)
+      const user = boundedStr(o.user, 64)
+      const device = boundedStr(o.device, 64)
+      const priority = boundedInt(o.priority, -2, 1)
+      const sound = boundedStr(o.sound, 64)
+      channels.push({
+        type, enabled,
+        ...(token !== undefined ? { token } : {}),
+        ...(user !== undefined ? { user } : {}),
+        ...(device !== undefined ? { device } : {}),
+        ...(priority !== undefined ? { priority } : {}),
+        ...(sound !== undefined ? { sound } : {}),
+      })
+    } else {
+      // webhook:telegram token 拆解(显式 platform 或官方 host);query(chat=、钉钉 secret=)不属
+      // path 凭据,维持原状(scrub 链对 query 覆盖,存储面口径与既有版本一致)
+      let telegramToken = boundedStr(o.telegramToken, 256)
+      let effPlatform = platform
+      if (url !== undefined && telegramToken === undefined && (platform === 'telegram' || (platform === undefined && isTelegramHost(url)))) {
+        const s = splitTelegramBotUrl(url)
+        if (s.token !== undefined) {
+          url = s.base
+          telegramToken = s.token
+          effPlatform = 'telegram'
+        }
+      }
+      const to = boundedStr(o.to, 320)
+      const template = boundedStr(o.template, NOTIFY_TEMPLATE_MAX)
+      const parseMode = o.parseMode !== undefined && TELEGRAM_PARSE_MODES.includes(o.parseMode as string) ? (o.parseMode as (typeof TELEGRAM_PARSE_MODES)[number]) : undefined
+      channels.push({
+        type, enabled, ...(url !== undefined ? { url } : {}), ...(to !== undefined ? { to } : {}),
+        ...(effPlatform !== undefined ? { platform: effPlatform } : {}),
+        ...(telegramToken !== undefined ? { telegramToken } : {}),
+        ...(parseMode !== undefined ? { parseMode } : {}),
+        ...(template !== undefined ? { template } : {}),
+      })
+    }
   }
   return { channels }
 }
@@ -515,9 +992,12 @@ export function buildNotifyChannels(config: NotifyConfig, opts: { emit: (ev: Ing
   const out: NotifyChannel[] = []
   for (const c of config.channels) {
     if (!c.enabled) continue
-    if (c.type === 'webhook' && c.url !== undefined) out.push(new WebhookChannel(c.url, globalThis.fetch.bind(globalThis), platformOf(c.url, c.platform)))
+    if (c.type === 'webhook' && c.url !== undefined) out.push(new WebhookChannel(c.url, globalThis.fetch.bind(globalThis), platformOf(c.url, c.platform), { template: c.template, telegramToken: c.telegramToken, parseMode: c.parseMode }))
     else if (c.type === 'email' && c.url !== undefined && c.to !== undefined) out.push(new EmailChannel(c.url, c.to))
     else if (c.type === 'dsh') out.push(new DshNotifyChannel(opts.emit))
+    else if (c.type === 'bark' && c.url !== undefined && c.deviceKey !== undefined) out.push(new BarkChannel(c.url, c.deviceKey, globalThis.fetch.bind(globalThis), { group: c.group, level: c.level, sound: c.sound, ciphertext: c.ciphertext, iv: c.iv }))
+    else if (c.type === 'ntfy' && c.url !== undefined && c.topic !== undefined) out.push(new NtfyChannel(c.url, c.topic, globalThis.fetch.bind(globalThis), { token: c.token, priority: c.priority }))
+    else if (c.type === 'pushover' && c.token !== undefined && c.user !== undefined) out.push(new PushoverChannel(c.token, c.user, globalThis.fetch.bind(globalThis), { device: c.device, priority: c.priority, sound: c.sound }))
   }
   return out
 }
@@ -525,10 +1005,11 @@ export function buildNotifyChannels(config: NotifyConfig, opts: { emit: (ev: Ing
 /**
  * 群发:所有通道并发尝试,单通道失败不影响其他(返回逐通道结果供日志/审计)。
  * 正文请先用 buildNotifyBody 组装(那里已统一 scrub),这里不再二次清洗。
+ * vars 是 webhook 模板渲染的调度侧变量(可选;其余通道忽略)。
  */
-export async function sendViaChannels(channels: NotifyChannel[], title: string, body: string): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
+export async function sendViaChannels(channels: NotifyChannel[], title: string, body: string, vars?: NotifyTemplateVars): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
   return await Promise.all(channels.map(async (ch) => {
-    const r = await ch.send(title, body)
+    const r = await ch.send(title, body, vars)
     return { name: ch.name, ...r }
   }))
 }

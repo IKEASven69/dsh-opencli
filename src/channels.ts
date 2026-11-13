@@ -8,8 +8,9 @@
  *      与 sign HMAC-SHA256(base64,urlencode)(secret 由面板/ctl 传,或 URL query 已带);
  *  - wecom:{"msgtype":"text","text":{"content":"title\nbody"}}(@机器人无关键字时需配置关键词,
  *      正文自动以 title 开头即可命中);
- *  - telegram:GET/POST https://api.telegram.org/bot<token>/sendMessage {chat_id, text}
- *      (URL 形态 https://api.telegram.org/bot<token>/send?chat=<chat_id>,适配层拆)。
+ *  - telegram:POST https://api.telegram.org/bot<token>/sendMessage {chat_id, text[, parse_mode]};
+ *      chat_id 从 URL query 拆(?chat=),bot token 存储面拆独立字段、send 期回拼官方 path
+ *      形态(0.1.4 候选 1 升级:429 retry_after 有界退避在通道层,parse_mode 可选透传)。
  * 加签纪律:secret 不落 state 明文日志,send 失败信息只含状态码不含签名材料。
  * @module dsh-opencli/channels
  */
@@ -41,8 +42,17 @@ function queryParams(u: URL): Record<string, string> {
   return o
 }
 
+/** telegram 平台适配选项(0.1.4 候选 1:既有预设升级,非新写通道)。 */
+export interface TelegramOpts {
+  /** bot token:官方设计 token 必在 URL path(TLS 网络面安全);存储面拆独立字段后此处回拼。
+   * 未给且 URL 无 bot 段 → 原样透传(既有手拼形态兼容)。 */
+  telegramToken?: string
+  /** 可选 parse_mode(MarkdownV2/HTML/Markdown;normalize 白名单,这里只透传)。 */
+  parseMode?: string
+}
+
 /** 单平台请求构造:返回 {url, init} 由调用方 fetch;不识别的平台回 generic 兜底。 */
-export function buildPayload(platform: PlatformId, url: string, title: string, body: string, at: string, now = Date.now()): { url: string; init: { method: 'POST'; headers: Record<string, string>; body: string } } {
+export function buildPayload(platform: PlatformId, url: string, title: string, body: string, at: string, now = Date.now(), opts?: TelegramOpts): { url: string; init: { method: 'POST'; headers: Record<string, string>; body: string } } {
   const text = `${title}\n${body}`
   switch (platform) {
     case 'feishu':
@@ -66,7 +76,15 @@ export function buildPayload(platform: PlatformId, url: string, title: string, b
       // 形态:https://api.telegram.org/bot<token>/sendMessage?chat=<chat_id>
       const u = new URL(url)
       const chat = queryParams(u).chat ?? queryParams(u).chat_id ?? ''
-      return { url, init: { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chat, text }) } }
+      // token 回拼:归一层把 bot<token> 段拆出独立字段(url 不落 token),send 期重组官方
+      // path 形态;无 method 段补官方默认 /sendMessage。错误文案(WebhookChannel/platformOk)
+      // 只带状态码与服务器 errmsg,永不回显本 URL。
+      const token = opts?.telegramToken ?? ''
+      const path = u.pathname.length > 0 && u.pathname !== '/' ? u.pathname : '/sendMessage'
+      const target = token.length > 0 ? `${u.origin}/bot${token}${path}${u.search}` : url
+      const bodyObj: Record<string, unknown> = { chat_id: chat, text }
+      if (opts?.parseMode !== undefined && opts.parseMode.length > 0) bodyObj.parse_mode = opts.parseMode
+      return { url: target, init: { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bodyObj) } }
     }
     default:
       return { url, init: { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, body, at }) } }

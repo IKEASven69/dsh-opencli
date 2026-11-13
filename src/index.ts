@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 import type {
   AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
   AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, DaemonStartResult, EvidenceGetResult,
-  EventsGetResult, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, SettingsResult, TraceLine, TraceListResult,
+  EventsGetResult, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, RunInboxEntry, RunInboxListResult, SettingsResult, TraceLine, TraceListResult,
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, extractJsonObject, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
@@ -42,6 +42,12 @@ import { drainInbox, inboxDir, parseIntent, applyIntent, type IntentExecutor, ty
 import { startMcpSelfhost, mcpAuthFile, type McpSelfhostHandle } from './mcp-selfhost.ts'
 import { aggregateDaySums, detectDrift, diffSnapshots, renderDiffText, type DriftSample } from './diffsnap.ts'
 import { authRiskClass, countStructuredItems, cursorOfPartialPage, coverageStopReason, isChallengePage, isDecorativeStep, looksPartialPage, looksTruncated, looksUnloaded, typedErrorCode, type Receipt } from './parsers.ts'
+// 日结早报(0.1.4 候选 2)与连败计数/熔断归因(候选 3)纯函数层:单一来源在 digest.ts,
+// 服务层只做接线(日账入账/tick 日结检查/开窗归因触发),判定与装配逻辑不进本文件
+import { buildDigest, circuitSignatureOf, judgeCircuitAttribution, localDateKey, DigestDayLedger, FailStreakCounter, type CircuitAttribution } from './digest.ts'
+// 运行级收件箱(0.1.4 候选 5)纯函数层:条目合成/无产出判定/状态键有界,单一来源在 runinbox.ts
+// (与 inbox.ts 的 ctl 意图回执两套语义分开命名;服务层只做状态读写与 RPC 投影)
+import { boundInboxFlags, inboxFlagKey, inboxRunStatus, inboxUnreadCount, isNoOutputRun, purgeInboxFlags, synthesizeRunInbox, type InboxRunFlag, type RunHistoryRow } from './runinbox.ts'
 
 /** 本插件版本单一来源在 version.ts(自检视图与面板「版本与更新」卡共用同一常量)。 */
 import { exportSnapshots } from './exportcsv.ts'
@@ -106,14 +112,18 @@ interface PluginState {
   disabled: string[]
   /** 持久化定时任务:重启恢复,每分钟 tick 到期自动执行 site 命令;watch=关键词监控(命中即通知) */
   schedules: Array<{ id: string; site: string; cron: string; createdAt: string; enabled: boolean; lastRunAt?: string; retry?: number; notify?: boolean; watch?: string }>
-  /** 每任务运行历史(最近 5 条) */
-  runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string }>>
+  /** 每任务运行历史(最近 5 条;行形状=runinbox.RunHistoryRow 的持久投影) */
+  runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string; skip?: true }>>
   /** 审批门拦截审计(最近 50 条) */
   audit: Array<{ at: string; command: string; reason: string; mode: string }>
   /** 通知通道配置(任务 E):放 state 里跟着 saveState 走——saveState 是整文件重写,
    *  notifyConfig 不进 this.state 就会在下一次任意调度落盘时被丢键(notify.ts 的
    *  saveNotifyConfig 单独写该段保不住这条路径)。 */
   notifyConfig?: NotifyConfig
+  /** 运行级收件箱已读/归档状态(0.1.4 候选 5 ①):稳定键 `${taskId}|${run at}`,有界
+   *  (INBOX_FLAG_CAP,超限裁最旧),任务删除即清该任务全部键——条目本体不建持久层
+   *  (查询时从 runHistory 合成),只有这两个交互状态落盘。 */
+  inboxFlags?: Record<string, InboxRunFlag>
 }
 
 /** 0.2.0 ctx.subprocess 服务的最小形状(dsh-subprocess 的 spawn seam;只取用到的成员)。 */
@@ -281,7 +291,7 @@ export class OpencliService extends TypertRemoteService {
      *  (上游 2.0.3 原生 --profile/contextId 路由,真隔离:不同 profile=不同浏览器档案的 cookie/存储) */
     profile?: string
   }> = []
-  private runHistory: Record<string, Array<{ at: string; ok: boolean; summary: string; receipt?: Receipt }>> = {}
+  private runHistory: Record<string, RunHistoryRow[]> = {}
   /** 快照根目录(DSH_OPENCLI_SNAPSHOTS_DIR 可覆盖,测试隔离用;与 traceDir 同款约定)。 */
   private readonly snapshotsBase = process.env.DSH_OPENCLI_SNAPSHOTS_DIR !== undefined && process.env.DSH_OPENCLI_SNAPSHOTS_DIR.length > 0 ? process.env.DSH_OPENCLI_SNAPSHOTS_DIR : join(homedir(), '.dsh', 'opencli-snapshots')
   private automationMode: 'read-only' | 'standard' | 'autonomous' | 'unrestricted' = 'standard'
@@ -2431,7 +2441,10 @@ export class OpencliService extends TypertRemoteService {
     const i = this.schedules.findIndex((s) => s.id === String(request.id ?? ''))
     if (i < 0) return { ok: false, error: '未找到' }
     this.schedules.splice(i, 1)
-    delete this.runHistory[String(request.id ?? '')]
+    const removedId = String(request.id ?? '')
+    delete this.runHistory[removedId]
+    // 运行级收件箱状态随任务删除清理(0.1.4 候选 5 ①):任务没了,read/archived 键不留孤儿
+    purgeInboxFlags(this.state.inboxFlags, removedId)
     await this.saveState()
     return { ok: true }
   }
@@ -3835,7 +3848,26 @@ export class OpencliService extends TypertRemoteService {
       for (const k of Object.keys(this.runHistory)) {
         if (k.includes(':')) delete this.runHistory[k]
       }
+      // 连败计数重启恢复(0.1.4 候选 3):#2761 互杀一天三翻的常态下,内存计数器随进程死掉
+      // 会让「连续第 N 日」永远从 1 重数;从持久化的 runHistory 重建(runHistory 每任务 5 条,
+      // 窗口外更早的连败无从恢复,如实少记——digest.ts FailStreakCounter.rebuildFromRunHistory)
+      this.failStreaks.rebuildFromRunHistory(this.runHistory)
       if (Array.isArray(parsed.audit)) this.state.audit = parsed.audit.filter((a) => a !== null && typeof a === 'object' && typeof (a as { at?: unknown }).at === 'string')
+      // 运行级收件箱状态(0.1.4 候选 5):形状校验逐键过滤(用户可手改的文件,坏条目丢弃
+      // 不抛错,与 schedules/audit 同款容错口径);加载后即做一次有界(防手改塞爆)
+      if (parsed.inboxFlags !== undefined && typeof parsed.inboxFlags === 'object' && parsed.inboxFlags !== null) {
+        const flags: Record<string, InboxRunFlag> = {}
+        for (const [k, v] of Object.entries(parsed.inboxFlags as Record<string, unknown>)) {
+          if (v === null || typeof v !== 'object') continue
+          const f = v as Record<string, unknown>
+          flags[k] = {
+            ...(f.read === true ? { read: true } : {}),
+            ...(f.archived === true ? { archived: true } : {}),
+            ...(f.by === 'manual' || f.by === 'auto' ? { by: f.by } : {}),
+          }
+        }
+        this.state.inboxFlags = boundInboxFlags(flags)
+      }
       // notifyConfig 走 notify.ts 白名单归一:state.json 是用户可手改的文件,坏条目
       // 丢弃而不是抛错(与 schedules/audit 同款容错口径,通知是旁路不能废加载)
       this.state.notifyConfig = normalizeNotifyConfig(parsed.notifyConfig)
@@ -3896,7 +3928,9 @@ export class OpencliService extends TypertRemoteService {
     const config = this.state.notifyConfig ?? { channels: [] }
     const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
     if (channels.length === 0) return { ok: false, error: '尚未配置通知通道:先 notify set' }
-    const rs = await sendViaChannels(channels, 'dsh-openctl 测试通知', '如果你收到这条,通知通道配置成功。')
+    // webhook 模板变量:测试消息如实描述自身(ok=这条测试送达/site=测试标记)——模板若强
+    // 依赖调度变量而测试未给,渲染会出非法 JSON 如实报错,用户能在测试按钮上发现模板问题
+    const rs = await sendViaChannels(channels, 'dsh-openctl 测试通知', '如果你收到这条,通知通道配置成功。', { ok: true, site: 'notify-test', source: 'test', watchHits: [] })
     const bad = rs.filter((x) => !x.ok)
     return { ok: bad.length === 0, error: bad.length === 0 ? undefined : bad.map((x) => `${x.name}:${x.error ?? ''}`).join('; ') }
   }
@@ -3910,6 +3944,10 @@ export class OpencliService extends TypertRemoteService {
       scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}), ...((i as { jitter?: boolean }).jitter !== undefined ? { jitter: (i as { jitter?: boolean }).jitter } : {}), ...(i.preflight !== undefined ? { preflight: i.preflight } : {}), ...(i.keep !== undefined ? { keep: i.keep } : {}), ...(i.backoffMs !== undefined ? { backoffMs: i.backoffMs } : {}), ...(i.profile !== undefined ? { profile: i.profile } : {}) }),
       scheduleRemove: async (id) => this.scheduleRemove({ id }),
       scheduleRun: async (id) => this.scheduleRunNow({ id }),
+      // 运行级收件箱轻量意图(0.1.4 候选 5 ④):与面板 RPC 同源(inboxRead/inboxArchive),
+      // task+at=单条,省 at=全部(读)/全部已读(归档)
+      scheduleRead: async (i) => this.inboxRead({ ...(i.task !== undefined ? { task: i.task } : {}), ...(i.at !== undefined ? { at: i.at } : {}) }),
+      scheduleArchive: async (i) => this.inboxArchive({ ...(i.task !== undefined ? { task: i.task } : {}), ...(i.at !== undefined ? { at: i.at } : {}) }),
       scheduleList: async () => { const r = await this.scheduleList(); return { ok: r.ok, schedules: r.schedules as unknown as Array<Record<string, unknown>>, error: r.ok ? undefined : '读取失败' } },
       notifySet: async (channels) => { const r = await this.notifyConfig({ channels }); return { ok: r.ok, error: r.error } },
       notifyTest: async () => this.notifyTestSend(),
@@ -3972,6 +4010,8 @@ export class OpencliService extends TypertRemoteService {
         this.addSchedMarker(histKey)
         void this.runSiteCommand(sch.site, sch.id)
       }
+      // 日结检查(0.1.4 候选 2):时点跟随调度 tick,不新增 timer;本地日期翻转时结算早报一次
+      void this.dailyDigestCheck()
     }, 15_000)
     try { this.schedTimer.unref?.() } catch { /* ignore */ }
   }
@@ -3989,16 +4029,39 @@ export class OpencliService extends TypertRemoteService {
   /** 熔断窗默认 30 分钟(DSH_OPENCLI_CIRCUIT_MINUTES 可配)。 */
   private static readonly CIRCUIT_WINDOW_MS = 30 * 60 * 1000
 
+  // ── 0.1.4 候选 2:日结早报(触发=调度 tick 内建日结检查,本地日期翻转时结算一次,不新增 timer)
+  /** 当日日账(run 级聚合,早报数据源;进程内存态,重启丢账——早报尾行如实标注)。 */
+  private dayLedger = new DigestDayLedger(localDateKey(new Date()))
+  /** 进程实际启动时刻(日账缺口归因的证据:仅当启动落在覆盖日才写「进程当日启动/重启」)。 */
+  private readonly bootedAt = new Date()
+  /** 上次日结检查看到的本地日期(undefined=启动后首见,只记基准不补发——内存日账不完整,补发即虚报覆盖)。 */
+  private lastDigestDay: string | undefined
+  /** 早报卡顺延暂存(quietHours 窗内暂不出窗,出窗后第一个 tick 补发;新一天结算时被替换即丢弃——
+   *  数据不丢:digest 事件与 md/json 落盘层不受顺延影响)。ok 随卡暂存:失败卡(带 ✗ 行)补发时
+   *  模板 {{ok}} 必须如实 false,不回 sendDigestCard 的 true 默认——失败说真话在结构化字段上同成立。 */
+  private pendingDigestCard: { date: string; title: string; card: string; ok: boolean } | null = null
+  /** 日结结算在途标记(结算含通道发送,最长 10s 级;防 tick 重入)。 */
+  private digestBusy = false
+  /** digest 落盘留存预算(md+json 各 30 份 ≈ 一个月,与 canary 14 份/traces 5MB 同款回执卫生)。 */
+  private static readonly DIGEST_KEEP = 30
+
+  // ── 0.1.4 候选 3:连败计数与熔断归因
+  /** 同签名连败计数(有界 Map,按本地日历日;驱动失败推送「连续第 N 日」与早报折叠;仅标注不停任务)。 */
+  private failStreaks = new FailStreakCounter()
+  /** 熔断归因结论(签名 → 最近一次 canary 归因;进 circuit-attribution 事件与早报失败段)。 */
+  private circuitAttributions = new Map<string, CircuitAttribution>()
+  /** 归因 canary 在途标记(同签名不重复跑;开窗 30 分钟一次,正常不重叠,防时钟异常连开窗叠加)。 */
+  private attributing = new Set<string>()
+
   /**
    * 系统级失败签名提取(熔断判据):daemon 断连(fetch failed——undici 汇聚错误文本,
    * 11-06..08 v2ex 三日连败实证)与 Windows 文件系 EPERM(09-25 九分钟窗 75 条洪水实证,
    * 单根因×任务×重试链放大)。返回 null=非系统级:站点/适配器故障不熔断,照常走重试链
    * 与通知——熔断只止血系统面,不吞业务面。
+   * 0.1.4 候选 3:实现移入 digest.ts(circuitSignatureOf,连败计数/归因同源复用),此处委托。
    */
   private static circuitSignature(text: string): string | null {
-    if (/\bfetch failed\b/i.test(text)) return 'fetch-failed'
-    if (/\bEPERM\b[^\n]*operation not permitted/i.test(text)) return 'eperm'
-    return null
+    return circuitSignatureOf(text)
   }
 
   /** 熔断窗时长(分钟 → ms;env 可配,非正数回默认)。 */
@@ -4016,6 +4079,233 @@ export class OpencliService extends TypertRemoteService {
       return false
     }
     return true
+  }
+
+  // ── 0.1.4 候选 2:日结早报(调度 tick 内建日结检查 → 双层产物)─────────────────
+
+  /**
+   * 日结检查(调度 tick 每轮调用,时点跟随 tick 不新增 timer):
+   *  - DSH_OPENCLI_DIGEST_DISABLE=1 整体可关(env 白名单字面量,其余值不关);
+   *  - 启动后首见只记日期基准(内存日账自进程启动才记账,启动即补发昨日=虚报覆盖,不发);
+   *  - 本地日期翻转 → 结算昨日早报一次(lastDigestDay 即去重标记,一天至多一次);
+   *  - 日期未变 → 补发在途的顺延早报卡(如有,quietHours 出窗后)。
+   */
+  private async dailyDigestCheck(): Promise<void> {
+    if (process.env.DSH_OPENCLI_DIGEST_DISABLE === '1') return
+    const today = localDateKey(new Date())
+    if (this.lastDigestDay === undefined) {
+      this.lastDigestDay = today
+      return
+    }
+    if (today === this.lastDigestDay) {
+      await this.flushPendingDigestCard()
+      return
+    }
+    const prevDay = this.lastDigestDay
+    this.lastDigestDay = today
+    if (this.digestBusy) return // 上一份还没结算完(时钟跳变/发送极慢):丢这份保不重入,下一翻转再结
+    this.digestBusy = true
+    try {
+      await this.emitDigest(prevDay)
+    } finally {
+      this.digestBusy = false
+    }
+  }
+
+  /**
+   * 结算昨日早报:日账 → buildDigest 三同源(compact 卡/md/json)。日账无论发不发都换新翻页
+   * (账按日切)。两层分开(深化轮 §九.7① 口径「推送 compact 卡与落盘 md+json 双产物两层分开」):
+   * 事件(digest)与落盘(md/json)层无条件执行——面板时间线与文件即真相,聚合报告先产出再谈
+   * 发送;两道门都在推送层(ask ①):存在 notify!==false 的启用任务才发——全部任务都关了通知
+   * 的用户默认不打扰;账面空(当日零 run)无事可推不闯通道。门只关发送,不关事件与文件。
+   */
+  private async emitDigest(prevDay: string): Promise<void> {
+    // 结算后立即翻页:结算期间在途的 run 属于新一天,不能记进旧账
+    const ledger = this.dayLedger
+    this.dayLedger = new DigestDayLedger(localDateKey(new Date()))
+    try {
+      const built = buildDigest({
+        date: prevDay,
+        genAt: new Date(),
+        ledger,
+        streakOf: (id, sig) => this.failStreaks.daysOf(id, sig),
+        attributions: this.circuitAttributions,
+        processStartedAt: this.bootedAt.toISOString(),
+      })
+      this.pushIngestEvent('digest', `📰 早报 ${prevDay}:${built.overview}`)
+      // 落盘层:md+json 双产物(dsh-ai-research 双产物纪律);无推送通道也落
+      try {
+        const dir = process.env.DSH_OPENCLI_REPORTS_DIR ?? join(homedir(), '.dsh', 'opencli-reports')
+        await mkdir(dir, { recursive: true })
+        await writeFile(join(dir, `digest-${prevDay}.md`), built.md, 'utf8')
+        await writeFile(join(dir, `digest-${prevDay}.json`), JSON.stringify(built.json, null, 2), 'utf8')
+        const olds = readdirSync(dir).filter((f) => /^digest-\d{4}-\d{2}-\d{2}\.(md|json)$/.test(f)).sort()
+        if (olds.length > OpencliService.DIGEST_KEEP * 2) {
+          for (const f of olds.slice(0, olds.length - OpencliService.DIGEST_KEEP * 2)) { try { unlinkSync(join(dir, f)) } catch { /* 忽略 */ } }
+        }
+      } catch { /* 落盘失败不阻断推送层(与 canary 报告同纪律) */ }
+      // 推送层门(ask ①;门只关发送,不关上面的事件与落盘):存在 notify!==false 的启用任务
+      // 才发——全部任务都关了通知的用户默认不打扰;账面空(当日零 run)无事可推
+      if (!this.schedules.some((s) => s.enabled && s.notify !== false)) return
+      if (ledger.tasks.size === 0) return
+      // 推送层:quietHours 窗内一律顺延出窗(规格 §九.7④「日结 cron 默认避开 quietHours」,
+      // 不只空窗;与逐任务失败通知的窗内暂存同语义,src/index.ts:4776——失败也不往静默窗里闯,
+      // 出窗首个日结检查补发)。窗外立即发:非空窗(有失败/命中/变化)不设额外门——
+      // 「失败不静默」管的是发不发,quietHours 管的是何时发,两者不冲突
+      if (this.digestQuietActive()) {
+        // ok 与卡同暂存:顺延补发走 sendDigestCard 时不再落 ok=true 默认(直发路径同款口径,
+        // withFailure===0 =当日无失败任务;失败卡补发后模板 {{ok}} 如实 false,不与 ✗ 行矛盾)
+        this.pendingDigestCard = { date: prevDay, title: built.title, card: built.card, ok: built.json.totals.withFailure === 0 }
+        return
+      }
+      await this.sendDigestCard(built.title, built.card, prevDay, built.json.totals.withFailure === 0)
+    } catch { /* 日结旁路:任何意外不反噬调度主链(通知旁路同纪律) */ }
+  }
+
+  /** compact 卡群发(所有启用通道;模板变量给 digest 身份——site=digest <日期>,ok=当日无失败任务)。 */
+  private async sendDigestCard(title: string, card: string, prevDay: string, ok = true): Promise<void> {
+    const config = this.state.notifyConfig
+    if (config === undefined) return
+    const channels = buildNotifyChannels(config, { emit: (ev) => this.emitNotifyEvent(ev) })
+    if (channels.length === 0) return
+    await sendViaChannels(channels, title, card, { ok, site: `digest ${prevDay}`, watchHits: [] })
+  }
+
+  /** 空窗顺延判定:任一启用且 notify!==false 的任务处在自己的 quietHours 窗内(任务级窗取并集)。 */
+  private digestQuietActive(): boolean {
+    const now = new Date()
+    return this.schedules.some((s) => s.enabled && s.notify !== false && s.quietHours !== undefined && inQuietHours(s.quietHours, now))
+  }
+
+  /** 早报卡出窗补发(日结检查的日期未变分支逐 tick 尝试;新一天结算会整体替换暂存)。 */
+  private async flushPendingDigestCard(): Promise<void> {
+    const p = this.pendingDigestCard
+    if (p === null || this.digestQuietActive()) return
+    this.pendingDigestCard = null
+    try {
+      await this.sendDigestCard(p.title, p.card, p.date, p.ok)
+    } catch { /* 通知旁路:补发失败不重试不拖链 */ }
+  }
+
+  // ── 0.1.4 候选 3:熔断归因(circuit-open 开窗后自动单跑一次 canary)──────────────
+
+  /**
+   * 开窗后自动 canary 归因(既有 canary-run 面复用,无新执行面):把「系统面 or 站点面」
+   * 结论写进 circuit-attribution 事件并缓存(早报失败段按签名附注)。fire-and-forget——
+   * canary 全程 top-20 站逐站跑,可能要几分钟,绝不挡调度收尾;同签名在途不重复跑。
+   * 归因是启发式判定(通过率分档),不自动改熔断/不停任务——只给结论给事件,诚实不替用户做主。
+   */
+  private async attributeCircuit(sig: string): Promise<void> {
+    if (this.attributing.has(sig)) return
+    this.attributing.add(sig)
+    try {
+      const r = await this.canaryRun()
+      const att = judgeCircuitAttribution(sig, r, new Date().toISOString())
+      this.circuitAttributions.set(sig, att)
+      while (this.circuitAttributions.size > 8) { // 有界:只留最近 8 个签名的结论
+        const oldest = this.circuitAttributions.keys().next().value
+        if (oldest === undefined) break
+        this.circuitAttributions.delete(oldest)
+      }
+      this.pushIngestEvent('circuit-attribution', att.detail)
+    } catch { /* 归因旁路:canary 失败不反噬调度主链 */ } finally {
+      this.attributing.delete(sig)
+    }
+  }
+
+  /**
+   * 候选 5(C)归档接线缝:归档动作把 run 计入当日「空产出已归档」计数(早报首行 X 与
+   * json archivedEntries 的唯一来源)。B 侧只留此缝,归档模型/触发时机由 C 定;诚实边界:
+   * 日账随日结算换新,跨日补归档记不进当日 X(当日早报已发),run 时点的自动归档
+   * (候选 5④ 确定性闭环)不受影响。
+   */
+  digestMarkArchived(taskId: string, count = 1): number {
+    return this.dayLedger.markArchived(taskId, count)
+  }
+
+  // ── 0.1.4 候选 5:运行级收件箱(条目合成 + 已读/归档)────────────────────────────
+
+  /**
+   * 写一条运行级收件箱状态键(已读/归档;稳定键 task|at),写后做有界裁剪。
+   * state.inboxFlags 是唯一持久面;键不存在则新建,存在则浅合并(read 与 archived 可独立置位)
+   * 并重插到尾部(键序=触碰序:刚写过的键不会被本轮有界裁掉——否则在达上限时给旧条目
+   * 标已读会被最旧淘汰吃掉,标记静默丢失)。
+   */
+  private inboxFlagSet(task: string, at: string, patch: { read?: boolean; archived?: boolean; by?: 'manual' | 'auto' }): void {
+    if (this.state.inboxFlags === undefined) this.state.inboxFlags = {}
+    const key = inboxFlagKey(task, at)
+    const prev = this.state.inboxFlags[key]
+    delete this.state.inboxFlags[key] // 重插到尾:触碰序=键序(boundInboxFlags 从头裁最旧)
+    this.state.inboxFlags[key] = {
+      ...(prev?.read === true || patch.read === true ? { read: true } : {}),
+      ...(prev?.archived === true || patch.archived === true ? { archived: true } : {}),
+      ...(patch.by !== undefined ? { by: patch.by } : { ...(prev?.by !== undefined ? { by: prev.by } : {}) }),
+    }
+    boundInboxFlags(this.state.inboxFlags)
+  }
+
+  /** 合成当前全部 run 条目(查询时;新→旧)+ 未读计数(未读且未归档)。 */
+  private inboxEntries(): { entries: RunInboxEntry[]; unread: number } {
+    const sites: Record<string, string> = {}
+    for (const s of this.schedules) sites[s.id] = s.site
+    const entries = synthesizeRunInbox({ runHistory: this.runHistory, sites, flags: this.state.inboxFlags ?? {} })
+    return { entries, unread: inboxUnreadCount(entries) }
+  }
+
+  /** 运行级收件箱列表(面板「结果收件箱」卡数据源;条目不建持久层,查询时合成)。 */
+  @Remote('inbox-list')
+  async inboxList(): Promise<RunInboxListResult> {
+    const { entries, unread } = this.inboxEntries()
+    return { ok: true, entries, unread }
+  }
+
+  /**
+   * 已读(候选 5 ②):task+at 给定=单条标已读(面板展开详情即调);仅 task=该任务全部标已读;
+   * 都省=全部标已读(#27871 教训:「全部标已读」入口必须显式存在)。marked=本次新标条数
+   * (已读重标不重复计)。
+   */
+  @Remote('inbox-read')
+  async inboxRead(p?: { task?: string; at?: string }): Promise<{ ok: boolean; marked: number }> {
+    const { entries } = this.inboxEntries()
+    const task = p?.task !== undefined && String(p.task).length > 0 ? String(p.task) : undefined
+    const at = p?.at !== undefined && String(p.at).length > 0 ? String(p.at) : undefined
+    const targets = task !== undefined
+      ? entries.filter((e) => e.task === task && (at === undefined || e.at === at))
+      : entries
+    let marked = 0
+    for (const e of targets) {
+      if (e.read) continue
+      this.inboxFlagSet(e.task, e.at, { read: true })
+      marked++
+    }
+    if (marked > 0) await this.saveState()
+    return { ok: true, marked }
+  }
+
+  /**
+   * 归档(候选 5 ②③,无损降级):task+at 给定=单条归档(顺带标已读——归档项不该再当未读);
+   * 省略=一键归档全部已读(#12632③)。归档只写状态键,不动 runHistory 行/快照/轨迹——
+   * 条目在 runHistory 窗口内仍可点开只读视图(#20418 教训)。当日的 run 经 digestMarkArchived
+   * 接线缝计入早报 X(跨日如实 0);archived 条目不进日报任何行、不参与 worthPushing 分层
+   * (日账 archived 条目在 record 侧已不产行)。
+   */
+  @Remote('inbox-archive')
+  async inboxArchive(p?: { task?: string; at?: string }): Promise<{ ok: boolean; archived: number }> {
+    const { entries } = this.inboxEntries()
+    const task = p?.task !== undefined && String(p.task).length > 0 ? String(p.task) : undefined
+    const at = p?.at !== undefined && String(p.at).length > 0 ? String(p.at) : undefined
+    const targets = task !== undefined && at !== undefined
+      ? entries.filter((e) => e.task === task && e.at === at)
+      : entries.filter((e) => e.read === true && e.archived !== true && (task === undefined || e.task === task)) // 一键归档全部已读(或该任务的已读)
+    let archived = 0
+    for (const e of targets) {
+      if (e.archived) continue
+      this.inboxFlagSet(e.task, e.at, { archived: true, read: true, by: 'manual' })
+      this.digestMarkArchived(e.task, 1) // 当日 run 计入早报 X;跨日返回 0(诚实不补记)
+      archived++
+    }
+    if (archived > 0) await this.saveState()
+    return { ok: true, archived }
   }
 
   /**
@@ -4075,6 +4365,7 @@ export class OpencliService extends TypertRemoteService {
     //    App 内置旧 daemon 会杀掉新 daemon,版本错=功能坏,只观察不修复等于任务整天空转;
     //    退避窗防「翻转→重启」循环,窗内 skip 放行,修复无效时每 tick 至多记一次事件)
     if (effDs !== null && typeof effDs.version === 'string' && effDs.version.length > 0) {
+      let flipBackoffSkipped = false // 语义修(0.1.3 复核 low ②):skip-backoff 时保留旧基线,不覆写
       if (this.lastDaemonVersion !== undefined && this.lastDaemonVersion !== effDs.version) {
         const flip = `daemon 版本翻转 ${this.lastDaemonVersion} → ${effDs.version}(疑似 CLI/App 互杀,#2761)`
         this.pushIngestEvent('daemon-flip', `⚠ ${flip}`)
@@ -4091,9 +4382,13 @@ export class OpencliService extends TypertRemoteService {
           notes.push('已自动重启 daemon(版本翻转自愈)')
           effDs = re
         }
+        if (healed === 'skip-backoff') flipBackoffSkipped = true
         // skip-backoff:退避窗内不重复重启,放行执行链自然暴露(循环防护的一部分)
       }
-      this.lastDaemonVersion = effDs.version
+      // 语义修(0.1.3 复核 low ②):skip-backoff 分支不得把 lastDaemonVersion 覆写为翻转后
+      // 版本——否则下个 tick 版本与基线一致,该次翻转从此检测不到,恢复只剩执行期断连一条
+      // 路;保留旧基线,退避窗过后下个 tick 仍能识别同一翻转并重试自愈
+      if (!flipBackoffSkipped) this.lastDaemonVersion = effDs.version
     }
     // ③ 扩展未连:不自动恢复(扩展重连是浏览器侧行为)——诚实跳过并给指引。
     // 词法对齐 extensionState('not connected' 文本经 \S+ 截断为 'not';connected 前缀才是连上)
@@ -4116,16 +4411,20 @@ export class OpencliService extends TypertRemoteService {
       const hc = await this.taskHealthCheck(id)
         if (!hc.ok) {
           const hist0 = this.runHistory[id] ?? []
-        hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}` })
+        // skip 行带 typed 标记(0.1.4 候选 5):运行级收件箱状态判定认 skip 字段,不解析 summary 文本
+        hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}`, skip: true })
         this.runHistory[id] = hist0.slice(0, 5)
         await this.saveState()
         this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:${hc.note ?? ''}`)
+        // 日账入账(0.1.4 候选 2):跳过也如实进早报失败面(失败不静默),skip 标记供折叠分组
+        this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}`, skip: true })
         return
       }
       healthNote = hc.note
     } catch { /* 预检异常 → 放行(fail-open) */ }
     const attempts = Math.max(1, Math.min(5, sch?.retry ?? 3))
-    const notify = sch?.notify !== false
+    // notify 读取只剩外送门一处(sch?.notify !== false 直读):诊断面(熔断开窗/schedule-failed,
+    // 语义修 ③)已与通知解耦,不再需要独立的 notify 变量
     const hist = this.runHistory[id] ?? []
     // 面板占位符是 'site zhihu hot' 形态,而 CLI 直接吃 'zhihu hot'——此前原样透传导致
     // 按占位符创建的任务 100% 失败(unknown command 'site')(实测发现)。剥掉 site 前缀。
@@ -4134,9 +4433,13 @@ export class OpencliService extends TypertRemoteService {
     // 走 canaryRun 全链(与上轮对比出漂移报告),不走单命令执行
     if (norm === 'canary') {
       const r = await this.canaryRun()
-      hist.unshift({ at: new Date().toISOString(), ok: r.ok, summary: r.ok ? `canary:${r.passed}/${r.total}${r.newFailures.length > 0 ? ' 新失败:' + r.newFailures.slice(0, 3).join(',') : ''}` : `canary 失败:${r.error ?? '未知'}` })
+      // 回执卫生(与下方 history 摘要 scrubUrlParams 同口径):canary 失败错误文本可含登录态
+      // 链接/本机路径,落 state.json 与日账(→ 早报)前同过 URL 参数脱敏,不留裸入口
+      hist.unshift({ at: new Date().toISOString(), ok: r.ok, summary: r.ok ? `canary:${r.passed}/${r.total}${r.newFailures.length > 0 ? ' 新失败:' + r.newFailures.slice(0, 3).join(',') : ''}` : `canary 失败:${scrubUrlParams(r.error ?? '未知')}` })
       this.runHistory[id] = hist.slice(0, 5)
       await this.saveState()
+      // 日账入账(0.1.4 候选 2):canary 任务同进早报(它的失败=自监控失败,不该在日报里隐身)
+      this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: r.ok, summary: hist[0]?.summary ?? '' })
       return
     }
     const cmdLine = norm.length > 0 ? norm : siteCmd
@@ -4147,10 +4450,12 @@ export class OpencliService extends TypertRemoteService {
     const profileEnv = sch?.profile !== undefined && sch.profile.length > 0 ? { OPENCLI_PROFILE: sch.profile } : undefined
     // 命令读写类别(#59 读写分频):清单缓存里的 access 决定限频轨(read=750ms 轨,write=3s 独立轨)。
     // 只读已有缓存(面板 status 异步预热 / systemPrompt 目录构建 / 审批门 lookupAccess 都会填充),
-    // 不为分频在调度热路径上额外拉 2.0 分页清单(1225 条≈13 次受控 CLI 调用);冷缓存时 access=unknown
-    // 按 read 轨走——如实边界:此时写命令不享独立写轨,但放行语义不变(分频是节奏,不是授权)
+    // 不为分频在调度热路径上额外拉 2.0 分页清单(1225 条≈13 次受控 CLI 调用)。冷缓存时
+    // access=unknown 按写轨走——语义修(0.1.3 复核 low ④):对齐审批门「权限不明一律按写」
+    // 同口径(此前 unknown 按 read 轨,同仓两种标准);分频是节奏不是授权,保守轨只是更慢,
+    // 放行语义不变
     const access = commandAccess((this.adapterCache as { json?: unknown } | null)?.json, sSite, sCmd)
-    const govKind: 'read' | 'write' = access === 'write' ? 'write' : 'read'
+    const govKind: 'read' | 'write' = access === 'read' ? 'read' : 'write'
     // 认证预检(dsh #1882/#1883/#2568/#2758:cookie 过期=false AUTH 失败,烧满重试链才暴露):
     // 任务级开关(默认关,scheduleAdd preflight / 收件箱 / ctl --preflight),canary 例外已在上方 return。
     // 开启时每次采集前跑 whoami 快检(loginCheck 池,10min TTL 缓存——多任务同分钟共享一次探测);
@@ -4166,10 +4471,15 @@ export class OpencliService extends TypertRemoteService {
             const detail = item.detail !== null && item.detail.length > 0 ? `:${item.detail}` : ''
             const note = `${sSite} 未登录(AUTH 预检未过${detail})`
             const hist0 = this.runHistory[id] ?? []
-            hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${note}(先 site ${sSite} login;任务保留,下 tick 再检)`, receipt: { auth_state: 'auth_wall', bytes: 0, stop_reason: 'error', remaining_cursor: null } })
+            // skip 行带 typed 标记(候选 5 ①同上);回执 stop_reason 落 null(语义修,0.1.3
+            // 复核 low ①):本 tick 命令从未执行,stop_reason 未知——coverageStopReason
+            // 「未知恒 null」纪律对跳过行同适用,硬编码 'error' 是虚报
+            hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${note}(先 site ${sSite} login;任务保留,下 tick 再检)`, skip: true, receipt: { auth_state: 'auth_wall', bytes: 0, stop_reason: null, remaining_cursor: null } })
             this.runHistory[id] = hist0.slice(0, 5)
             await this.saveState()
             this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:登录态预检未过——${note}`)
+            // 日账入账(0.1.4 候选 2):同健康预检跳过,如实进早报失败面
+            this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: false, summary: hist0[0]?.summary ?? `⏸ 跳过:${note}`, skip: true })
             return
           }
         }
@@ -4193,6 +4503,7 @@ export class OpencliService extends TypertRemoteService {
     let bonusUsed = false
     let selfHealUsed = false // 同 tick 只试一次自愈(D3);跨 tick 循环由 selfHealDaemon 退避窗防
     let circuitSkipped = false // 熔断短路标记:跳过余下重试,且不再补 schedule-failed 事件/外送通知
+    let circuitOpened = false // 本次执行开窗(0.1.4 候选 3:归因 canary 的触发源;进日账 circuit 标记)
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         const started = Date.now()
@@ -4396,17 +4707,63 @@ ${r.stderr}`
         this.pushIngestEvent('watch-hit', `🔔 Watch 命中:${siteCmd} 出现 [${watchHits.join(', ')}]`)
       }
     }
-    if (!lastOk && notify && !circuitSkipped) {
+    // 熔断签名归一提取(0.1.4 候选 3):开窗判定/连败计数/日账签名三处共用一次计算
+    const finalSig = OpencliService.circuitSignature(`${lastRaw}\n${lastSummary}`)
+    // 语义修(0.1.3 复核 low ③):开窗与 schedule-failed 记录移出 notify!==false 门——
+    // 这是诊断面不是通知面,notify:false 的任务同样要开窗与记失败(此前全量任务都关通知
+    // 时系统性失败既不开窗也不记 schedule-failed,熔断/连败对静音任务整体失效);
+    // 下方的外送通知门继续看 notify,两条线解耦(开窗不看 notify,只通知看)
+    if (!lastOk && !circuitSkipped) {
       // 熔断开窗(§七#4):链烧完仍是系统级签名且窗未开 → 开窗一次,ingest 单条事件给
       // 诊断入口(canary 区分站点面漂移与系统面故障);窗内后续任务的短路行只进 runHistory
       // (上方 ⚡ 行),不再补 schedule-failed/外送——「1 条诊断 + 全任务熔断到修复」
-      const finalSig = OpencliService.circuitSignature(`${lastRaw}\n${lastSummary}`)
       if (finalSig !== null && !this.circuitActive(finalSig)) {
+        circuitOpened = true
         this.circuitOpen.set(finalSig, Date.now())
         this.pushIngestEvent('circuit-open', `⚡ 系统级熔断开窗(${finalSig}):同签名失败将在 ${Math.round(this.circuitWindowMs() / 60_000)} 分钟窗内短路各任务重试链——daemon 断连/文件系权限类系统面故障;诊断入口:canary 巡检(区分站点面漂移与系统面故障)`)
+        // 自动归因(0.1.4 候选 3):开窗后单跑一次 canary,把「系统面 or 站点面」结论写进
+        // circuit-attribution 事件并附进早报失败段;fire-and-forget——canary 全程可能数分钟,
+        // 绝不挡调度收尾(canary 本身可能被同一故障拖慢,结论迟到不丢,早报按签名取最新结论)
+        void this.attributeCircuit(finalSig)
       }
       this.pushIngestEvent('schedule-failed', `定时任务连续 ${attempts} 次失败:${siteCmd} — ${lastSummary}`)
     }
+    // 连败计数(0.1.4 候选 3):失败按 (任务,签名) 在本地日历日上累加「连续第 N 日」,
+    // 成功即整任务清零;签名=circuitSignature(系统面)?? typed 失败码,两者都缺的失败不计数
+    // (签名不稳,折叠无意义)。阈值行为=仅标注(推送带「连续第 N 日」、早报折叠),不自动停任务。
+    let streakSig: string | null = null
+    let streakDays = 0
+    if (!lastOk) {
+      streakSig = finalSig ?? typedErrorCode(lastStderr)
+      if (streakSig !== null) streakDays = this.failStreaks.bump(id, streakSig, new Date())
+    } else {
+      this.failStreaks.reset(id)
+    }
+    // 无产出自动归档(0.1.4 候选 5 ③确定性闭环):ok && receipt.empty && 无 diff && 无
+    // watch 命中 && 非 skip——全 typed 字段不引入模型判断(§九.7④,#28922「别把 UI 卫生写进
+    // prompt」同款纪律)。命中即写 inbox 状态键(archived+by=auto):条目直沉收件箱归档区,
+    // 不占未读(#12632④「无产出不打扰」);通知门不变(例行推送语义不受归档影响),
+    // 日账带 archived/autoArchived 标记→早报只进首行 X 与尾行计数,不产行。
+    const runAt = hist[0]?.at ?? new Date().toISOString()
+    const autoArchived = isNoOutputRun({ ok: lastOk, empty: receipt.empty, diffed: diffText.length > 0, watchHit: watchHits.length > 0, skip: false })
+    if (autoArchived) {
+      this.inboxFlagSet(id, runAt, { archived: true, by: 'auto' })
+      this.pushIngestEvent('inbox-auto-archive', `📦 ${siteCmd} 无产出(空结果且无变化/无命中)——自动归档(不占收件箱未读;早报尾行计数)`)
+    }
+    // 日账入账(0.1.4 候选 2):每个 runSiteCommand 一条(摘要=history 首行,已过 scrubUrlParams),
+    // 含签名/watch/变化/空产出/熔断标记——早报结算时读,不重复解析输出;
+    // archived/autoArchived(候选 5 ③):归档条目不进日报任何行,自动归档进尾行计数
+    this.dayLedger.record(id, siteCmd, sch?.source, {
+      at: new Date().toISOString(),
+      ok: lastOk,
+      summary: hist[0]?.summary ?? lastSummary,
+      ...(streakSig !== null ? { signature: streakSig } : {}),
+      ...(watchHits.length > 0 ? { watchHits } : {}),
+      ...(diffText.length > 0 ? { diff: diffText } : {}),
+      ...(receipt.empty === true ? { empty: true } : {}),
+      ...(autoArchived ? { archived: true, autoArchived: true } : {}),
+      circuit: circuitSkipped || circuitOpened,
+    })
     await this.saveState()
     // 任务 E:结果外送通知——重试链走完、状态落盘后一次群发。放在 saveState 之后:
     // 通知发送(webhook/email 各有 10s 收端超时)不挡状态持久化;await 保证测试可确定性断言。
@@ -4429,7 +4786,7 @@ ${r.stderr}`
         sch.pendingNotify = pend.slice(-20)
         await this.saveState()
       } else {
-        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours, receipt, healthNote, sch?.source)
+        await this.dispatchScheduleNotify(siteCmd, sch?.watch, lastOk, lastSummary, watchHits, diffText, sch?.pendingNotify, sch?.quietHours, receipt, healthNote, sch?.source, streakDays >= 2 && streakSig !== null ? { days: streakDays, signature: streakSig } : undefined)
         if ((sch?.pendingNotify?.length ?? 0) > 0) { sch!.pendingNotify = []; await this.saveState() }
       }
     }
@@ -4465,13 +4822,13 @@ ${r.stderr}`
 
   /**
    * 定时结果外送(notify.ts 通道层的接线点):notifyConfig 有启用通道才发;标题/正文由
-   * buildNotifyBody 统一组装,四个追加段(diff/静默摘要/自愈说明/回执)在拼接处逐段过
-   * scrubLocalPaths——本机路径/凭据的出口清洗全线覆盖,没有"忘了洗"的口子。
+   * buildNotifyBody 统一组装,五个追加段(diff/静默摘要/自愈说明/连败标注/回执)在拼接处
+   * 逐段过 scrubLocalPaths——本机路径/凭据的出口清洗全线覆盖,没有"忘了洗"的口子。
    * watch 命中的正文加「🔔 Watch 命中」前缀行——收端(群机器人/邮箱)免读全文即可分拣
    * 例行结果与关键词命中。sendViaChannels 并发群发且单通道失败不抛;这里再兜一层:
    * 装配阶段的意外(坏配置形状等)也绝不反噬调度主链,通知永远是旁路。
    */
-  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string, receipt?: Receipt, recoveredNote?: string, schSource?: string): Promise<void> {
+  private async dispatchScheduleNotify(siteCmd: string, watch: string | undefined, ok: boolean, summary: string, watchHits: string[], diffText: string, pending?: QuietPendingItem[], quietHours?: string, receipt?: Receipt, recoveredNote?: string, schSource?: string, streak?: { days: number; signature: string }): Promise<void> {
     try {
       const config = this.state.notifyConfig
       if (config === undefined) return
@@ -4490,10 +4847,21 @@ ${r.stderr}`
       const diffSeg = diffText.length > 0 ? scrubLocalPaths(`\n📊 与上次相比:${diffText}`) : ''
       const quietSeg = scrubLocalPaths(renderQuietDigest(pending, quietHours))
       const recoverSeg = recoveredNote !== undefined && recoveredNote.length > 0 ? scrubLocalPaths(`\n🩺 ${recoveredNote}`) : ''
+      // 连败标注段(0.1.4 候选 3):同签名连败 ≥2 日才标——第 1 天没有「连续」可标,标注
+      // 本身就是降噪的反面;仅标注不停任务(诚实不替用户做主),签名是聚合判据如实带出
+      const streakSeg = streak !== undefined ? scrubLocalPaths(`\n🔁 同签名连败:连续第 ${streak.days} 日(签名 ${streak.signature})——仅标注,任务照常运行`) : ''
       // 回执段(typed 口径进推送卡):partial/unloaded/degraded/profile 与 empty 同款按需追加——
       // 收端不读面板也能分辨「一页未尽/未渲染完/兜底近似/哪个账号档案」
       const receiptSeg = receipt !== undefined ? scrubLocalPaths(`\n🧾 回执:auth=${receipt.auth_state}${receipt.items !== undefined ? ` · ${receipt.items} 条` : ''} · ${receipt.bytes}B${receipt.empty === true ? ' · ⚠ 空结果' : ''}${receipt.partial === true ? ' · 分页未尽' : ''}${receipt.unloaded === true ? ' · ⚠ 疑似未渲染完' : ''}${receipt.degraded === true ? ' · 🛟 兜底近似' : ''}${receipt.profile !== undefined ? ` · profile ${receipt.profile}` : ''}${receipt.error_code !== undefined ? ` · ${receipt.error_code}` : ''}`) : ''
-      await sendViaChannels(channels, title, head + body + recoverSeg + diffSeg + quietSeg + receiptSeg)
+      // webhook 模板变量(0.1.4 候选 1):白名单 {ok,site,source,watchHits} 在拼接处逐项过
+      // scrub——与上方四段的「没有忘了洗的口子」同款;title/body 已在 buildNotifyBody 洗过
+      const tplVars = {
+        ok,
+        site: scrubLocalPaths(siteCmd),
+        ...(schSource !== undefined && schSource.length > 0 ? { source: scrubLocalPaths(schSource) } : {}),
+        ...(watchHits.length > 0 ? { watchHits: watchHits.map((w) => scrubLocalPaths(w)) } : {}),
+      }
+      await sendViaChannels(channels, title, head + body + recoverSeg + streakSeg + diffSeg + quietSeg + receiptSeg, tplVars)
     } catch { /* 通知旁路:全静默降级 */ }
   }
 
