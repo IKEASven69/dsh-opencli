@@ -5,3 +5,4 @@ node_modules/
 tmp-client
 .research-tmp/
 package/
+.qa/token-*
