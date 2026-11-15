@@ -11,9 +11,12 @@
 | "看看知乎/B站/掘金今天的热榜" | 有工具:`site zhihu hot`;无工具:shell `opencli zhihu hot`(JSON 输出) |
 | "每天早9点把掘金热榜发到我飞书" | 两步:`ctl notify set --feishu <webhook url>` → `ctl schedule add --site "site juejin hot" --cron "0 9 * * *"` |
 | "盯住热榜,'降价'一出现就告诉我" | `ctl schedule add --site "<站点命令>" --cron "<频率>" --watch "降价"`(watch 命中→🔔推送+面板事件) |
-| "把这次的采集整理成报告,注明来源" | `ctl report build --id <scheduleId>`(每节=命令+时间+快照路径,零模型改写) |
+| "把这次的采集整理成报告,注明来源" | `ctl schedule read --id <id> / ctl schedule archive --id <id> [--at <时间>]   # 收件箱已读/归档(无损)
+ctl report build --id <scheduleId>`(每节=命令+时间+快照路径,零模型改写) |
 | "上次那个任务跑成功了没" | `ctl schedule list`(含历史与成败摘要);面板"自动化"页有图形化时间线 |
 | "昨晚的推送/失败我想回看" | 事件台账:`~/.dsh/opencli-events.jsonl`(逐行 JSON,5MB 轮转);面板自动化页有事件面板。kind 一看就懂:`watch-hit`(关键词命中)/`snap-diff`(变化)/`daemon-flip`(版本翻转)/`adapter-drift`(疑似改版)/`daemon-selfheal`(自愈 restart)/`circuit-open`(系统级熔断) |
+| "多任务的结果别一条条刷屏,给我一份早报" | 早报自动生成:每日一张聚合卡(总览计数+失败/watch/变化分段+回执口径)推到已配通道,同时落盘 ~/.dsh/opencli-reports/digest-<日期>.md|.json;DSH_OPENCLI_DIGEST_DISABLE=1 可关 |
+| "处理完的结果帮我收起来" | 面板自动化页「结果收件箱」:展开详情即标已读、归档无损降级、无产出运行自动归档;ctl 侧 schedule read/archive 等价 |
 | "这个任务用小号跑,别动我大号" | 建任务时带 `--profile <浏览器 profile 别名>`(上游 OpenCLI 原生多账号隔离;profile 未连接会如实失败,不会偷偷换号) |
 | "帮我测一下通知通道通了没" | `ctl notify test`(诚实回报每个通道成败) |
 | "这个网站没有你要的命令" | 见文末"现场创作适配器" |
@@ -30,7 +33,8 @@ ctl schedule add --site "site juejin hot" --cron "0 9 * * *" [--watch "AI,大模
 ctl schedule list            # 全部任务+运行历史
 ctl schedule run --id <id>   # 立即跑一次(真实采集)
 ctl schedule remove --id <id>
-ctl notify set --feishu <url> | --dingtalk <url> | --wecom <url> | --telegram <url> | --webhook <url> | --dsh | --email-smtp <url> --email-to <addr>
+ctl notify set --feishu <url> | --dingtalk <url> | --wecom | --telegram <url> | --webhook <url> | --dsh | --email-smtp <url> --email-to <addr> | --bark <server-url> --bark-key <key> | --ntfy <server-url> --ntfy-topic <topic> [--ntfy-token <tk>] | --pushover-token <tok> --pushover-user <user> | --webhook <url> --template '{"text":"{{title}}
+{{body}}"}'
 ctl notify test
 ctl report build --id <scheduleId>
 ctl status                   # 插件版本/任务数/通道数
@@ -51,7 +55,7 @@ cron 五段(分 时 日 月 周)。超时用 `--timeout <秒>` 调;若报"插件
 插件随面板进程起一个本机 MCP Streamable-HTTP 端点,供 dsh 之外的消费者(其他 agent/脚本)读站点知识:
 
 - 发现:`~/.dsh/opencli-mcp-auth.json`(含 url/port/token,0600;停机即删);
-- 认证:每请求 `Authorization: Bearer <token>`;工具只读两只:`knowledge_list` / `knowledge_get`,无写面;
+- 认证:每请求 `Authorization: Bearer <token>`;工具只读三只:`knowledge_list`(支持 status/domain/query/limit 过滤+游标分页,默认页 50)/ `knowledge_search(query)`(模糊查站名/域名/命令/坑)/ `knowledge_get(site)`,无写面;
 - 三步:initialize → tools/list → tools/call;批请求上限 20 条,超出逐条回错不静默吞;客户端声明不认识的协议版本会被钳回服务端支持版本(不假兼容)。
 
 ```
