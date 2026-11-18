@@ -29,7 +29,7 @@ ctl report build --id <scheduleId>`(每节=命令+时间+快照路径,零模型�
 
 ```
 ctl schedule add --site "site juejin hot" --cron "0 9 * * *" [--watch "AI,大模型"] [--notify true|false] [--retry 3]
-                   [--notify-level quiet] [--quiet-hours 23:00-07:00] [--preflight] [--keep 50] [--backoff-ms 15000] [--profile <别名|contextId>]
+                   [--notify-level quiet] [--quiet-hours 23:00-07:00] [--preflight] [--keep 50] [--backoff-ms 15000] [--profile <别名|contextId>] [--visibility <always-visible|archive-on-success|notify-on-failure|quiet-unless-actionable>]
 ctl schedule list            # 全部任务+运行历史
 ctl schedule run --id <id>   # 立即跑一次(真实采集)
 ctl schedule remove --id <id>
@@ -44,7 +44,8 @@ ctl status                   # 插件版本/任务数/通道数
 - `--notify-level quiet`:只推命中/变化/失败,例行成功不刷屏;
 - `--quiet-hours 23:00-07:00`:静默窗(跨夜 OK)——窗内通知暂存(上限 20),出窗首跑合并推送一条 😴 摘要;
 - `--preflight`:每次采集前先 whoami 快检登录态,未登录→⏸ 跳过本 tick(任务保留,不烧重试);
-- `--backoff-ms`:风控退避起点(默认 15s,下限 120s);`--keep`:快照留存份数(5-500,默认 50)。
+- `--backoff-ms`:风控退避起点(默认 15s,下限 120s);`--keep`:快照留存份数(5-500,默认 50);
+- `--visibility`:可见性档位——`always-visible`(默认,每次 run 现身收件箱)/`archive-on-success`(成功 run 自动归档,失败照常现身)/`notify-on-failure`(仅失败推送,命中/变化也不推)/`quiet-unless-actionable`(无失败/命中/变化时自动归档不打扰);归档无损,早报「已归档」计数可见。
 
 cron 五段(分 时 日 月 周)。超时用 `--timeout <秒>` 调;若报"插件消费者未运行",提示用户打开 dsh 面板(插件随面板进程运行)。
 

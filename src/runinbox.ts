@@ -95,6 +95,37 @@ export function isNoOutputRun(input: { ok: boolean; empty?: boolean; diffed: boo
   return input.ok === true && input.empty === true && !input.diffed && !input.watchHit && !input.skip
 }
 
+/**
+ * 任务级可见性档位(0.1.5 C5,§九.7⑤ 借 Codex #28922 四态):一个任务级可选字段,
+ * 不再加 0.1.3 式零使用旗标(R5:六新字段两版实战零使用=「默认行为优先于任务级旗标」二连证)。
+ * 默认 always-visible=既有行为零变化;省键=旧任务/未配置任务天然落默认。
+ */
+export type ScheduleVisibility = 'always-visible' | 'archive-on-success' | 'notify-on-failure' | 'quiet-unless-actionable'
+
+/** 四值闭集(意图白名单/scheduleAdd 校验/面板下拉共用同一份,不各写各的)。 */
+export const VISIBILITY_VALUES: readonly ScheduleVisibility[] = ['always-visible', 'archive-on-success', 'notify-on-failure', 'quiet-unless-actionable']
+
+/** 档位值守卫(scheduleAdd 校验与意图白名单共用)。 */
+export function isScheduleVisibility(v: unknown): v is ScheduleVisibility {
+  return typeof v === 'string' && (VISIBILITY_VALUES as readonly string[]).includes(v)
+}
+
+/**
+ * 可见性档位的收件箱归档判定(C5;通知面判定在 index.ts 外送门,不在这——档位各管一面):
+ *  - archive-on-success:成功 run 一律归档(含 watch 命中/有变化——命中信号仍走推送面,
+ *    收件箱条目沉归档区无损可回看,两态不打架);
+ *  - quiet-unless-actionable:无 actionable 信号才归档。actionable 判定=失败/watch 命中/
+ *    有变化,与 notifyLevel='quiet' 的 worthPushing 同一口径(index.ts 同一表达式),
+ *    两面共享一份事实不另立标准(dsh-proactive quiet-hours「无事不补发」同款先例);
+ *  - always-visible/notify-on-failure:恒 false——前者是默认零变化,后者只管通知面
+ *    不动收件箱面(失败 run 照常现身收件箱)。
+ */
+export function visibilityArchivesRun(visibility: string | undefined, run: { ok: boolean; diffed: boolean; watchHit: boolean }): boolean {
+  if (visibility === 'archive-on-success') return run.ok
+  if (visibility === 'quiet-unless-actionable') return run.ok && !run.diffed && !run.watchHit
+  return false
+}
+
 /** 本地日期键 yyyymmdd(trace 深链;与 index.ts traceDateKey 同一把尺,纯函数层自持一份)。 */
 export function traceDateKeyOf(at: string): string | undefined {
   const d = new Date(at)

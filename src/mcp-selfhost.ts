@@ -31,12 +31,23 @@
  * 消费者 tools+resource_link 够,resources/* 回 -32601 是 capability 未声明的规范合法回应);
  * completion(无 IDE 补全场景)/ registry 提交(端点=127.0.0.1+每进程 token,生态位不符)/
  * SSE+session(stateless 是规范内一等形态,且规避宿主 #12217 会话回收痛点)均不做。
+ * 旧留痕清账(复核 low#18):events_get/schedules_get 曾在 0.1.4 记为「后置不做」零留痕,
+ * 0.1.5 已按 C6 转实现(见下),写面仍然不做——写操作必须走审批门,HTTP 旁路不得绕开。
  *
- * 工具面(只读收敛,不自造写面——写操作必须走审批门,HTTP 旁路不得绕开):
+ * 工具面(只读收敛,不自造写面):
  *  - knowledge_list / knowledge_search / knowledge_get(官方 memory 三件套同构:
  *    全量读/检索/按名取),数据源=knowledge.ts 现有读侧(health/pitfalls),目录缓存
  *    可选注入出完整知识卡;list 支持应用级过滤分页(status/domain/query/limit/cursor),
  *    不再无参全量拉;三工具都是纯读,无任何状态变更。
+ *  - events_get / schedules_get / inbox_list(0.1.5 C6 ops 只读面,docs/RESEARCH-20261116-015.md
+ *    正文三§五#4+正文四§3.4):事件台账/定时任务清单/运行收件箱的只读投影——数据源与面板
+ *    events-get / schedule-list / inbox-list 三 RPC 同源(前者读 ~/.dsh/opencli-events.jsonl
+ *    +轮转档 .1,后两者读 state.json 三键),先例形状=com.cronobserver/mcp 的「调度状态+事件
+ *    流水只读暴露、读写 scope 分离」:本端点只做只读半边,投影行是最小事实(不含 history 全文、
+ *    回执全文与任何凭据类字段)。注册面按预研 C6 规格行「--caps 门控、默认不注册」执行
+ *    (mcpVisibleTools/mcpCapsRaw):默认只注册 knowledge 三件套,env DSH_OPENCLI_MCP_CAPS=ops
+ *    (或 all)显式开启后 ops 三工具才进 tools/list(0.1.5 复核⑤:实现曾默认全量注册与规格
+ *    相左,按规格行收紧;端点无 CLI 参数面,--caps 语义经 env 表达——与 token/port 同门面)。
  * @module dsh-opencli/mcp-selfhost
  */
 
@@ -45,7 +56,9 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { buildKnowledge, healthOf, renderKnowledgeMarkdown, SITE_HEALTH, PITFALLS, SITE_HEALTH_STATUS_LABELS, knowledgeResourceUri, type RawEntry, type SiteKnowledge } from './knowledge.ts'
+import { inboxRunStatus, inboxUnreadCount, synthesizeRunInbox, type InboxRunFlag, type RunHistoryRow, type RunInboxStatus } from './runinbox.ts'
 import { PLUGIN_VERSION } from './version.ts'
 
 /** 默认端口(19825 是 daemon,19831 是本端点;冲突由启动容错兜住,可用 env 换)。 */
@@ -75,6 +88,29 @@ export const MCP_LIST_MAX_LIMIT = 500
 /** knowledge_list 的 status 过滤合法值:三种健康表状态 + ok(健康表无记录=默认正常,knowledge.ts 纪律)。 */
 export const MCP_KNOWN_HEALTH_STATUSES: readonly string[] = ['ok', 'degraded', 'notice', 'unsupported']
 
+/**
+ * ops 只读面有界常数(C6):events_get 缺省页 50、显式上限 200(比面板 events-get RPC 的
+ * 500 更紧——外部消费者是无人值守面,默认小页防灌爆,MCP_MAX_BODY_BYTES 同款思路);
+ * inbox_list 是摘要不是列表:计数全量、条目摘要只给最近 20 条,单行摘要截 160 字符
+ * (「不含正文全文」的落点——结论行超长时截断,原文完整面在面板/trace,不经 MCP 外泄)。
+ */
+export const MCP_EVENTS_PAGE_DEFAULT = 50
+export const MCP_EVENTS_MAX_LIMIT = 200
+export const MCP_INBOX_RECENT = 20
+export const MCP_SUMMARY_CLIP = 160
+
+/** 事件台账路径(env DSH_OPENCLI_EVENTS_FILE 覆盖,与面板 events-get RPC 同一把尺;非法值不抛)。 */
+export const mcpEventsFile = (): string => {
+  const v = process.env.DSH_OPENCLI_EVENTS_FILE
+  return v !== undefined && v.length > 0 ? v : join(homedir(), '.dsh', 'opencli-events.jsonl')
+}
+
+/** 插件状态文件路径(env DSH_OPENCLI_STATE 覆盖,与面板 schedule-list/inbox-list 同源)。 */
+export const mcpStateFile = (): string => {
+  const v = process.env.DSH_OPENCLI_STATE
+  return v !== undefined && v.length > 0 ? v : join(homedir(), '.dsh', 'dsh-opencli-state.json')
+}
+
 /** 端口读取(env 覆盖先例同 DSH_OPENCLI_INBOX_DIR;非法值落默认,不抛)。 */
 export function mcpPort(): number {
   const n = Number(process.env.DSH_OPENCLI_MCP_PORT)
@@ -90,11 +126,37 @@ export function mcpTokenFromEnv(): string | undefined {
 /** token/端口告知文件(env 覆盖先例;测试写临时目录,绝不碰真实 ~/.dsh)。 */
 export const mcpAuthFile = (): string => process.env.DSH_OPENCLI_MCP_AUTH_FILE ?? join(homedir(), '.dsh', 'opencli-mcp-auth.json')
 
-// ── 工具面(只读三只:knowledge_list / knowledge_search / knowledge_get) ────
+// ── 工具面(只读六只:knowledge 三件套 + ops 三件套) ──────────────────────────
 
-/** 目录缓存注入(index.ts 传 adapterCache.json;模块内 Array.isArray 收口,不信任形状)。 */
+/** 事件行(形状与面板 IngestEvent 一致:at/kind/text;读侧逐行校验,见 readEventRows)。 */
+export interface McpEventRow {
+  at: string
+  kind: string
+  text: string
+}
+
+/**
+ * state.json 投影输入面(只取三键):schedules 行/runHistory/inboxFlags 原样收进,
+ * 投影层逐行再校验。顶层其余键(approval/audit/disabled/notifyConfig)一概不进本面——
+ * notifyConfig 的 webhook URL 带凭据,凭据类字段永不外显(C6 红线)。
+ */
+export interface McpOpsState {
+  schedules?: unknown[]
+  runHistory?: Record<string, unknown[]>
+  inboxFlags?: Record<string, InboxRunFlag>
+}
+
+/** 目录缓存注入 + ops 数据注入(index.ts/测试传入;缺省走 mcpEventsFile/mcpStateFile 读盘)。 */
 export interface McpToolDeps {
   entries?: RawEntry[]
+  /** 事件台账快照(注入态;缺省读 mcpEventsFile(),读不到=空表不是错误)。 */
+  events?: McpEventRow[]
+  /** state 快照(注入态;缺省读 mcpStateFile(),读不到/形状不对=空对象)。 */
+  opsState?: McpOpsState
+  /** ops 只读面注册开关(C6 规格行「--caps 门控、默认不注册」;缺省/不传=false=只注册
+   *  knowledge 三件套,events_get/schedules_get/inbox_list 不进 tools/list 且 tools/call
+   *  如实报未注册。startMcpSelfhost 从 env DSH_OPENCLI_MCP_CAPS 或显式 opts 解析后注入)。 */
+  opsTools?: boolean
 }
 
 /** 单站摘要(knowledge_list/knowledge_search 的行;省键契约同 evidence-get:没有的东西不给空占位)。 */
@@ -200,6 +262,154 @@ const KNOWLEDGE_TOOLS = [
   },
 ]
 
+// ── ops 只读三工具(C6;cronobserver 先例形状:只读暴露+归因+读写 scope 分离的只读半边) ──
+
+const OPS_TOOLS = [
+  {
+    name: 'events_get',
+    title: '运行事件台账 · Operations Event Log',
+    // 路由式文案:先想 kind/since 再拉,台账按月可积累(5MB 预算),别无参全量翻历史
+    description: '无人值守运行事件台账(最新在前,缺省 50 条、上限 200):调度失败/收件箱/守护自愈/版本翻转/早报等事件痕迹,跨会话持久。kind 精确过滤(如 schedule-failed / daemon-flip / inbox,枚举开放集以实际返回为准),since 过滤只出该时刻之后(ISO 8601)。排查「昨晚定时任务怎么了」先带 since 拉,别全量翻。Unattended-run event log (newest first, default 50, max 200): schedule failures, inbox, daemon self-heal, version flips, digests. Filter by kind (exact) and since (ISO 8601) instead of paging through history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: '事件类型精确过滤(大小写敏感,如 schedule-failed;开放枚举,以台账实际 kind 为准)' },
+        since: { type: 'string', description: '只出该时刻(含)之后的事件,ISO 8601(如 2026-11-16T00:00:00Z)' },
+        limit: { type: 'number', description: `返回上限(1-${MCP_EVENTS_MAX_LIMIT},缺省 ${MCP_EVENTS_PAGE_DEFAULT})` },
+      },
+      required: [],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        events: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { at: { type: 'string' }, kind: { type: 'string' }, text: { type: 'string' } },
+            required: ['at', 'kind', 'text'],
+          },
+        },
+        total: { type: 'number', description: '过滤后命中总数(含 limit 截掉的更旧事件)' },
+      },
+      required: ['events', 'total'],
+    },
+    annotations: READ_ONLY_ANNOTATIONS,
+  },
+  {
+    name: 'schedules_get',
+    title: '定时任务清单 · Scheduled Jobs',
+    description: '定时采集任务清单(只读投影,无参数):任务名/命令行/cron/enabled/来源(source)/最近一次 run 的 typed 状态。不含运行历史全文与任务级旗标(watch/notify/profile 等),凭据类字段永不外显;改任务用面板或 ctl,本端点没有写面。Read-only list of scheduled jobs: id/command line/cron/enabled/source/last run status; no history text, no flags, no credentials.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        schedules: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              site: { type: 'string', description: '任务命令行(runHistory 键是 id,展示用)' },
+              cron: { type: 'string' },
+              enabled: { type: 'boolean' },
+              source: { type: 'string' },
+              lastRunAt: { type: 'string' },
+              last: {
+                type: 'object',
+                properties: { at: { type: 'string' }, status: { type: 'string', enum: ['ok', 'fail', 'skip', 'empty'] } },
+                required: ['at', 'status'],
+                description: '最近一次 run 的四态状态(与收件箱同口径);无 run 记录省键',
+              },
+            },
+            required: ['id', 'site', 'cron', 'enabled'],
+          },
+        },
+        total: { type: 'number' },
+      },
+      required: ['schedules', 'total'],
+    },
+    annotations: READ_ONLY_ANNOTATIONS,
+  },
+  {
+    name: 'inbox_list',
+    title: '运行收件箱摘要 · Run Inbox Summary',
+    description: '运行收件箱摘要(只读投影,无参数):未读/已读/归档与四态(ok/fail/skip/empty)计数+最近 20 条摘要行。摘要行只有结论一行(超长截断),不含回执与正文全文;已读/归档交互走面板或 ctl,本端点没有写面。Run inbox summary (read-only): unread/read/archived and per-status counts plus the 20 most recent one-line entries; full receipts and bodies stay local.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        unread: { type: 'number', description: '未读且未归档条数(归档不产生红点)' },
+        counts: {
+          type: 'object',
+          properties: {
+            total: { type: 'number' },
+            read: { type: 'number' },
+            archived: { type: 'number' },
+            status: {
+              type: 'object',
+              properties: { ok: { type: 'number' }, fail: { type: 'number' }, skip: { type: 'number' }, empty: { type: 'number' } },
+              required: ['ok', 'fail', 'skip', 'empty'],
+            },
+          },
+          required: ['total', 'read', 'archived', 'status'],
+        },
+        recent: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              task: { type: 'string' },
+              site: { type: 'string' },
+              at: { type: 'string' },
+              status: { type: 'string', enum: ['ok', 'fail', 'skip', 'empty'] },
+              summary: { type: 'string', description: '结论一行(超长截断;完整面在面板/trace)' },
+              read: { type: 'boolean' },
+              archived: { type: 'boolean' },
+              archivedBy: { type: 'string', enum: ['manual', 'auto'] },
+            },
+            required: ['task', 'site', 'at', 'status', 'summary', 'read', 'archived'],
+          },
+        },
+      },
+      required: ['unread', 'counts', 'recent'],
+    },
+    annotations: READ_ONLY_ANNOTATIONS,
+  },
+]
+
+/** 全工具面(knowledge 三件套 + ops 三件套,tools/list 与 handle.tools 同源;全只读,无写面)。 */
+const ALL_TOOLS = [...KNOWLEDGE_TOOLS, ...OPS_TOOLS]
+
+/** ops 三工具名单(门控判定与 callTool 拦截共用;新增 ops 工具须同步)。 */
+const OPS_TOOL_NAMES: ReadonlySet<string> = new Set(OPS_TOOLS.map((t) => t.name))
+
+/**
+ * ops 只读面能力开关(C6 规格行「--caps 门控、默认不注册」,docs/RESEARCH-20261116-015.md §六;
+ * 0.1.5 复核⑤:实现曾默认全量注册,与书面规格相左,按规格行收紧——默认只注册 knowledge
+ * 三件套,能力开关显式带 ops(或 all)才把 ops 三工具加进 tools/list。端点随插件进程常驻,
+ * 无 CLI 参数面,--caps 语义经 env DSH_OPENCLI_MCP_CAPS 表达(与 DSH_OPENCLI_MCP_TOKEN/
+ * PORT 同款门面,startMcpSelfhost.opsTools 可显式覆盖);值解析:逗号分隔 trim、大小写
+ * 不敏感,'ops' 开 ops 面,'all' 等价 knowledge+ops,其余值忽略(白名单闭集,不猜测)。
+ * tools/list 不列出的工具,tools/call 如实报「未注册」并给开法指引——宁可消费者多一步
+ * 开关,不做 stale tool list(#13396 痛点,消费者会话里的工具清单与端点实际面一致)。
+ */
+export function mcpCapsRaw(): string[] {
+  const raw = process.env.DSH_OPENCLI_MCP_CAPS
+  if (raw === undefined || raw.trim() === '') return []
+  return raw.split(',').map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0)
+}
+
+/** caps 是否开了 ops 面('ops' 或 'all')。 */
+export function mcpOpsEnabled(caps: readonly string[] | undefined): boolean {
+  return caps !== undefined && caps.some((c) => c === 'ops' || c === 'all')
+}
+
+/** 实际注册工具面:默认 knowledge 三件套;ops 开了才加 ops 三件套(默认不注册,C6 规格行)。 */
+export function mcpVisibleTools(ops: boolean): typeof ALL_TOOLS {
+  return ops ? ALL_TOOLS : KNOWLEDGE_TOOLS
+}
+
 /** 站点全集=目录 ∪ 健康表 ∪ 坑表(threads 这类"无适配器"站只活在健康表里,union 才不漏)。 */
 export function knowledgeSiteUniverse(entries: RawEntry[] | undefined): string[] {
   const set = new Set<string>()
@@ -208,7 +418,9 @@ export function knowledgeSiteUniverse(entries: RawEntry[] | undefined): string[]
     if (s.length > 0) set.add(s)
   }
   for (const s of Object.keys(SITE_HEALTH)) set.add(s)
-  for (const s of Object.keys(PITFALLS)) set.add(s)
+  // `_` 前缀=非站点保留段(_global 全局/工具面坑,src/knowledge.ts 保留键纪律)——不进站点宇宙,
+  // 全局坑经 knowledge_get 卡的「工具面须知」段面世
+  for (const s of Object.keys(PITFALLS)) { if (!s.startsWith('_')) set.add(s) }
   return [...set].sort()
 }
 
@@ -347,6 +559,204 @@ export function knowledgeCard(site: string, entries: RawEntry[] | undefined): { 
   return { markdown: renderKnowledgeMarkdown(card), card }
 }
 
+// ── ops 只读投影(C6:events-get / schedule-list / inbox-list 三 RPC 的最小事实投影) ──
+
+/**
+ * 事件台账读侧(面板 events-get RPC 同款逻辑:旧档 .1 在前、行形状逐行校验、脏行跳过、
+ * 统一倒序输出)。文件不存在/无权限=空表不是错误(事件是旁路面,读失败绝不抛)。
+ */
+export function readEventRows(mainFile: string): McpEventRow[] {
+  const rows: McpEventRow[] = []
+  for (const file of [`${mainFile}.1`, mainFile]) { // 旧档在前:读侧统一倒序输出
+    let text = ''
+    try { text = readFileSync(file, 'utf8') } catch { continue /* 无档/无权限:跳过 */ }
+    for (const line of text.split('\n')) {
+      if (line.trim().length === 0) continue
+      try {
+        const v = JSON.parse(line) as unknown
+        if (v === null || typeof v !== 'object') continue
+        const o = v as Record<string, unknown>
+        if (typeof o.at !== 'string' || typeof o.kind !== 'string' || typeof o.text !== 'string') continue
+        rows.push({ at: o.at, kind: o.kind, text: o.text })
+      } catch { /* 脏行跳过 */ }
+    }
+  }
+  return rows.reverse() // 文件是追加序(旧→新),契约与面板 events-get 一致:最新在前
+}
+
+/** state.json 读侧(只取三键;读不到/形状不对返回空对象——ops 面是旁路,读失败绝不抛)。 */
+export function readOpsState(stateFile: string): McpOpsState {
+  try {
+    const v = JSON.parse(readFileSync(stateFile, 'utf8')) as unknown
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return {}
+    const o = v as Record<string, unknown>
+    const out: McpOpsState = {}
+    if (Array.isArray(o.schedules)) out.schedules = o.schedules
+    if (o.runHistory !== null && typeof o.runHistory === 'object' && !Array.isArray(o.runHistory)) out.runHistory = o.runHistory as Record<string, unknown[]>
+    if (o.inboxFlags !== null && typeof o.inboxFlags === 'object' && !Array.isArray(o.inboxFlags)) out.inboxFlags = o.inboxFlags as Record<string, InboxRunFlag>
+    return out
+  } catch {
+    return {}
+  }
+}
+
+export interface McpEventsQuery {
+  kind?: string
+  since?: string
+  limit?: number
+}
+
+export interface McpEventsResult {
+  events: McpEventRow[]
+  /** 过滤后命中总数(含 limit 截掉的更旧事件;截断时 total > events.length) */
+  total: number
+}
+
+/** events_get 纯函数(kind 精确匹配;since 按时刻含端点;输入行序=最新在前,保持不重排)。 */
+export function eventsPage(rows: McpEventRow[], q: McpEventsQuery): McpEventsResult {
+  const kind = q.kind?.trim()
+  const sinceMs = q.since !== undefined && q.since.trim().length > 0 ? Date.parse(q.since) : undefined
+  const filtered = rows.filter((r) => {
+    if (kind !== undefined && kind.length > 0 && r.kind !== kind) return false
+    if (sinceMs !== undefined) {
+      const atMs = Date.parse(r.at)
+      // 时刻不可解析的行不能自证在阈值之后:排除(不猜)
+      if (Number.isNaN(atMs) || atMs < sinceMs) return false
+    }
+    return true
+  })
+  const limit = q.limit ?? MCP_EVENTS_PAGE_DEFAULT
+  return { events: filtered.slice(0, limit), total: filtered.length }
+}
+
+/** runHistory 行形状守卫(磁盘行不信任;receipt 形状不细校——inboxRunStatus 只读 .empty,垃圾形状自然落 false)。 */
+function isHistoryRow(r: unknown): r is RunHistoryRow {
+  return r !== null && typeof r === 'object'
+    && typeof (r as { at?: unknown }).at === 'string'
+    && typeof (r as { ok?: unknown }).ok === 'boolean'
+    && typeof (r as { summary?: unknown }).summary === 'string'
+}
+
+/** 最近一次 run 的 typed 状态(行存盘序不保证,按 at 降序取头;无合法行=null,省键不编)。 */
+function lastRunOf(rows: unknown): { at: string; status: RunInboxStatus } | null {
+  if (!Array.isArray(rows)) return null
+  const sorted = rows.filter(isHistoryRow).sort((a, b) => b.at.localeCompare(a.at))
+  const head = sorted[0]
+  return head !== undefined ? { at: head.at, status: inboxRunStatus(head) } : null
+}
+
+export interface McpScheduleSummary {
+  id: string
+  /** 任务命令行(runHistory 键是 id,展示需要 site) */
+  site: string
+  cron: string
+  enabled: boolean
+  source?: string
+  lastRunAt?: string
+  /** 最近一次 run 四态(与收件箱同口径);无 run 记录省键 */
+  last?: { at: string; status: RunInboxStatus }
+}
+
+export interface McpSchedulesResult {
+  schedules: McpScheduleSummary[]
+  total: number
+}
+
+/**
+ * schedules_get 纯函数(白名单投影):只出任务名/命令行/cron/enabled/source/lastRunAt/
+ * 最近一次状态六面——watch/notify/profile/quietHours 等任务级旗标与 history 全文不外显,
+ * 行形状不对跳过(不编不抛)。
+ */
+export function schedulesSummary(state: McpOpsState): McpSchedulesResult {
+  const out: McpScheduleSummary[] = []
+  const hist = state.runHistory ?? {}
+  for (const s of Array.isArray(state.schedules) ? state.schedules : []) {
+    if (s === null || typeof s !== 'object') continue
+    const o = s as Record<string, unknown>
+    if (typeof o.id !== 'string' || o.id.length === 0 || typeof o.site !== 'string' || typeof o.cron !== 'string' || typeof o.enabled !== 'boolean') continue
+    const last = lastRunOf(hist[o.id])
+    out.push({
+      id: o.id,
+      site: o.site,
+      cron: o.cron,
+      enabled: o.enabled,
+      ...(typeof o.source === 'string' ? { source: o.source } : {}),
+      ...(typeof o.lastRunAt === 'string' ? { lastRunAt: o.lastRunAt } : {}),
+      ...(last !== null ? { last } : {}),
+    })
+  }
+  return { schedules: out, total: out.length }
+}
+
+/** 摘要行截断(「不含正文全文」的落点):结论行超 MCP_SUMMARY_CLIP 截断加省略号。 */
+const clipSummary = (s: string): string => (s.length > MCP_SUMMARY_CLIP ? `${s.slice(0, MCP_SUMMARY_CLIP)}…` : s)
+
+export interface McpInboxEntrySummary {
+  task: string
+  site: string
+  at: string
+  status: RunInboxStatus
+  /** 结论一行(截断版;回执与深链不外显) */
+  summary: string
+  read: boolean
+  archived: boolean
+  /** 归档来源:auto=无产出自动归档 / manual=面板或 ctl(省键=旧数据) */
+  archivedBy?: 'manual' | 'auto'
+}
+
+export interface McpInboxSummary {
+  /** 未读且未归档条数(归档不产生红点,inboxUnreadCount 同源) */
+  unread: number
+  counts: {
+    total: number
+    read: number
+    archived: number
+    status: Record<RunInboxStatus, number>
+  }
+  /** 最近 N 条摘要行(新→旧;N=MCP_INBOX_RECENT) */
+  recent: McpInboxEntrySummary[]
+}
+
+/**
+ * inbox_list 纯函数:条目合成与四态判定复用 runinbox.ts 既有纯函数(synthesizeRunInbox,
+ * 与面板 inbox-list RPC 同一份逻辑),本层只做计数与摘要投影——正文全文/回执/trace 深链
+ * 不外显(深链指向本地 trace 面,外部 MCP 消费者没有对应读侧,给了就是悬空指针)。
+ */
+export function inboxSummary(state: McpOpsState): McpInboxSummary {
+  const sites: Record<string, string> = {}
+  for (const s of Array.isArray(state.schedules) ? state.schedules : []) {
+    if (s === null || typeof s !== 'object') continue
+    const o = s as Record<string, unknown>
+    if (typeof o.id === 'string' && o.id.length > 0 && typeof o.site === 'string') sites[o.id] = o.site
+  }
+  const entries = synthesizeRunInbox({
+    runHistory: (state.runHistory ?? {}) as Record<string, RunHistoryRow[]>,
+    sites,
+    flags: state.inboxFlags ?? {},
+  })
+  const statusCounts: Record<RunInboxStatus, number> = { ok: 0, fail: 0, skip: 0, empty: 0 }
+  for (const e of entries) statusCounts[e.status]++
+  return {
+    unread: inboxUnreadCount(entries),
+    counts: {
+      total: entries.length,
+      read: entries.filter((e) => e.read).length,
+      archived: entries.filter((e) => e.archived).length,
+      status: statusCounts,
+    },
+    recent: entries.slice(0, MCP_INBOX_RECENT).map((e) => ({
+      task: e.task,
+      site: e.site,
+      at: e.at,
+      status: e.status,
+      summary: clipSummary(e.summary),
+      read: e.read,
+      archived: e.archived,
+      ...(e.archivedBy !== undefined ? { archivedBy: e.archivedBy } : {}),
+    })),
+  }
+}
+
 /** 工具 content 块:text 正文 + resource_link 资源指引(2025-06-18 tools 章 MAY;宿主投影为一行文本,已核无害)。 */
 type ToolContent = Array<
   | { type: 'text'; text: string }
@@ -361,6 +771,11 @@ const toolError = (text: string): { content: ToolContent; isError: true } => ({ 
  * 游标无效走抛错路径——分页章「无效 cursor SHOULD -32602」,由 tools/call 的 catch 收口。
  */
 function callTool(name: string, args: Record<string, unknown>, deps: McpToolDeps): { content: ToolContent; structuredContent?: unknown; isError?: boolean } {
+  // ops 门控(call 与 list 同一开关):未开 ops 面时 ops 三工具如实报「未注册」并给开法指引,
+  // 不走下方工具体(默认不注册,C6 规格行;错误是工具结果层 isError,协议层照常回 200)
+  if (OPS_TOOL_NAMES.has(name) && deps.opsTools !== true) {
+    return toolError(`工具「${name}」未注册:ops 只读面默认不注册(C6 规格「--caps 门控」),设 env DSH_OPENCLI_MCP_CAPS=ops(或 all)并重载插件后可用 / tool not registered: ops surface is opt-in via env DSH_OPENCLI_MCP_CAPS=ops`)
+  }
   if (name === 'knowledge_list') {
     const status = args.status === undefined ? undefined : String(args.status)
     if (status !== undefined && !MCP_KNOWN_HEALTH_STATUSES.includes(status)) {
@@ -410,6 +825,33 @@ function callTool(name: string, args: Record<string, unknown>, deps: McpToolDeps
     }
     return { content, structuredContent: structured }
   }
+  if (name === 'events_get') {
+    const kind = args.kind === undefined ? undefined : String(args.kind)
+    const since = args.since === undefined ? undefined : String(args.since)
+    if (since !== undefined && since.trim().length > 0 && Number.isNaN(Date.parse(since))) {
+      return toolError(`since 非法,需可解析时刻(ISO 8601,如 2026-11-16T00:00:00Z):${JSON.stringify(args.since ?? null)} / invalid since`)
+    }
+    const limit = args.limit === undefined ? MCP_EVENTS_PAGE_DEFAULT : Number(args.limit)
+    if (!Number.isInteger(limit) || limit < 1 || limit > MCP_EVENTS_MAX_LIMIT) {
+      return toolError(`limit 需为 1-${MCP_EVENTS_MAX_LIMIT} 的整数 / limit must be an integer in 1-${MCP_EVENTS_MAX_LIMIT}`)
+    }
+    const rows = deps.events ?? readEventRows(mcpEventsFile())
+    const r = eventsPage(rows, {
+      ...(kind !== undefined && kind.trim().length > 0 ? { kind } : {}),
+      ...(since !== undefined && since.trim().length > 0 ? { since } : {}),
+      limit,
+    })
+    return { content: [{ type: 'text', text: JSON.stringify(r.events, null, 2) }], structuredContent: { events: r.events, total: r.total } }
+  }
+  if (name === 'schedules_get' || name === 'inbox_list') {
+    const state = deps.opsState ?? readOpsState(mcpStateFile())
+    if (name === 'schedules_get') {
+      const r = schedulesSummary(state)
+      return { content: [{ type: 'text', text: JSON.stringify(r.schedules, null, 2) }], structuredContent: { schedules: r.schedules, total: r.total } }
+    }
+    const r = inboxSummary(state)
+    return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }], structuredContent: r }
+  }
   throw new Error(`未知工具:${name}`)
 }
 
@@ -444,13 +886,17 @@ export function handleJsonRpc(message: unknown, deps: McpToolDeps): JsonRpcRespo
     case 'initialize': {
       // 协议版本:客户端声明的版本认识就确认,不认识的钳回服务端唯一支持的版本
       //(MCP 规范:响应里的版本是服务端声明「我按这个说」,回显未支持版本等于假兼容;复核 low)
+      // instructions 按实际注册面组装:ops 未开就不预告 ops 工具(stale tool list 防线,#13396)
       const p = (msg.params ?? {}) as Record<string, unknown>
       const requested = typeof p.protocolVersion === 'string' && p.protocolVersion.length > 0 ? p.protocolVersion : MCP_PROTOCOL_VERSION
+      const opsOn = deps.opsTools === true
       return reply({
         protocolVersion: requested === MCP_PROTOCOL_VERSION ? requested : MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'dsh-opencli', title: 'dsh-opencli 站点知识', version: PLUGIN_VERSION },
-        instructions: '站点知识读侧(只读,无写工具):先 knowledge_search 按关键词找站,或 knowledge_list 带 status/domain/query 过滤分页浏览(默认分页,别全量拉),再 knowledge_get 取单站知识卡(命令目录+坑+健康度+失败签名恢复表)。Read-side only: search or filtered list first, then the single-site card.',
+        instructions: '站点知识读侧(只读,无写工具):先 knowledge_search 按关键词找站,或 knowledge_list 带 status/domain/query 过滤分页浏览(默认分页,别全量拉),再 knowledge_get 取单站知识卡。' + (opsOn
+          ? '运行状态读侧(ops 面):events_get(带 kind/since 查事件台账)/schedules_get(定时任务清单)/inbox_list(收件箱摘要)——都是只读投影,写操作走面板/审批门。'
+          : '') + 'Read-side only. No write tools.',
       })
     }
     case 'notifications/initialized':
@@ -458,7 +904,9 @@ export function handleJsonRpc(message: unknown, deps: McpToolDeps): JsonRpcRespo
     case 'ping':
       return reply({})
     case 'tools/list':
-      return reply({ tools: KNOWLEDGE_TOOLS })
+      // 默认只注册 knowledge 三件套;ops 三工具经 caps 门控显式开启(C6 规格行「--caps 门控、
+      // 默认不注册」,mcpVisibleTools 留痕),list 与 call 同一开关——不出现「list 不给 call 能用」
+      return reply({ tools: mcpVisibleTools(deps.opsTools === true) })
     case 'tools/call': {
       const p = msg.params
       if (p === null || typeof p !== 'object' || Array.isArray(p) || typeof (p as Record<string, unknown>).name !== 'string') {
@@ -530,8 +978,10 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
  * 读请求体(带上限;超限返回 null,调用方 413)。
  * 超限后不立刻 destroy——那会让 413 响应到不了客户端;改为继续收但丢弃(排干),
  * 直到 'end' 再回信。另设 8MB 硬顶:超得离谱视为滥用,掐线保进程(响应可能丢失,可接受)。
+ * 导出仅测试用:四分支(正常拼包/超限排干/8MB 硬顶掐线/error 收 null)此前零覆盖,
+ * 0.1.5 C6 随车补(复核 low#18 同车)。
  */
-function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
+export function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
   return new Promise((resolve) => {
     let size = 0
     let overflow = false
@@ -679,6 +1129,13 @@ export interface McpSelfhostOptions {
   authFile?: string
   /** 目录缓存注入(index.ts 传 adapterCache 的 json;缺省只有 health/pitfalls 读侧)。 */
   entriesProvider?: () => unknown
+  /** 事件台账注入(测试/后续 index.ts 接线用;缺省走 mcpEventsFile() 读盘,每请求一次)。 */
+  eventsProvider?: () => unknown
+  /** state 快照注入(schedules/runHistory/inboxFlags;缺省走 mcpStateFile() 读盘)。 */
+  stateProvider?: () => unknown
+  /** ops 只读面注册开关(C6「--caps 门控、默认不注册」;缺省走 env DSH_OPENCLI_MCP_CAPS
+   *  解析,未设=只注册 knowledge 三件套。测试显式传 true 锁全工具面)。 */
+  opsTools?: boolean
   log?: (msg: string) => void
 }
 
@@ -698,10 +1155,19 @@ export async function startMcpSelfhost(opts: McpSelfhostOptions = {}): Promise<M
   const token = opts.token ?? mcpTokenFromEnv() ?? randomBytes(24).toString('base64url')
   const authFile = opts.authFile ?? mcpAuthFile()
   const log = opts.log
-  // 目录缓存每请求经 provider 惰性取(entriesProvider 缺省=只有 health/pitfalls 静态读侧)
+  // ops 面注册开关:显式 opts 优先,缺省 env DSH_OPENCLI_MCP_CAPS 解析(默认关=C6「默认不注册」);
+  // 启动期定死一次(与 token 同语义——中途改 env 需插件重载生效,消费面工具清单才不漂移)
+  const opsTools = opts.opsTools ?? mcpOpsEnabled(mcpCapsRaw())
+  // 目录缓存每请求经 provider 惰性取(entriesProvider 缺省=只有 health/pitfalls 静态读侧);
+  // ops 数据同请求节奏:注入态用 provider 产物,否则读盘(env 指到临时文件=测试天然隔离)
   const handler = makeRequestHandler(() => {
     const raw = opts.entriesProvider?.()
-    return Array.isArray(raw) ? { entries: raw as RawEntry[] } : {}
+    const deps: McpToolDeps = Array.isArray(raw) ? { entries: raw as RawEntry[], opsTools } : { opsTools }
+    const evRaw = opts.eventsProvider?.()
+    if (Array.isArray(evRaw)) deps.events = evRaw as McpEventRow[]
+    const stRaw = opts.stateProvider?.()
+    if (stRaw !== null && typeof stRaw === 'object' && !Array.isArray(stRaw)) deps.opsState = stRaw as McpOpsState
+    return deps
   }, token, log)
   const server: Server = createServer(handler)
   try {
@@ -737,6 +1203,6 @@ export async function startMcpSelfhost(opts: McpSelfhostOptions = {}): Promise<M
   }
   return {
     ok: true,
-    handle: { port: actualPort, url: actualUrl, token, tokenSource, tools: KNOWLEDGE_TOOLS.map((t) => ({ name: t.name, description: t.description })), stop },
+    handle: { port: actualPort, url: actualUrl, token, tokenSource, tools: mcpVisibleTools(opsTools).map((t) => ({ name: t.name, description: t.description })), stop },
   }
 }

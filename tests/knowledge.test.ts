@@ -1,6 +1,6 @@
 // 站点知识包单测:三源合一(目录+失败签名+pitfalls)、未知站不编造、渲染完整性
 import { describe, expect, it } from 'vitest'
-import { buildKnowledge, renderKnowledgeMarkdown, PITFALLS, FAILURE_SIGNATURES, SITE_HEALTH, healthOf, SITE_HEALTH_STATUS_LABELS } from '../src/knowledge.ts'
+import { buildKnowledge, renderKnowledgeMarkdown, PITFALLS, FAILURE_SIGNATURES, SITE_HEALTH, healthOf, SITE_HEALTH_STATUS_LABELS, globalPitfalls } from '../src/knowledge.ts'
 
 const ENTRIES = [
   { site: 'weibo', name: 'hot', access: 'read', description: '微博热搜', domain: 'weibo.com' },
@@ -29,6 +29,21 @@ describe('buildKnowledge', () => {
     expect(buildKnowledge('weibo', ENTRIES)!.pitfalls).toEqual(PITFALLS.weibo)
     expect(buildKnowledge('bilibili', ENTRIES)!.pitfalls.length).toBeGreaterThan(0)
     expect(buildKnowledge('obscure-site', [{ site: 'obscure-site', name: 'get', access: 'read' }])!.pitfalls).toEqual([])
+  })
+
+  it('保留键纪律(0.1.5 C7 复核⑦):_global 全局/工具面坑不入站点卡 pitfalls,经 globalPitfalls 面世(#2813 在卡)', () => {
+    // `_global` 是保留段不是站点:buildKnowledge 永远查不到它(站名不以 _ 开头)
+    expect(buildKnowledge('_global', ENTRIES)).toBeNull()
+    const gp = globalPitfalls()
+    expect(gp.length).toBeGreaterThan(0)
+    expect(gp.join('\n')).toContain('#2813') // C7 知识卡输入:OPENCLI_CDP_ENDPOINT 对 browser 子命令无效
+    expect(gp.join('\n')).toContain('OPENCLI_CDP_ENDPOINT')
+    // 站点卡不携带全局坑(不冒充站点坑);渲染面单独成「工具面须知」段
+    const card = buildKnowledge('weibo', ENTRIES)!
+    expect(card.pitfalls.some((p) => p.includes('#2813'))).toBe(false)
+    const md = renderKnowledgeMarkdown(card)
+    expect(md).toContain('工具面须知')
+    expect(md).toContain('#2813')
   })
 
   it('大小写不敏感', () => {

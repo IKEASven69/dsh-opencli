@@ -3,7 +3,8 @@
  * DSH-Novelist「词库双向 diff 漂移即失败」同款:knowledge/*.json 的站点键与本机已装
  * OpenCLI CLI 的 cli-manifest.json(2.0.3 实测 171 唯一站点 / 1225 命令)双向核对——
  *  ① 卡 → manifest:pitfalls 每个站点、health 中非 unsupported 的站点,必须是 manifest 真实站点
- *     (上游改名/下线后卡片悬空 = 漂移)
+ *     (上游改名/下线后卡片悬空 = 漂移);`_` 前缀键是非站点保留段(_global 全局/工具面坑,
+ *     src/knowledge.ts 保留键纪律,0.1.5 C7 复核⑦)不参与站点核对
  *  ② manifest → 卡:health 标 unsupported(无适配器)的站点必须确实不在 manifest
  *     (上游已加适配器、卡片仍说"不支持" = 漂移)
  *  ③ 新站补卡:REQUIRED_CARD_SITES 每站必须有 pitfalls 卡(2.0.3 新增 pinduoduo)
@@ -63,7 +64,7 @@ export function diffKnowledge(
   health: Record<string, { status?: unknown }>,
   required: readonly string[] = REQUIRED_CARD_SITES,
 ): KnowledgeDrift {
-  const orphanPitfalls = Object.keys(pitfalls).filter((s) => !m.sites.has(s)).sort()
+  const orphanPitfalls = Object.keys(pitfalls).filter((s) => !s.startsWith('_') && !m.sites.has(s)).sort()
   const orphanHealth: string[] = []
   const staleUnsupported: string[] = []
   for (const [s, h] of Object.entries(health)) {

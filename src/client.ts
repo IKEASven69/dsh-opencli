@@ -58,6 +58,7 @@ const STR = {
 
     diffT: '📊 变化', diffEmpty: '还没有两次采集的对比——再跑一次就有了', diffNone: '无变化',
     csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`, nfLevel: '级别', nfLevelAll: '全部', nfLevelQuiet: '仅变化', nfLevelTip: 'quiet=只推命中/变化/失败;all=例行也推', diffWeek: '近 7 天', diffAdded: '新增', diffGone: '消失', diffMoved: '位移', scTitle: '插件自检', scSub: '工具注册点名 + 入口在线 + 宿主匹配——“装上没效果”3 秒可见', scOk: '全部正常', scTools: (n: number) => `${n} 个工具已注册`, scConflict: (n: number) => `${n} 个工具撞名让位`, scDaemon: 'daemon', scCtl: 'ctl 收件箱', scPanel: '面板 RPC', scUpdate: (v: string) => `有新版本 v${v}`, scUpgradeTip: '复制升级命令到剪贴板(不自动执行——升级是你的显式决策)', scCurrent: (v: string) => `当前 v${v}`, qhLabel: '静默', qhOff: '关', qhTip: '窗内通知暂存,出窗合并推送', qhSetFail: '静默时段格式:HH:MM-HH:MM', qhPh: '😴 静默 23:00-07:00', qhTitle: '跨夜如 23:00-07:00;窗内暂存出窗合并',
+    visLabel: '可见', visDefault: '默认', visArchiveOk: '成功归档', visNofFail: '仅失败推', visQuietAct: '有事才现身', visTip: '可见性档位:默认=每次 run 都现身收件箱;成功归档=成功的 run 自动沉归档区(可回看),失败照常现身;仅失败推=只有失败才推送通知(命中/变化也不推);有事才现身=无失败/命中/变化时自动归档不打扰。归档无损,早报「已归档」计数可见',
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     hintT: '你是不是想用这些?点击直接跑:',
     quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑', quickMore: '↑ 每次刷新从你的站点目录抽 6 个——170+ 站都能这么用',
@@ -168,6 +169,7 @@ const STR = {
 
     diffT: 'Diff', diffEmpty: 'No pairs yet — run one more collection', diffNone: 'no change',
     csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`, nfLevel: 'level', nfLevelAll: 'all', nfLevelQuiet: 'changes', nfLevelTip: 'quiet=hits/changes/failures only; all=routine too', diffWeek: 'last 7 days', diffAdded: 'added', diffGone: 'gone', diffMoved: 'moved', scTitle: 'Plugin self-check', scSub: 'Tool registration roll-call + entries online + host match — "installed but no effect" visible in 3s', scOk: 'All good', scTools: (n: number) => `${n} tools registered`, scConflict: (n: number) => `${n} name conflicts yielded`, scDaemon: 'daemon', scCtl: 'ctl inbox', scPanel: 'panel RPC', scUpdate: (v: string) => `new version v${v} available`, scUpgradeTip: 'copy upgrade command to clipboard (never auto-runs — upgrading is your explicit call)', scCurrent: (v: string) => `current v${v}`, qhLabel: 'quiet', qhOff: 'off', qhTip: 'notifications during the window are merged and sent after it ends', qhSetFail: 'quiet hours format: HH:MM-HH:MM', qhPh: '😴 quiet 23:00-07:00', qhTitle: 'overnight ok e.g. 23:00-07:00; merged after window',
+    visLabel: 'vis', visDefault: 'default', visArchiveOk: 'archive on success', visNofFail: 'failures only', visQuietAct: 'quiet unless actionable', visTip: 'Visibility level: default=every run shows up in the inbox; archive on success=successful runs sink to the archive automatically (still readable), failures stay visible; failures only=push notifications on failures exclusively (hits/changes included, no pushes); quiet unless actionable=routine runs auto-archive until a failure/hit/change shows up. Archiving is lossless — the digest counts archived runs',
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     hintT: 'Did you mean? Click to run:',
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run', quickMore: '↑ 6 picked from your catalog on each refresh — 170+ sites work like this',
@@ -260,7 +262,7 @@ const STR = {
 
 type StrKey = keyof typeof STR.zh
 
-interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; profile?: string; keep?: number; backoffMs?: number; history?: Array<{ at: string; ok: boolean; summary: string }> }
+interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; profile?: string; keep?: number; backoffMs?: number; visibility?: string; history?: Array<{ at: string; ok: boolean; summary: string }> }
 interface AssetHit { id: string; name: string }
 interface BuiltinScript { name: string; sha256: string; description: string }
 interface ToastMsg { msg: string; ok: boolean }
@@ -673,6 +675,8 @@ function Panel(): ReturnType<typeof createElement> {
   const [schedQuiet, setSchedQuiet] = useState('')
   // 多账号隔离:任务级浏览器 profile(别名/contextId),空=不指定(CLI 默认档案)
   const [schedProfile, setSchedProfile] = useState('')
+  // 可见性档位(C5,§九.7⑤ 四态):默认 always-visible=现行为零变化
+  const [schedVis, setSchedVis] = useState('always-visible')
   const [schedBusy, setSchedBusy] = useState(false)
   // 批量管理:选中任务 id 集 + 来源过滤 + 批量操作进行中
   const [schedSel, setSchedSel] = useState<Set<string>>(new Set())
@@ -881,9 +885,11 @@ function Panel(): ReturnType<typeof createElement> {
     const watch = schedWatch.trim()
     const qh = schedQuiet.trim()
     const prof = schedProfile.trim()
-    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, source: 'panel', ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}), ...(prof.length > 0 ? { profile: prof } : {}) } } as unknown as Record<string, unknown>)
+    // 可见性档位(C5):默认档不发键(省键=服务端天然落默认,与可选字段纪律一致)
+    const vis = schedVis
+    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, source: 'panel', ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}), ...(prof.length > 0 ? { profile: prof } : {}), ...(vis !== 'always-visible' ? { visibility: vis } : {}) } } as unknown as Record<string, unknown>)
     setSchedBusy(false)
-    if (r.ok) { setSchedSite(''); setSchedWatch(''); setSchedQuiet(''); setSchedProfile(''); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
+    if (r.ok) { setSchedSite(''); setSchedWatch(''); setSchedQuiet(''); setSchedProfile(''); setSchedVis('always-visible'); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
   }
   // 通知通道(D):保存当前所选平台通道;测试按钮发一条真实测试消息(用户配置的通道)。
   // dingtalk secret 支持钉在 URL query(secret=...)——保存原样,发送时由适配层处理。
@@ -953,6 +959,16 @@ function Panel(): ReturnType<typeof createElement> {
     else showToast(r.error?.message ?? t2('errReq'), false)
   }
   const QH_PRESETS = ['23:00-07:00', '22:00-08:00', '00:00-06:00', '01:00-09:00']
+  // 可见性档位(C5,§九.7⑤ 四态)下拉选项:创建表单与任务行两处共用同一份(与服务端四值闭集一字不差)
+  const VIS_OPTIONS: Array<[string, string]> = [
+    ['always-visible', t2('visDefault')],
+    ['archive-on-success', t2('visArchiveOk')],
+    ['notify-on-failure', t2('visNofFail')],
+    ['quiet-unless-actionable', t2('visQuietAct')],
+  ]
+  const visSelect = (value: string, onChange: (v: string) => void, style: Record<string, string>): ReturnType<typeof createElement> =>
+    createElement('select', { className: 'o4-in', style, title: t2('visTip'), value, onChange: (e: { target: { value: string } }) => onChange(e.target.value) },
+      ...VIS_OPTIONS.map(([v, label]) => createElement('option', { key: v, value: v }, `${t2('visLabel')}:${label}`)))
   const removeSchedule = async (id: string): Promise<void> => {
     const r = await rpc('schedule-remove', { request: { id } } as unknown as Record<string, unknown>)
     if (r.ok) void loadSchedules()
@@ -1359,6 +1375,7 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('input', { className: 'o4-in', style: { maxWidth: '172px' }, placeholder: '🔔 watch 关键词', title: '逗号分隔,命中即通知', value: schedWatch, onChange: (e: { target: { value: string } }) => setSchedWatch(e.target.value) }),
           createElement('input', { className: 'o4-in mono', style: { maxWidth: '150px' }, placeholder: t2('qhPh'), title: t2('qhTitle'), value: schedQuiet, onChange: (e: { target: { value: string } }) => setSchedQuiet(e.target.value) }),
           createElement('input', { className: 'o4-in mono', style: { maxWidth: '140px' }, placeholder: t2('profPh'), title: t2('profTitle'), value: schedProfile, onChange: (e: { target: { value: string } }) => setSchedProfile(e.target.value) }),
+          visSelect(schedVis, (v) => setSchedVis(v), { maxWidth: '150px' }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
         ),
         // 通知通道节(D):平台下拉+URL+保存+测试(与 ctl notify set/test 同链);模板输入
@@ -1436,6 +1453,8 @@ function Panel(): ReturnType<typeof createElement> {
                 createElement('select', { className: 'o4-in', style: { maxWidth: '132px', padding: '1px 4px', fontSize: '11px' }, title: t2('qhTip'), value: s.quietHours ?? '', onChange: (e: { target: { value: string } }) => { void patchSchedule(s, { quietHours: e.target.value === '' ? 'off' : e.target.value }) } },
                   createElement('option', { value: '' }, `${t2('qhLabel')}:${t2('qhOff')}`),
                   ...[...new Set([...QH_PRESETS, ...(s.quietHours !== undefined ? [s.quietHours] : [])])].map((q) => createElement('option', { key: q, value: q }, `${t2('qhLabel')} ${q}`))),
+                // C5 可见性档位下拉(同一幂等链改档;默认=既有行为零变化)
+                visSelect(s.visibility ?? 'always-visible', (v) => { void patchSchedule(s, { visibility: v }) }, { maxWidth: '150px', padding: '1px 4px', fontSize: '11px' }),
                 ...(s.source !== undefined ? [createElement('span', { className: 'o4-bdg', title: t2('nfSrcTip')(s.source) }, s.source)] : []),
                 ...(s.profile !== undefined ? [createElement('span', { className: 'o4-bdg b', title: t2('profTip')(s.profile) }, `👤 ${s.profile}`)] : []),
                 createElement('span', { style: { flex: '1' } }),

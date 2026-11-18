@@ -108,18 +108,30 @@ export const CANARY_KEEP = 14
 export const RESERVED_NAMESPACES = new Set(['browser', 'adapter', 'daemon', 'auth', 'profile', 'doctor', 'extension', 'chrome', 'opencli', 'canary', 'benchmark'])
 
 /** 从归一化适配器目录挑 canary 集:命令数 top-20 站,只挑零参热榜语义命令
- * (hot/latest/feed/…);无热词命令的站跳过——不回退首条 read(带参风险,真机实证)。 */
-export function pickCanaryCommands(adapters: Array<{ name: string; commands: string[] }>): string[] {
+ * (hot/latest/feed/…);无热词命令的站跳过——不回退首条 read(带参风险,真机实证)。
+ * 0.1.5 C1 选站纪律(canary 存档 11-13/14/16 三轮逐行实证的构成污染源治理):
+ *  - 剔 'following':必带参语义(insta 缺 username/zhihu 缺 user→commander.missingArgument,
+ *    三轮全同)——这类命令注定挂,占坑+污染通过率;
+ *  - 'daily' 降为兜底热词:v2ex daily=签到写命令,只读门三轮逐轮防御跳过计失败;主热词齐全
+ *    的站(v2ex 有 hot)不再落到它,宁缺勿滥,判据层(选站缺陷不计票)兜残余;
+ *  - 纯写站(kinds 非空且无 read)整站跳过:跑也必被只读门拦,不浪费 canary 名额。 */
+export function pickCanaryCommands(adapters: Array<{ name: string; commands: string[]; kinds?: string[] }>): string[] {
   // 只挑零参热榜语义命令:hot/latest/feed/… 这类天然免参;没有就跳过该站。
   // (真机首版用 kinds[i] 逐位过滤——但 kinds 是 Set 去重集合,与 commands 索引根本
   // 不对齐,board-create/ask 这类必带参命令混进 canary,20 站里 12 个 missingArgument)
-  const hotWords = ['hot', 'latest', 'feed', 'trending', 'daily', 'best', 'home', 'frontpage', 'following', 'notifications', 'digest', 'recommend']
-  const ranked = [...adapters].filter((a) => !RESERVED_NAMESPACES.has(a.name)).sort((a, b) => b.commands.length - a.commands.length || a.name.localeCompare(b.name))
+  const hotPrimary = ['hot', 'latest', 'feed', 'trending', 'best', 'home', 'frontpage', 'notifications', 'digest', 'recommend']
+  const hotFallback = ['daily']
+  const ranked = [...adapters]
+    .filter((a) => !RESERVED_NAMESPACES.has(a.name))
+    .filter((a) => a.kinds === undefined || a.kinds.length === 0 || a.kinds.includes('read'))
+    .sort((a, b) => b.commands.length - a.commands.length || a.name.localeCompare(b.name))
   const out: string[] = []
   for (const a of ranked) {
     if (out.length >= CANARY_TOP) break
-    const hit = a.commands.find((c) => hotWords.some((w) => c === w))
-      ?? a.commands.find((c) => hotWords.some((w) => c.startsWith(w + '-') || c.endsWith('-' + w)))
+    const hit = a.commands.find((c) => hotPrimary.some((w) => c === w))
+      ?? a.commands.find((c) => hotPrimary.some((w) => c.startsWith(w + '-') || c.endsWith('-' + w)))
+      ?? a.commands.find((c) => hotFallback.some((w) => c === w))
+      ?? a.commands.find((c) => hotFallback.some((w) => c.startsWith(w + '-') || c.endsWith('-' + w)))
     if (hit !== undefined) out.push(`${a.name} ${hit}`)
   }
   return out

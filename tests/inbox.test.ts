@@ -12,6 +12,7 @@ import {
   parseIntent, drainInbox, inboxDir,
   type Intent, type IntentExecutor, type IntentResult,
 } from '../src/inbox.ts'
+import { normalizeNotifyConfig } from '../src/notify.ts'
 
 let dir = ''
 beforeAll(() => {
@@ -160,6 +161,75 @@ describe('ctl 脚本端到端(真实子进程)', () => {
     expect(r.status).toBe(2)
     const r2 = ctl('notify', 'set', '--wecom', 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k', '--no-wait')
     expect(r2.status).toBe(0)
+  })
+
+  // ── 0.1.5 C7(spec 复核 L2):0.1.4 新 push 旗标的 CLI→intent 映射层端到端(真实子进程,同上款)。
+  // pushover 凭据走 POST body(官方纪律 never as URL query parameters),token/user 必须成对:
+  // 单边给出=用法错误退码 2 且零投递(不落半份意图文件),成对给出才落 token/user/device 字段。
+  it('notify set --pushover-token 单边退码 2 且零投递;成对给出落 token/user 不落 url', () => {
+    const before = readdirSync(dir).length
+    const soloTok = ctl('notify', 'set', '--pushover-token', 'tok-abc', '--no-wait')
+    expect(soloTok.status).toBe(2)
+    expect(soloTok.stderr).toContain('成对')
+    const soloUser = ctl('notify', 'set', '--pushover-user', 'u-abc', '--no-wait')
+    expect(soloUser.status).toBe(2)
+    expect(readdirSync(dir).length).toBe(before) // 两次单边都不落意图:半份配置比缺配置更危险
+    const ok = ctl('notify', 'set', '--pushover-token', 'tok-abc', '--pushover-user', 'u-abc', '--pushover-device', 'phone', '--no-wait')
+    expect(ok.status).toBe(0)
+    const { stem } = JSON.parse(ok.stdout) as { stem: string }
+    const intent = JSON.parse(readFileSync(join(dir, stem + '.json'), 'utf8')) as Intent
+    expect(intent).toEqual({ kind: 'notify-set', channels: [{ type: 'pushover', token: 'tok-abc', user: 'u-abc', enabled: true, device: 'phone' }] })
+    expect('url' in (intent as { channels: Array<Record<string, unknown>> }).channels[0]!).toBe(false) // 凭据通道无 url 字段(端点官方固定)
+    expect(parseIntent(intent)).not.toBeNull() // 消费者侧闭集门原样放行
+  })
+
+  // ntfy 的 topic 有两种给法:官方分享 URL path(https://ntfy.sh/<topic>)与显式 --ntfy-topic。
+  // 意图层两种给法都如实透传不猜测合并;互斥语义在消费侧 normalizeNotifyConfig
+  // (0.1.5 L1 后:URL path 拆解不再被显式字段在场跳过——显式字段优先,path 段一律摘除,
+  // URL 存无凭据 base)——同一凭据只消费一个来源,显式优先。
+  it('notify set --ntfy:URL path 形态透传待拆;与 --ntfy-topic 同给时显式优先且 URL 摘除凭据段', async () => {
+    const pathOnly = ctl('notify', 'set', '--ntfy', 'https://ntfy.sh/mytopic', '--no-wait')
+    expect(pathOnly.status).toBe(0)
+    const { stem } = JSON.parse(pathOnly.stdout) as { stem: string }
+    const intent = JSON.parse(readFileSync(join(dir, stem + '.json'), 'utf8')) as Intent
+    expect(intent).toEqual({ kind: 'notify-set', channels: [{ type: 'ntfy', url: 'https://ntfy.sh/mytopic', enabled: true }] })
+    // 消费侧拆解:topic 独立字段、URL 存无凭据 base(publish.md「the topic is essentially a password」)
+    const norm1 = normalizeNotifyConfig({ channels: (intent as { channels: unknown }).channels })
+    expect(norm1.channels[0]).toEqual({ type: 'ntfy', enabled: true, url: 'https://ntfy.sh', topic: 'mytopic' })
+    expect(parseIntent(intent)).not.toBeNull()
+
+    const both = ctl('notify', 'set', '--ntfy', 'https://ntfy.sh/mytopic', '--ntfy-topic', 'explicit-topic', '--no-wait')
+    expect(both.status).toBe(0)
+    const { stem: stem2 } = JSON.parse(both.stdout) as { stem: string }
+    const intent2 = JSON.parse(readFileSync(join(dir, stem2 + '.json'), 'utf8')) as Intent
+    expect(intent2).toEqual({ kind: 'notify-set', channels: [{ type: 'ntfy', url: 'https://ntfy.sh/mytopic', enabled: true, topic: 'explicit-topic' }] })
+    const norm2 = normalizeNotifyConfig({ channels: (intent2 as { channels: unknown }).channels })
+    // 0.1.5 L1:组合路径(URL 带凭据+显式字段同给)不再「拆解跳过」——显式字段优先,
+    // URL 一律存无凭据 base(修前 path 段随 URL 落盘,是「无凭据形态落盘」承诺的例外洞)
+    expect(norm2.channels[0]).toEqual({ type: 'ntfy', enabled: true, url: 'https://ntfy.sh', topic: 'explicit-topic' })
+    expect(parseIntent(intent2)).not.toBeNull()
+  })
+
+  // bark 同款两形态(官方分享 https://api.day.app/<key> 与显式 --bark-key):device_key 不进
+  // 请求 URL 是 0.1.4 对外承诺(凭据一律不进请求 URL),消费侧拆解互斥与 ntfy 一致。
+  it('notify set --bark:URL path 形态透传待拆;--bark-key 显式在场则消费侧显式优先', () => {
+    const pathOnly = ctl('notify', 'set', '--bark', 'https://api.day.app/myKeyAbc', '--no-wait')
+    expect(pathOnly.status).toBe(0)
+    const { stem } = JSON.parse(pathOnly.stdout) as { stem: string }
+    const intent = JSON.parse(readFileSync(join(dir, stem + '.json'), 'utf8')) as Intent
+    expect(intent).toEqual({ kind: 'notify-set', channels: [{ type: 'bark', url: 'https://api.day.app/myKeyAbc', enabled: true }] })
+    const norm1 = normalizeNotifyConfig({ channels: (intent as { channels: unknown }).channels })
+    expect(norm1.channels[0]).toEqual({ type: 'bark', enabled: true, url: 'https://api.day.app', deviceKey: 'myKeyAbc' }) // key 拆出,URL 存无凭据 base
+    expect(parseIntent(intent)).not.toBeNull()
+
+    const explicit = ctl('notify', 'set', '--bark', 'https://api.day.app', '--bark-key', 'explicitKey', '--no-wait')
+    expect(explicit.status).toBe(0)
+    const { stem: stem2 } = JSON.parse(explicit.stdout) as { stem: string }
+    const intent2 = JSON.parse(readFileSync(join(dir, stem2 + '.json'), 'utf8')) as Intent
+    expect(intent2).toEqual({ kind: 'notify-set', channels: [{ type: 'bark', url: 'https://api.day.app', enabled: true, deviceKey: 'explicitKey' }] })
+    const norm2 = normalizeNotifyConfig({ channels: (intent2 as { channels: unknown }).channels })
+    expect(norm2.channels[0]).toEqual({ type: 'bark', enabled: true, url: 'https://api.day.app', deviceKey: 'explicitKey' })
+    expect(parseIntent(intent2)).not.toBeNull()
   })
 })
 

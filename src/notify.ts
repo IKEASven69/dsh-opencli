@@ -878,11 +878,14 @@ export function normalizeNotifyConfig(raw: unknown): NotifyConfig {
     let url = boundedStr(o.url, 2048)
     if (type === 'bark') {
       let deviceKey = boundedStr(o.deviceKey, 256)
-      if (url !== undefined && deviceKey === undefined) {
-        // 官方分享形态 https://api.day.app/<key>:拆出 device_key,URL 存无凭据 base
+      if (url !== undefined) {
+        // 官方分享形态 https://api.day.app/<key>:拆出 device_key,URL 存无凭据 base。
+        // 0.1.5 L1(复核 fe6fdfdc):URL 带凭据+显式字段同给的组合路径也拆——修前显式字段
+        // 在则整条跳过,原始带凭据 URL 直落 state.json,是「无凭据形态落盘」承诺的例外洞;
+        // 显式字段优先(两处凭据不一致时以显式字段为用户最新意图),URL 一律存无凭据 base
         const s = splitTrailingPathSegment(url)
         url = s.base
-        deviceKey = s.credential
+        if (deviceKey === undefined) deviceKey = s.credential
       }
       const group = boundedStr(o.group, 64)
       const level = o.level !== undefined && BARK_LEVELS.includes(o.level as string) ? (o.level as (typeof BARK_LEVELS)[number]) : undefined
@@ -899,11 +902,12 @@ export function normalizeNotifyConfig(raw: unknown): NotifyConfig {
       })
     } else if (type === 'ntfy') {
       let topic = boundedStr(o.topic, 256)
-      if (url !== undefined && topic === undefined) {
-        // https://ntfy.sh/<topic>:topic 即密码,拆出独立字段
+      if (url !== undefined) {
+        // https://ntfy.sh/<topic>:topic 即密码,拆出独立字段;组合路径同 bark(0.1.5 L1:
+        // 显式字段优先,URL 一律存无凭据 base,组合不再是落盘承诺的例外)
         const s = splitTrailingPathSegment(url)
         url = s.base
-        topic = s.credential
+        if (topic === undefined) topic = s.credential
       }
       const token = boundedStr(o.token, 256)
       const priority = boundedInt(o.priority, 1, 5)
@@ -932,11 +936,13 @@ export function normalizeNotifyConfig(raw: unknown): NotifyConfig {
       // path 凭据,维持原状(scrub 链对 query 覆盖,存储面口径与既有版本一致)
       let telegramToken = boundedStr(o.telegramToken, 256)
       let effPlatform = platform
-      if (url !== undefined && telegramToken === undefined && (platform === 'telegram' || (platform === undefined && isTelegramHost(url)))) {
+      if (url !== undefined && (platform === 'telegram' || (platform === undefined && isTelegramHost(url)))) {
         const s = splitTelegramBotUrl(url)
         if (s.token !== undefined) {
+          // 组合路径同 bark/ntfy(0.1.5 L1):显式 token 优先,URL 一律存无 bot 段 base——
+          // 修前显式 token 在则整条跳过,bot<token> 段随 URL 落盘
           url = s.base
-          telegramToken = s.token
+          if (telegramToken === undefined) telegramToken = s.token
           effPlatform = 'telegram'
         }
       }

@@ -18,6 +18,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, readdir, readFile, rename, writeFile, rm } from 'node:fs/promises'
+import { isScheduleVisibility } from './runinbox.ts'
 
 /** 收件箱目录(测试可用 DSH_OPENCLI_INBOX_DIR 覆盖)。 */
 export const inboxDir = (): string => process.env.DSH_OPENCLI_INBOX_DIR ?? join(homedir(), '.dsh', 'opencli-inbox')
@@ -58,7 +59,7 @@ const NOTIFY_SET_STR_FIELDS = NOTIFY_SET_FIELDS.filter((k) => k !== 'type' && k 
 
 /** 意图(闭集):kind 与字段全部显式,多余字段=拒绝。 */
 export type Intent =
-  | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string }
+  | { kind: 'schedule-add'; site: string; cron: string; watch?: string; notify?: boolean; retry?: number; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string; visibility?: string }
   | { kind: 'schedule-remove'; id: string }
   | { kind: 'schedule-run'; id: string }
   | { kind: 'schedule-list' }
@@ -110,7 +111,7 @@ export function parseIntent(raw: unknown): Intent | null {
   const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0
   switch (o.kind) {
     case 'schedule-add':
-      if (!allow(['kind', 'site', 'cron', 'watch', 'notify', 'retry', 'source', 'notifyLevel', 'quietHours', 'jitter', 'preflight', 'keep', 'backoffMs', 'profile'])) return null
+      if (!allow(['kind', 'site', 'cron', 'watch', 'notify', 'retry', 'source', 'notifyLevel', 'quietHours', 'jitter', 'preflight', 'keep', 'backoffMs', 'profile', 'visibility'])) return null
       if (!str(o.site) || !str(o.cron)) return null
       if (o.watch !== undefined && typeof o.watch !== 'string') return null
       if (o.notify !== undefined && typeof o.notify !== 'boolean') return null
@@ -124,7 +125,9 @@ export function parseIntent(raw: unknown): Intent | null {
       if (o.backoffMs !== undefined && (typeof o.backoffMs !== 'number' || !Number.isFinite(o.backoffMs) || o.backoffMs < 0 || o.backoffMs > 600000)) return null
       // 多账号隔离 profile:opencli 别名/contextId 安全字符集('off' 亦落在字符集内=清除,由 scheduleAdd 解释)
       if (o.profile !== undefined && (typeof o.profile !== 'string' || !/^[\w.@-]{1,64}$/.test(o.profile))) return null
-      return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}), ...(o.source !== undefined ? { source: o.source } : {}), ...(o.notifyLevel !== undefined ? { notifyLevel: o.notifyLevel } : {}), ...(o.quietHours !== undefined ? { quietHours: String(o.quietHours) } : {}), ...(o.jitter !== undefined ? { jitter: o.jitter === true } : {}), ...(o.preflight !== undefined ? { preflight: o.preflight === true } : {}), ...(o.keep !== undefined ? { keep: o.keep } : {}), ...(o.backoffMs !== undefined ? { backoffMs: o.backoffMs } : {}), ...(o.profile !== undefined ? { profile: o.profile } : {}) } as Intent
+      // 可见性档位(C5,§九.7⑤ 四值闭集;'off'=清除,由 scheduleAdd 解释,与 quietHours 同款)
+      if (o.visibility !== undefined && !isScheduleVisibility(o.visibility) && o.visibility !== 'off') return null
+      return { kind: 'schedule-add', site: o.site, cron: o.cron, ...(o.watch !== undefined ? { watch: o.watch } : {}), ...(o.notify !== undefined ? { notify: o.notify } : {}), ...(o.retry !== undefined ? { retry: o.retry } : {}), ...(o.source !== undefined ? { source: o.source } : {}), ...(o.notifyLevel !== undefined ? { notifyLevel: o.notifyLevel } : {}), ...(o.quietHours !== undefined ? { quietHours: String(o.quietHours) } : {}), ...(o.jitter !== undefined ? { jitter: o.jitter === true } : {}), ...(o.preflight !== undefined ? { preflight: o.preflight === true } : {}), ...(o.keep !== undefined ? { keep: o.keep } : {}), ...(o.backoffMs !== undefined ? { backoffMs: o.backoffMs } : {}), ...(o.profile !== undefined ? { profile: o.profile } : {}), ...(o.visibility !== undefined ? { visibility: String(o.visibility) } : {}) } as Intent
     case 'schedule-remove':
       return allow(['kind', 'id']) && str(o.id) ? { kind: 'schedule-remove', id: o.id } : null
     case 'schedule-run':

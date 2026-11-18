@@ -12,7 +12,9 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 
 /** 目录桩:默认 5 站+测试专用站标记为 read,zhihu comment 为 write——安全不变量门
- *  (只读冒烟)按目录权限拒绝写/未知命令,空目录会让一切变 unknown 而全军覆没。 */
+ *  (只读冒烟)按目录权限拒绝写/未知命令,空目录会让一切变 unknown 而全军覆没。
+ *  fakehot 站带一条 read 命令:0.1.5 C1 选站纪律按站点 kinds 剔纯写站,站内混有 read 时
+ *  仍会入选热词命令,运行时只读门(防御性跳过)保持为最后防线。 */
 const LIST_JSON = JSON.stringify({
   ok: true,
   data: { commands: [
@@ -24,8 +26,9 @@ const LIST_JSON = JSON.stringify({
     { command: 'weibo hot', description: 'x', access: 'read' },
     { command: 'xiaohongshu hot', description: 'x', access: 'read' },
     { command: 'zhihu comment', description: '写评论', access: 'write' },
+    { command: 'fakehot list', description: 'x', access: 'read' },
     { command: 'fakehot hot', description: '热词伪装的写命令', access: 'write' },
-  ], total: 9 },
+  ], total: 10 },
 })
 
 /** 桩 shell:按"<站点> <命令>"键路由三态(ok/fail/timeout),未登记默认 ok;离线可测。 */
@@ -285,6 +288,27 @@ describe('canary 漂移监控(纯函数 + 调度分支)', () => {
     expect(picks.some((p) => p.startsWith('b '))).toBe(false) // b 无热榜命令,跳过
     expect(picks.some((p) => p.startsWith('c '))).toBe(false)
     expect(picks.length).toBeLessThanOrEqual(20)
+  })
+  it('0.1.5 C1 选站纪律:必带参 following 不入选;纯写站(kinds 无 read)整站跳过;daily 降为兜底热词(主热词齐全不落它)', () => {
+    const ads = [
+      // canary 存档 11-13/14/16 三轮全同的恒败源:instagram/zhihu following 必带参 → 剔
+      { name: 'instagram', commands: ['following', 'medias'], kinds: ['read', 'read'] },
+      { name: 'zhihu', commands: ['following', 'hot'], kinds: ['read', 'read'] },
+      // v2ex daily=签到写:主热词 hot 齐全时 pick hot,不落 daily
+      { name: 'v2ex', commands: ['daily', 'hot'], kinds: ['read', 'read'] },
+      // kinds 全 write:即便命令名带热词也整站跳过(跑也必被只读门拦)
+      { name: 'writew', commands: ['hot'], kinds: ['write'] },
+      // 无 kinds 数据(CLI 旧版):不因缺数据误杀,仍可入选(运行时只读门兜底)
+      { name: 'oldcli', commands: ['hot'] },
+    ]
+    const picks = pickCanaryCommands(ads as never)
+    expect(picks).toContain('zhihu hot')
+    expect(picks).toContain('v2ex hot')
+    expect(picks).not.toContain('instagram following')
+    expect(picks.some((p) => p.endsWith(' following'))).toBe(false)
+    expect(picks).not.toContain('v2ex daily')
+    expect(picks.some((p) => p.startsWith('writew '))).toBe(false)
+    expect(picks).toContain('oldcli hot')
   })
   it('快照解析↔报告生成闭环:本轮报告能被下一轮读回同基线;脏行跳过不炸', () => {
     const items: BenchItem[] = [

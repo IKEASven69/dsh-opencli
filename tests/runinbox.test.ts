@@ -17,8 +17,8 @@ import { OpencliService } from '../lib/index.js'
 import { buildDigest, DigestDayLedger } from '../src/digest.ts'
 import { applyIntent, parseIntent, drainInbox, type IntentExecutor } from '../src/inbox.ts'
 import {
-  boundInboxFlags, inboxFlagKey, inboxRunStatus, inboxUnreadCount, isNoOutputRun, purgeInboxFlags,
-  synthesizeRunInbox, INBOX_FLAG_CAP, type InboxRunFlag, type RunHistoryRow,
+  boundInboxFlags, inboxFlagKey, inboxRunStatus, inboxUnreadCount, isNoOutputRun, isScheduleVisibility, purgeInboxFlags,
+  synthesizeRunInbox, visibilityArchivesRun, INBOX_FLAG_CAP, type InboxRunFlag, type RunHistoryRow,
 } from '../src/runinbox.ts'
 import { readFileSync, rmSync, mkdtempSync, writeFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -114,6 +114,30 @@ describe('synthesizeRunInbox(候选 5 ①:run 级条目查询时合成)', () => 
     expect(isNoOutputRun({ ok: true, empty: true, diffed: false, watchHit: false, skip: true })).toBe(false) // skip
   })
 
+  it('visibilityArchivesRun 真值表(C5 §九.7⑤:档位归档判定,通知面不在此判定)', () => {
+    // archive-on-success:成功 run 一律归档(含命中/变化——信号仍走推送面,条目沉归档区无损可回看);失败不归
+    expect(visibilityArchivesRun('archive-on-success', { ok: true, diffed: false, watchHit: false })).toBe(true)
+    expect(visibilityArchivesRun('archive-on-success', { ok: true, diffed: true, watchHit: false })).toBe(true)
+    expect(visibilityArchivesRun('archive-on-success', { ok: true, diffed: false, watchHit: true })).toBe(true)
+    expect(visibilityArchivesRun('archive-on-success', { ok: false, diffed: false, watchHit: false })).toBe(false)
+    // quiet-unless-actionable:无 actionable 信号(失败/命中/变化)才归档,失败照常现身
+    expect(visibilityArchivesRun('quiet-unless-actionable', { ok: true, diffed: false, watchHit: false })).toBe(true)
+    expect(visibilityArchivesRun('quiet-unless-actionable', { ok: true, diffed: true, watchHit: false })).toBe(false)
+    expect(visibilityArchivesRun('quiet-unless-actionable', { ok: true, diffed: false, watchHit: true })).toBe(false)
+    expect(visibilityArchivesRun('quiet-unless-actionable', { ok: false, diffed: false, watchHit: false })).toBe(false)
+    // 默认档/通知面档/未配置:不参与收件箱归档(默认=现行为零变化)
+    expect(visibilityArchivesRun('always-visible', { ok: true, diffed: false, watchHit: false })).toBe(false)
+    expect(visibilityArchivesRun('notify-on-failure', { ok: true, diffed: false, watchHit: false })).toBe(false)
+    expect(visibilityArchivesRun(undefined, { ok: true, diffed: false, watchHit: false })).toBe(false)
+    // 四值闭集守卫(意图白名单/scheduleAdd 共用)
+    expect(isScheduleVisibility('always-visible')).toBe(true)
+    expect(isScheduleVisibility('archive-on-success')).toBe(true)
+    expect(isScheduleVisibility('notify-on-failure')).toBe(true)
+    expect(isScheduleVisibility('quiet-unless-actionable')).toBe(true)
+    expect(isScheduleVisibility('loud')).toBe(false)
+    expect(isScheduleVisibility(3)).toBe(false)
+  })
+
   it('inboxRunStatus typed 判定不解析 summary 文本', () => {
     expect(inboxRunStatus({ at: '', ok: false, summary: '⏸ 跳过:x', skip: true })).toBe('skip')
     expect(inboxRunStatus({ at: '', ok: false, summary: 'boom' })).toBe('fail')
@@ -138,6 +162,24 @@ describe('parseIntent: schedule-read / schedule-archive(候选 5 ④)', () => {
     expect(parseIntent({ kind: 'schedule-read', task: 't1', extra: 1 })).toBeNull()
     expect(parseIntent({ kind: 'schedule-archive', task: 3 })).toBeNull()
     expect(parseIntent({ kind: 'schedule-read-all' })).toBeNull()
+  })
+})
+
+// ── C5 §九.7⑤ 可见性档位:意图白名单三处同步之一(ctl --visibility 与面板表单走同一闭集)──
+
+describe('parseIntent: schedule-add visibility(0.1.5 C5 四态闭集)', () => {
+  it('四值闭集内通过并透传;\'off\'(清除语义)放行由 scheduleAdd 解释', () => {
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', visibility: 'always-visible' })).toMatchObject({ visibility: 'always-visible' })
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', visibility: 'archive-on-success' })).toMatchObject({ visibility: 'archive-on-success' })
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', visibility: 'notify-on-failure' })).toMatchObject({ visibility: 'notify-on-failure' })
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', visibility: 'quiet-unless-actionable' })).toMatchObject({ visibility: 'quiet-unless-actionable' })
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', visibility: 'off' })).toMatchObject({ visibility: 'off' })
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b' })).not.toHaveProperty('visibility') // 省键=默认档
+  })
+  it('四值外/类型错拒绝(白名单纪律,不静默强转)', () => {
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', visibility: 'loud' })).toBeNull()
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', visibility: 3 })).toBeNull()
+    expect(parseIntent({ kind: 'schedule-add', site: 'a', cron: 'b', visibility: '' })).toBeNull()
   })
 })
 
@@ -182,7 +224,7 @@ class RBSystemPrompt extends Service {
 
 type InboxEntry = { task: string; site: string; at: string; status: string; summary: string; read: boolean; archived: boolean; archivedBy?: string; traceDate?: string; digestDate?: string }
 type Svc = {
-  schedules: Array<{ id: string; site: string; cron: string; enabled: boolean; notify?: boolean; preflight?: boolean }>
+  schedules: Array<{ id: string; site: string; cron: string; enabled: boolean; notify?: boolean; preflight?: boolean; visibility?: string }>
   scheduleAdd: (r: Record<string, unknown>) => Promise<{ ok: boolean; id?: string; error?: string }>
   scheduleRemove: (r: { id: string }) => Promise<{ ok: boolean }>
   notifyConfig: (r?: { channels?: unknown }) => Promise<{ ok: boolean }>
@@ -406,7 +448,7 @@ describe('运行级收件箱(服务层:合成/已读/归档/无产出自动归�
     const body = hookBodies[hookBodies.length - 1]!.body
     // 归档条目不进日报任何行:B 的 watch 行在,A 不产生例行空产出标记(未归档空产出=0)
     expect(body).toContain('🔔')
-    expect(body).toContain('1 空产出已归档') // 首行 X
+    expect(body).toContain('1 条已归档') // 首行 X(0.1.5 C2 ⑤:标签改中性「条」)
     expect(body).toContain('自动归档 1 条无产出') // 尾行计数(候选 5 ③防不可见)
     expect(body).not.toContain(`空产出 1(未归档)`)
     const j = JSON.parse(readFileSync(join(reportsDir, 'digest-2026-11-20.json'), 'utf8')) as {
@@ -501,10 +543,142 @@ describe('运行级收件箱(服务层:合成/已读/归档/无产出自动归�
       streakOf: () => 0,
       attributions: new Map(),
     })
-    expect(built.overview).toContain('1 空产出已归档')
+    expect(built.overview).toContain('1 条已归档') // 0.1.5 C2 ⑤:标签改中性「条」
     expect(built.card).toContain('自动归档 1 条无产出')
     expect(built.json.totals.autoArchived).toBe(1)
     expect(built.json.routine[0]).not.toHaveProperty('empty')
+  })
+
+  // ── C5 §九.7⑤ 可见性档位(四态行为各一断言 + 默认不变断言)─────────────────────
+  // 归档面:复用候选 5 ③ 的 inbox 状态键缝(by=auto,无损沉底可回看);
+  // 通知面:外送门加 notify-on-failure 档位分支(优先级注释见 index.ts runSiteCommand)。
+
+  it('C5 默认不变:无 visibility 任务例行成功照常现身未读并外送(现行为零变化断言)', async () => {
+    await S.inboxRead() // 清前序用例未读基线
+    const t = await addTask()
+    const sentBefore = hookBodies.length
+    await tick(t.site, t.id, { stdout: '[{"title":"例行成功"}]' })
+    const e = (await S.inboxList()).entries.find((x) => x.task === t.id)!
+    expect(e.status).toBe('ok')
+    expect(e.archived).toBe(false) // 不归档(缺省=always-visible)
+    expect(e.read).toBe(false) // 照常占未读
+    expect(hookBodies.length).toBe(sentBefore + 1) // 例行成功照常外送(通知面也不变)
+  })
+
+  it('C5 archive-on-success:成功 run(有产出)自动归档 by=auto 不占未读;失败照常现身;通知门不变', async () => {
+    await S.inboxRead()
+    const t = await addTask({ visibility: 'archive-on-success' })
+    const sentBefore = hookBodies.length
+    await tick(t.site, t.id, { stdout: '[{"title":"有产出的成功"}]' })
+    const list1 = await S.inboxList()
+    const e1 = list1.entries.find((x) => x.task === t.id)!
+    expect(e1.status).toBe('ok')
+    expect(e1.archived).toBe(true)
+    expect(e1.archivedBy).toBe('auto')
+    expect(list1.unread).toBe(0) // 不占未读(#12632④ 同款不打扰)
+    expect(hookBodies.length).toBe(sentBefore + 1) // 通知门不变(档位只动收件箱面)
+    // 与无产出自动归档同一状态键缝(复用候选 5 ③)
+    const disk = JSON.parse(readFileSync(statePath, 'utf8')) as { inboxFlags?: Record<string, { archived?: boolean; by?: string }> }
+    expect(disk.inboxFlags?.[inboxFlagKey(t.id, e1.at)]).toMatchObject({ archived: true, by: 'auto' })
+    // 失败 run 不归档:现身收件箱成未读(关键必达)
+    await tick(t.site, t.id, { exitCode: 1, stderr: 'fetch failed: boom' })
+    const failRow = (await S.inboxList()).entries.filter((x) => x.task === t.id).find((x) => x.status === 'fail')
+    expect(failRow).toBeDefined()
+    expect(failRow!.archived).toBe(false)
+  })
+
+  it('C5 notify-on-failure:成功(例行/watch 命中)零外送(比 quiet 更窄);失败照常外送', async () => {
+    const t = await addTask({ visibility: 'notify-on-failure', watch: 'AI' })
+    const sent0 = hookBodies.length
+    await tick(t.site, t.id, { stdout: '[{"title":"例行成功无命中"}]' })
+    expect(hookBodies.length).toBe(sent0) // 例行成功不推
+    await tick(t.site, t.id, { stdout: '[{"title":"Agentic AI 命中"}]' })
+    expect(hookBodies.length).toBe(sent0) // watch 命中也不推:notifyLevel=quiet 会推的它不推(纯失败子集,同设时档位优先)
+    await tick(t.site, t.id, { exitCode: 1, stderr: 'fetch failed: boom' })
+    expect(hookBodies.length).toBe(sent0 + 1) // 失败必达
+  })
+
+  it('C5 quiet-unless-actionable:例行成功自动归档不现身;watch 命中/失败可 actionable 现身成未读', async () => {
+    await S.inboxRead()
+    const t = await addTask({ visibility: 'quiet-unless-actionable', watch: 'AI' })
+    await tick(t.site, t.id, { stdout: '[{"title":"例行无命中"}]' })
+    const e1 = (await S.inboxList()).entries.find((x) => x.task === t.id)!
+    expect(e1.status).toBe('ok')
+    expect(e1.archived).toBe(true) // 无 actionable 信号 → 沉归档区(无损,dsh-proactive「无事不补发」同款先例)
+    expect((await S.inboxList()).unread).toBe(0)
+    // watch 命中(同 tick 亦有 diff)=actionable → 现身
+    await tick(t.site, t.id, { stdout: '[{"title":"Agentic AI 突破"}]' })
+    const hit = (await S.inboxList()).entries.filter((x) => x.task === t.id).find((x) => x.archived === false)
+    expect(hit).toBeDefined()
+    expect((await S.inboxList()).unread).toBe(1)
+    // 失败=actionable → 现身
+    await tick(t.site, t.id, { exitCode: 1, stderr: 'fetch failed: boom' })
+    const failRow = (await S.inboxList()).entries.filter((x) => x.task === t.id).find((x) => x.status === 'fail')
+    expect(failRow).toBeDefined()
+    expect(failRow!.archived).toBe(false)
+  })
+
+  it('连败账跳过日链保活(0.1.5 复核③):fail→skip→fail 在线路径也算连续第 2 日(与 rebuild 同口径,修前在线重数 1)', async () => {
+    const t = await addTask()
+    const day = (d: number, h = 9): void => { vi.setSystemTime(new Date(2026, 10, d, h, 0, 0).getTime()) }
+    const streak = (S as unknown as { failStreaks: { daysOf: (id: string, sig: string) => number } }).failStreaks
+    const hc = S as unknown as { taskHealthCheck: (id: string) => Promise<{ ok: boolean; note?: string }> }
+    // D1 失败:链尾 11-21,days=1
+    day(21)
+    await tick(t.site, t.id, { exitCode: 1, stderr: 'UNKNOWN fetch failed' })
+    expect(streak.daysOf(t.id, 'fetch-failed')).toBe(1)
+    // D2 健康预检跳过(扩展未连):跳过不 bump 不 reset,链尾前移到跳过日(keepAlive)
+    day(22)
+    const origHc = hc.taskHealthCheck
+    hc.taskHealthCheck = async () => ({ ok: false, note: '浏览器扩展未连接' })
+    try {
+      await S.runSiteCommand(t.site, t.id)
+    } finally {
+      hc.taskHealthCheck = origHc
+    }
+    const skipRow = (await S.inboxList()).entries.filter((x) => x.task === t.id).find((x) => x.status === 'skip')
+    expect(skipRow).toBeDefined() // skip 行如实落史
+    expect(streak.daysOf(t.id, 'fetch-failed')).toBe(1) // 跳过不计日
+    // D3 再败:隔一个跳过日仍判连续第 2 日(修前严格衔接检查被 skip 日掐断,重数 1;
+    // 重启 rebuild 桥接同段历史算 2——两路径在重启前后不一致)
+    day(23)
+    await tick(t.site, t.id, { exitCode: 1, stderr: 'UNKNOWN fetch failed' })
+    expect(streak.daysOf(t.id, 'fetch-failed')).toBe(2)
+  })
+
+  it('C5 nof+quietHours(0.1.5 复核④):窗内失败照常暂存;出窗首跑(即使例行成功)合并 flush 😴——修前被 nof 门整个拦住,滞留到下次失败', async () => {
+    const t = await addTask({ visibility: 'notify-on-failure', quietHours: '00:00-06:00' })
+    const sent0 = hookBodies.length
+    // 窗内(02:00)失败:照常暂存不外送(nof 门只拦成功,失败照进暂存链)
+    vi.setSystemTime(new Date(2026, 10, 21, 2, 0, 0).getTime())
+    await tick(t.site, t.id, { exitCode: 1, stderr: 'fetch failed: boom' })
+    expect(hookBodies.length).toBe(sent0) // 窗内不外送
+    const sch = S.schedules.find((s) => s.id === t.id) as unknown as { pendingNotify?: Array<{ ok: boolean; summary: string }> }
+    expect(sch.pendingNotify ?? []).toHaveLength(1) // 失败已暂存
+    // 出窗(08:00)例行成功:合并 flush 一条 😴 摘要(nof 任务暂存全是失败,flush 不违反「仅失败外送」)
+    vi.setSystemTime(new Date(2026, 10, 21, 8, 0, 0).getTime())
+    await tick(t.site, t.id, { stdout: '[{"title":"例行成功"}]' })
+    expect(hookBodies.length).toBe(sent0 + 1)
+    expect(hookBodies[hookBodies.length - 1]!.body).toContain('😴 静默期(00:00-06:00)合并 1 条')
+    expect(hookBodies[hookBodies.length - 1]!.body).toContain('✗') // 带出的是暂存的失败条目
+    expect(sch.pendingNotify ?? []).toHaveLength(0) // flush 后清空
+    // 出窗后无暂存的例行成功照旧零外送(nof 门对普通成功不受影响)
+    vi.setSystemTime(new Date(2026, 10, 21, 9, 0, 0).getTime())
+    await tick(t.site, t.id, { stdout: '[{"title":"再例行成功"}]' })
+    expect(hookBodies.length).toBe(sent0 + 1)
+  })
+
+  it('C5 校验与幂等链:非法档位拒收;合法档位入库回读;off 清除回默认(省键)', async () => {
+    const bad = await S.scheduleAdd({ site: `site vis-bad-${Math.random().toString(36).slice(2, 8)} hot`, cron: NEVER_CRON, retry: 1, visibility: 'loud' })
+    expect(bad.ok).toBe(false)
+    expect(bad.error).toContain('visibility')
+    const t = await addTask({ visibility: 'quiet-unless-actionable' })
+    expect(S.schedules.find((s) => s.id === t.id)?.visibility).toBe('quiet-unless-actionable')
+    // 同 site+cron 幂等复用改档 → 'off' 清除(回默认 always-visible,delete 键不存默认值)
+    const r2 = await S.scheduleAdd({ site: t.site, cron: NEVER_CRON, visibility: 'off' })
+    expect(r2.ok).toBe(true)
+    expect(r2.id).toBe(t.id)
+    expect(S.schedules.find((s) => s.id === t.id)?.visibility).toBeUndefined()
   })
 
   it('候选 5 ⑤:.result.json 写后轮转——根目录只留最近 100 份(对齐 processed/ 惯例)', async () => {

@@ -60,9 +60,19 @@ export const FAILURE_SIGNATURES: Array<{ pattern: string; meaning: string; recov
  * 顶部站点 pitfalls 种子(人工维护;来源:PM-RESEARCH-20260925 封号案例/上游风控 commit/适配器描述)。
  * 通用站点不在表内则 pitfalls 为空——宁可空也不编造。
  */
-/** 站点 pitfalls 数据外移至 knowledge/pitfalls.json(知识更新不动代码;esbuild 打包内联)。 */
+/** 站点 pitfalls 数据外移至 knowledge/pitfalls.json(知识更新不动代码;esbuild 打包内联)。
+ *  保留键纪律(0.1.5 C7,复核⑦):`_` 前缀键是**非站点保留段**——站点键一律不以下划线开头
+ *  (manifest 站名实测全小写字母数字),`_global` 收全局/工具面坑(如上游 #2813 的 browser
+ *  原语端点语义);门禁(tests/knowledge-gate.ts)与 MCP 站点宇宙(knowledgeSiteUniverse)
+ *  都跳过 `_` 前缀键,全局坑经 globalPitfalls() 进每张知识卡的「工具面须知」段,不当站点卡。 */
 import pitfallsData from '../knowledge/pitfalls.json'
 export const PITFALLS: Record<string, string[]> = pitfallsData as Record<string, string[]>
+
+/** 全局/工具面坑(`_global` 保留段;数组形状不对返回空,宁缺勿造)。 */
+export function globalPitfalls(): string[] {
+  const g = (PITFALLS as Record<string, unknown>)['_global']
+  return Array.isArray(g) ? g.map(String) : []
+}
 
 /**
  * 站点健康度数据外移至 knowledge/health.json(同 pitfalls 机制)。
@@ -126,6 +136,14 @@ export function renderKnowledgeMarkdown(k: SiteKnowledge): string {
   for (const c of k.commands) {
     const flag = c.access === 'write' ? ' `[write]`' : ''
     lines.push(`- \`site ${k.site} ${c.name}\`${flag} — ${c.description}`)
+  }
+  const gp = globalPitfalls()
+  if (gp.length > 0) {
+    // 全局/工具面坑(`_global` 保留段):跨站适用的坑随每张卡带出(不占站点 pitfalls 行),
+    // 退浏览器原语前先读——browser 原语的端点/档案语义坑在站点卡里看不见
+    lines.push('')
+    lines.push('## 🌐 工具面须知(全局,跨站适用)')
+    for (const p of gp) lines.push(`- ${p}`)
   }
   lines.push('')
   lines.push('## 失败签名恢复表(输出匹配到签名时按 recovery 自救)')

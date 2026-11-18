@@ -45,7 +45,7 @@ function usage() {
   console.log(`dsh-opencli-ctl — dsh-opencli 插件的本机命令面(写意图到 ${INBOX},插件执行并回写结果)
 
 用法:
-  dsh-opencli-ctl schedule add --site "site juejin hot" --cron "0 9 * * *" [--watch "AI,大模型"] [--notify true] [--retry 3] [--notify-level quiet] [--quiet-hours 23:00-07:00] [--preflight] [--keep 50] [--backoff-ms 15000] [--profile <别名|contextId>]
+  dsh-opencli-ctl schedule add --site "site juejin hot" --cron "0 9 * * *" [--watch "AI,大模型"] [--notify true] [--retry 3] [--notify-level quiet] [--quiet-hours 23:00-07:00] [--preflight] [--keep 50] [--backoff-ms 15000] [--profile <别名|contextId>] [--visibility <always-visible|archive-on-success|notify-on-failure|quiet-unless-actionable>]
   dsh-opencli-ctl schedule list
   dsh-opencli-ctl schedule run --id <id>
   dsh-opencli-ctl schedule remove --id <id>
@@ -78,6 +78,8 @@ function buildIntent() {
       const kp = flag('--keep'); if (kp !== undefined) intent.keep = Number(kp) // 快照留存份数(5-500)
       const bo = flag('--backoff-ms'); if (bo !== undefined) intent.backoffMs = Number(bo) // 重试退避毫秒(0-600000)
       const pf = flag('--profile'); if (pf !== undefined) intent.profile = pf // 浏览器 profile/多账号隔离
+      // 可见性档位(C5,§九.7⑤ 四态):默认 always-visible=现行为;成功即归档/仅失败推送/无信号不现身
+      const vis = flag('--visibility'); if (vis !== undefined) intent.visibility = vis
       return intent
     }
     if (sub === 'list') return { kind: 'schedule-list' }

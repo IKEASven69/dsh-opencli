@@ -1,8 +1,15 @@
 {
+  "_global": [
+    "【工具面·browser 原语,全局坑】上游 #2813(2026-11-15 开,0 评论):`opencli browser` 子命令无视 OPENCLI_CDP_ENDPOINT,静默驱动扩展所连的个人 Chrome(#1228 后仅 site 命令走 CDPBridge)——给 agent 配的 CDP 端点不生效,任务会在用户日常浏览器里跑;沙箱/多实例隔离诉求先核 #2813 是否已修,勿假设端点隔离。本插件的漂移兜底/canary/演练同样走 browser_* 原语,同受此语义约束:兜底「打开域名首页」发生在用户浏览器里,degraded 标注之外还有「占用用户浏览器」的知情面"
+  ],
   "xiaohongshu": [
     "全站风控最凶:V2EX 有多起自动化操作导致封号的实测案例,写操作(发布/评论/点赞)务必极低频",
     "上游近期反复修 xsec 签名与风控(#2474/#2470 umbrella)——搜索/笔记类命令可能随站点改版失效",
-    "出现验证码或风控墙立即停止,冷却数分钟;定时监控类需求建议只读不写"
+    "出现验证码或风控墙立即停止,冷却数分钟;定时监控类需求建议只读不写",
+    "2026-11 损坏潮 #2786:search 报 COMMAND_EXEC search_input_not_available(新 ai-layout 灰度把旧搜索框藏成 0×0,可见性过滤永不匹配,等满 ~55s 超时)——绕行:browser 直开 https://www.xiaohongshu.com/search_result?keyword=<词> 同 session DOM 直采(上游作者自证可达),修复落地前勿反复重试烧超时预算",
+    "2026-11 损坏潮 #2791:search 同根因另一形态——真字段是 textarea(placeholder=搜索小红书)而适配器 setter 硬编码 HTMLInputElement,提交后跳 /search_result_ai 且关键词双重编码,等待条件永假挂满 60s——同上 direct-nav 绕行;两个签名同根因,一个报超时一个报元素缺失都先怀疑 ai-layout 改版",
+    "2026-11 损坏潮 #2797:search 两种漂移——①过滤面板重挂报 chip did not become active / filter_panel_not_found(可检);②静默错值:collection 排序下卡片 .count 是收藏数,旧提取器标成 likes(exit 0 全绿)——字段级语义漂移检测与回执都测不到,数字类结果先与页面渲染交叉核对再采信",
+    "2026-11 损坏潮 #2802+#2803:creator-stats 恒 EMPTY_RESULT——接口响应键已是 set_thirty/set_seven,适配器仍读 thirty/seven(数据在但读不到);定时任务连续 3 次空产出会触发漂移预警+浏览器兜底,但创作者后台是登录态深页,兜底首页快照采不回数据;等上游 #2803 修复 PR 合并后跟版"
   ],
   "weibo": [
     "热搜/时间线读操作相对稳定;发帖/删帖为写操作,走审批门且低频",
@@ -21,7 +28,8 @@
   ],
   "taobao": [
     "交易类站点:add-cart 等涉及规格选择的命令易因页面改版失效(#2428)",
-    "**任何支付/下单环节不得自动化**——写操作全部人工确认"
+    "**任何支付/下单环节不得自动化**——写操作全部人工确认",
+    "2026-11 损坏潮 #2789(写路径反例):add-cart 规格未选中时旧逻辑静默点击,autofix 报 outcome could not be confirmed——「outcome 未确认」类报错一律按未成功处理,勿重试;无人值守链本就不接写命令(只读纪律+审批门默认拦)"
   ],
   "jd": [
     "交易类站点,同淘宝:写操作全部人工确认,勿自动化支付环节"
@@ -34,12 +42,26 @@
     "download 依赖 yt-dlp"
   ],
   "reddit": [
-    "未登录可读大部分内容;高频请求易 429,冷却后再试"
+    "未登录可读大部分内容;高频请求易 429,冷却后再试",
+    "2026-11 损坏潮 .json 全线封锁(#2798/#2801):登录态 .json 403「You've been blocked by network security」(SECURITY_BLOCK),重登无效;old.reddit .json 同 403、.rss 200 但缺 score/comments、curl 撞 JS proof-of-work——全封锁待上游(两条修复线零收口);需要数据走真浏览器 session 直采服务端渲染 HTML(shreddit-post 属性字段齐全,上游 PR 作者实跑 30 帖验证),勿高频重试撞 .json"
   ],
   "pinduoduo": [
     "OpenCLI 2.0.3 新增站点,目前仅 search 一条只读命令:读 H5 搜索页首屏的服务端渲染数据,需要登录态——未登录报 AUTH_REQUIRED,先在该浏览器打开 https://mobile.yangkeduo.com 登录一次再重跑",
     "结果上限为首屏 20 条(滚动加载的数据不会回写页面数据,limit 超过 20 会被钳制)——要更多结果请换关键词分批",
     "价格口径:price 为页面展示价(price_label 为「券后」时即券后价),group_price 为券前拼单价;列表拿不到划线价",
     "交易类站点,同淘宝/京东:下单/支付环节不得自动化"
+  ],
+  "linkedin": [
+    "job-detail 类命令当前全坏(2026-11 损坏潮 #2788):job 页全量 SDUI 组件流化,不再渲染 <h1>,每条必败 could not find a job title——看到此签名先对号入座,勿反复重试;等上游修复 PR #2809(Voyager jobPostings API 方案)合并后跟版,勿本地绕过 eval 审批防线自取数据"
+  ],
+  "instagram": [
+    "search 端点退役(2026-11 损坏潮 #2790):/web/search/topsearch/ 404,上游修复 PR 改走 /api/v1/fbsearch/account_serp/——报 404 先怀疑端点退役而非登录态,等上游合并",
+    "profile 全 REST 退役(2026-11 损坏潮 #2799):四个 REST 端点全死(3×404 app-shell+1×429 empty),修复需 Relay 查询观察者方案(doc_id 轮转不可重放)——profile 页浏览器可达,但兜底固定采适配器域名首页、采不到任务对页数据;等上游修复,「可达也不采对页」是已知兜底粒度缺口"
+  ],
+  "zlibrary": [
+    "域名硬编码漂移(2026-11 损坏潮 #2807):适配器硬编码的 z-library.im 现回 513/DiamWall 挑战,服务本身在 z-lib.id 等镜像活着——报 513/DiamWall 先怀疑镜像域死而非服务死,换活镜像域名重试;上游镜像池轮换 PR(#2807)零收口,镜像可用性自行动态确认"
+  ],
+  "hltv": [
+    "team-matches 恒 EMPTY_RESULT(2026-11 损坏潮 #2811):比分单元格 innerText 无分隔拼接(如「12/11/2026Spirit2:1G2Match」),score 正则要求空白永不匹配——等上游修复 PR #2812(按单元格解析+--period 路由)合并,勿反复重试;其余命令未受此签名影响,空结果先看是否 team-matches"
   ]
 }

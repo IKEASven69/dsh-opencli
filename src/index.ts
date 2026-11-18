@@ -44,10 +44,10 @@ import { aggregateDaySums, detectDrift, diffSnapshots, renderDiffText, type Drif
 import { authRiskClass, countStructuredItems, cursorOfPartialPage, coverageStopReason, isChallengePage, isDecorativeStep, looksPartialPage, looksTruncated, looksUnloaded, typedErrorCode, type Receipt } from './parsers.ts'
 // 日结早报(0.1.4 候选 2)与连败计数/熔断归因(候选 3)纯函数层:单一来源在 digest.ts,
 // 服务层只做接线(日账入账/tick 日结检查/开窗归因触发),判定与装配逻辑不进本文件
-import { buildDigest, circuitSignatureOf, judgeCircuitAttribution, localDateKey, DigestDayLedger, FailStreakCounter, type CircuitAttribution } from './digest.ts'
+import { buildDigest, circuitSignatureOf, judgeCircuitAttribution, localDateKey, DigestDayLedger, FailStreakCounter, type CanarySiteVote, type CircuitAttribution } from './digest.ts'
 // 运行级收件箱(0.1.4 候选 5)纯函数层:条目合成/无产出判定/状态键有界,单一来源在 runinbox.ts
 // (与 inbox.ts 的 ctl 意图回执两套语义分开命名;服务层只做状态读写与 RPC 投影)
-import { boundInboxFlags, inboxFlagKey, inboxRunStatus, inboxUnreadCount, isNoOutputRun, purgeInboxFlags, synthesizeRunInbox, type InboxRunFlag, type RunHistoryRow } from './runinbox.ts'
+import { boundInboxFlags, inboxFlagKey, inboxRunStatus, inboxUnreadCount, isNoOutputRun, isScheduleVisibility, purgeInboxFlags, synthesizeRunInbox, visibilityArchivesRun, type InboxRunFlag, type RunHistoryRow } from './runinbox.ts'
 
 /** 本插件版本单一来源在 version.ts(自检视图与面板「版本与更新」卡共用同一常量)。 */
 import { exportSnapshots } from './exportcsv.ts'
@@ -196,6 +196,75 @@ export function scanMiseOpencli(root: string): string | null {
   return best?.bin ?? null
 }
 
+/** manifest 站点→域名映射缓存上限(防膨胀纪律,对齐 direct-compose SESSION_CACHE_CAP 惯例):
+ *  2.0.3 manifest 171 站远低于上限,只防异常膨胀的 manifest 文件拖垮常驻进程。 */
+export const SITE_DOMAIN_CAP = 2000
+
+/** resolveCliManifestFile 的进程内 memo(undefined=未探测;null=已探测无命中,亦缓存——装 CLI
+ *  需插件重载,与 resolveBin 构造期解析一次同语义;显式 env 路径绕过 memo)。 */
+let manifestFileMemo: string | null | undefined
+
+/**
+ * 已装上游包 cli-manifest.json 定位(纯探测,镜像 resolveCliDistDir 级联;纯函数可单测)。
+ * explicit 非空时即权威——文件不存在也返回它,让加载层如实报错而不是悄悄换源(测试注入
+ * 「manifest 不可用」降格路径靠这个语义);manifest 在包根而非 dist/ 下(2.0.3 实测)。
+ * 级联:插件本地依赖 → node 同目录全局 → vfox/nvm 跨版本扫描;找不到返回 undefined。
+ */
+export function resolveCliManifestFile(explicit?: string): string | undefined {
+  if (explicit !== undefined && explicit.length > 0) return explicit
+  if (manifestFileMemo !== undefined) return manifestFileMemo ?? undefined // 级联探测进程内一次(显式 env 每次生效,测试换 fixture 靠它)
+  const hit = ((): string | undefined => {
+    try {
+      // @ts-ignore - optional peer
+      const pkg = require.resolve('@jackwener/opencli/package.json')
+      const p = join(dirname(pkg), 'cli-manifest.json')
+      if (existsSync(p)) return p
+    } catch { /* 无本地依赖则回退全局 */ }
+    const globalP = join(dirname(process.execPath), 'node_modules', '@jackwener', 'opencli', 'cli-manifest.json')
+    if (existsSync(globalP)) return globalP
+    const scanned = scanOpencliAcrossNodeVersions([
+      join(homedir(), '.vfox', 'cache', 'nodejs'),
+      join(homedir(), '.vfox', 'sdks', 'nodejs'),
+      join(homedir(), '.nvm'),
+    ])
+    if (scanned !== null) {
+      const p = join(dirname(dirname(scanned)), 'cli-manifest.json') // scanned=dist/src/main.js → 包根
+      if (existsSync(p)) return p
+    }
+    return undefined
+  })()
+  manifestFileMemo = hit ?? null
+  return hit
+}
+
+/**
+ * cli-manifest.json 原始 JSON → 站点→域名映射(纯函数可单测)。顶层非数组返回 null(不编造)。
+ * 值语义三态:get(site)=string 有域名;=null **在册但缺域名**(2.0.3 下 7 站,其中 6 个
+ * http 直连类站是推测层的前提;第 7 站 web 系通用 read 命令被推测层排除——必须与
+ * 「不在册」可区分);=undefined 不在册。同站多命令域名不唯一(2.0.3 实测 51/171
+ * 站):取 manifest 序首个非空——与 normalizeAdapterList 的「首见非空即定」补位规则同口径
+ * (先空后非空同样补位);键一律小写(全部站名实测小写,防御大小写漂移)。
+ */
+export function buildSiteDomainMap(raw: unknown, cap = SITE_DOMAIN_CAP): Map<string, string | null> | null {
+  if (!Array.isArray(raw)) return null
+  const map = new Map<string, string | null>()
+  for (const e of raw as unknown[]) {
+    if (e === null || typeof e !== 'object') continue
+    const site = typeof (e as { site?: unknown }).site === 'string' ? String((e as { site?: unknown }).site).trim().toLowerCase() : ''
+    const d = (e as { domain?: unknown }).domain
+    const domain = typeof d === 'string' && d.trim() !== '' ? d.trim() : undefined
+    if (site.length === 0) continue
+    const existing = map.get(site)
+    if (existing !== undefined) {
+      if (existing === null && domain !== undefined) map.set(site, domain) // 先空后非空补位
+      continue
+    }
+    map.set(site, domain ?? null)
+    if (map.size >= cap) break // 有界:整表重建本身有界,上限再防异常膨胀
+  }
+  return map
+}
+
 interface ToolArgs {
   session?: string
   url?: string
@@ -221,6 +290,17 @@ export class OpencliService extends TypertRemoteService {
 
   private readonly bin: string
   private adapterCache: { at: number; json: unknown } | null = null
+  /** manifest 站点→域名权威映射(惰性加载;C3 兜底域名源修复)。背景:`opencli list` 运行时
+   *  输出在 CLI 2.0.x 零 site/domain 字段(1,292 条实测仅 command/description/access),
+   *  domainOf 由此恒 null → 任何站点兜底必失败(0.1.4 演练 7/9 两未过的结构性根因);
+   *  已装上游包 cli-manifest.json 逐条带 site+domain(171 站/164 非空)为权威补位源。
+   *  undefined=未加载(惰性)/null=定位或解析失败(如实降格,manifestDomainError 留原因)/Map=可用。 */
+  private manifestDomains: Map<string, string | null> | null | undefined
+  /** manifest 缓存所依据的文件指纹(mtimeMs:size):daemon 版本翻转(2.0.3↔1.8.6)/CLI 升级
+   *  换 manifest 后首次访问自动重建;不做定时器(域名映射按文件指纹走,成本一次 stat)。 */
+  private manifestDomainsSig: string | null = null
+  /** manifest 不可用原因(降格 note 用——失败说真话:说清为什么没有域名,而非笼统报失败)。 */
+  private manifestDomainError: string | undefined
   private lastShellError: string | null = null
   private state: PluginState = { approval: 'on', disabled: [], schedules: [], runHistory: {}, audit: [] }
   /** 面板通知事件(调度失败等;内存态最近 30 条——跨会话历史经 pushIngestEvent 追加落盘
@@ -290,6 +370,10 @@ export class OpencliService extends TypertRemoteService {
     /** 多账号登录态隔离:浏览器 profile 别名或 contextId——经 OPENCLI_PROFILE 透传给 CLI
      *  (上游 2.0.3 原生 --profile/contextId 路由,真隔离:不同 profile=不同浏览器档案的 cookie/存储) */
     profile?: string
+    /** 可见性档位(0.1.5 C5,§九.7⑤ 四态):省键=always-visible 默认(既有行为零变化)。
+     *  取值与语义见 runinbox.ts VISIBILITY_VALUES;归档面判定 visibilityArchivesRun,
+     *  通知面优先级见 runSiteCommand 外送门注释。 */
+    visibility?: string
   }> = []
   private runHistory: Record<string, RunHistoryRow[]> = {}
   /** 快照根目录(DSH_OPENCLI_SNAPSHOTS_DIR 可覆盖,测试隔离用;与 traceDir 同款约定)。 */
@@ -1638,7 +1722,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string; visibility?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
     if (request === undefined) request = {} as never
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
@@ -1702,6 +1786,16 @@ export class OpencliService extends TypertRemoteService {
       else if (!/^[\w.@-]{1,64}$/.test(raw)) return { ok: false, error: 'profile 非法:需为 1-64 位字母数字/._@- (opencli profile 别名或 contextId);清除传 off' }
       else profile = raw
     }
+    // 可见性档位(0.1.5 C5,§九.7⑤ 四态一个字段,不加零使用旗标):四值闭集校验;
+    // 'off'/空串=清除(回默认 always-visible)。默认态=既有行为零变化(省键纪律)
+    let visibility: string | undefined
+    let visibilityClear = false
+    if (typeof request.visibility === 'string') {
+      const raw = request.visibility.trim()
+      if (raw === '' || raw === 'off') visibilityClear = true
+      else if (!isScheduleVisibility(raw)) return { ok: false, error: 'visibility 非法:需 always-visible / archive-on-success / notify-on-failure / quiet-unless-actionable;清除传 off' }
+      else visibility = raw
+    }
     // 幂等去重:governor 队列下 add/remove 可能乱序(重试/双击),同 site+cron 的
     // 已有任务直接复用,不再生成僵尸副本(审查复现过 3 条重复)
     const dup = this.schedules.find((s) => s.site === site && s.cron === cron)
@@ -1718,6 +1812,8 @@ export class OpencliService extends TypertRemoteService {
       if (backoffMs !== undefined && dup.backoffMs !== backoffMs) { dup.backoffMs = backoffMs; await this.saveState() }
       if (profileClear && dup.profile !== undefined) { delete dup.profile; await this.saveState() }
       else if (profile !== undefined && dup.profile !== profile) { dup.profile = profile; await this.saveState() }
+      if (visibilityClear && dup.visibility !== undefined) { delete dup.visibility; await this.saveState() }
+      else if (visibility !== undefined && dup.visibility !== visibility) { dup.visibility = visibility; await this.saveState() }
       return { ok: true, id: dup.id }
     }
     const id = String(Date.now())
@@ -1734,6 +1830,7 @@ export class OpencliService extends TypertRemoteService {
     if (keep !== undefined) entry.keep = keep
     if (backoffMs !== undefined) entry.backoffMs = backoffMs
     if (profile !== undefined) entry.profile = profile
+    if (visibility !== undefined) entry.visibility = visibility
     this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
@@ -2870,13 +2967,16 @@ export class OpencliService extends TypertRemoteService {
 
   /** canary 漂移巡检:top-20 站只读命令逐站跑,与上一轮 canary 报告对比出新失败/恢复。
    * 产物 ~/.dsh/opencli-canary/canary-<时间戳>.md(保留 14 份);可被定时任务
-   * 以命令 "canary" 每晚触发——站点改版漂移当天可见,不依赖上游 issue 猜健康度。 */
+   * 以命令 "canary" 每晚触发——站点改版漂移当天可见,不依赖上游 issue 猜健康度。
+   * 0.1.5 C1:返回附逐站投票投影 sites(命令/结果/耗时/错误/上一轮基线 prevOk;与归因层
+   * CanaryLike.sites 同名同构,attributeCircuit 直传零转换)——熔断归因(judgeCircuitAttribution)
+   * 据此做失败签名分类计数与基线归一,不回传全量 BenchItem(RPC 面只留判定所需字段)。 */
   @Remote('canary-run')
-  async canaryRun(): Promise<{ ok: boolean; total: number; passed: number; newFailures: string[]; recovered: string[]; path?: string; error?: string }> {
+  async canaryRun(): Promise<{ ok: boolean; total: number; passed: number; newFailures: string[]; recovered: string[]; sites: CanarySiteVote[]; path?: string; error?: string }> {
     const list = await this.adapterList()
-    if (list === null) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], error: this.lastShellError ?? '目录不可用' }
+    if (list === null) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], sites: [], error: this.lastShellError ?? '目录不可用' }
     const lines = pickCanaryCommands(list)
-    if (lines.length === 0) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], error: '目录无只读命令' }
+    if (lines.length === 0) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], sites: [], error: '目录无只读命令' }
     const results: BenchItem[] = []
     for (let i = 0; i < lines.length; i++) {
       const [site, command] = lines[i]!.split(/\s+/) as [string, string]
@@ -2922,7 +3022,14 @@ export class OpencliService extends TypertRemoteService {
     const newFailures = results.filter((x) => !x.ok && prevMap.get(x.command) === true).map((x) => x.command)
     const recovered = results.filter((x) => x.ok && prevMap.get(x.command) === false).map((x) => x.command)
     const passed = results.filter((x) => x.ok).length
-    return { ok: failedCmds.size === 0, total: results.length, passed, newFailures, recovered, path: file }
+    // 逐站投票投影(0.1.5 C1):归因判定按站点基线归一(恒败站 prevOk=false 不投系统面票)、
+    // 失败签名分类(env 45s 超时类靠 ms 识别——「退出码 1」零特征)都需要逐站数据
+    const sites: CanarySiteVote[] = results.map((x) => ({
+      command: x.command, ok: x.ok, ms: x.ms,
+      ...(x.error !== undefined ? { error: x.error } : {}),
+      ...(prevMap.has(x.command) ? { prevOk: prevMap.get(x.command) === true } : {}),
+    }))
+    return { ok: failedCmds.size === 0, total: results.length, passed, newFailures, recovered, sites, path: file }
   }
 
   // ── 写操作证据包──────────────────────────────────
@@ -3114,7 +3221,85 @@ export class OpencliService extends TypertRemoteService {
   private async domainOf(adapter: string): Promise<string | null> {
     const list = await this.adapterList()
     const hit = list?.find((a) => a.name === adapter)
-    return hit?.domain ?? null
+    if (hit?.domain) return hit.domain
+    // CLI 2.0.x 运行时 list 零 domain 字段(结构性,1,292 条实测)→ 已装包 cli-manifest.json
+    // 权威补位;manifest 也不可用时如实返回 null,由调用方降格,不瞎猜
+    return this.manifestDomainOf(adapter)
+  }
+
+  /**
+   * manifest 站点→域名查询(惰性加载 + 文件指纹守缓存)。返回 null 的两种情形由
+   * manifestDomains/manifestDomainError 区分:Map 在但站名不在册,与 manifest 整体不可用——
+   * 兜底路径(fallbackDomain)据此决定「推测末级」还是「如实降格」;authProfile 限域路径
+   * (site 工具)只看返回值,null 即不设限,不依赖区分。
+   */
+  private manifestDomainOf(site: string): string | null {
+    const norm = site.trim().toLowerCase()
+    if (norm.length === 0) return null
+    const path = resolveCliManifestFile(process.env.DSH_OPENCLI_MANIFEST)
+    if (path === undefined) {
+      this.manifestDomains = null
+      // sig 一并清零:否则「不可用」后指回同一文件时旧指纹恰好相同 → 误判缓存有效,吃掉重载
+      this.manifestDomainsSig = null
+      this.manifestDomainError = '未定位到已装上游包的 cli-manifest.json(npm i -g @jackwener/opencli 后可用)——无法权威解析站点域名'
+      return null
+    }
+    let sig: string | null = null
+    try {
+      const st = statSync(path)
+      sig = `${st.mtimeMs}:${st.size}`
+    } catch { /* stat 失败按不可用处理 */ }
+    if (sig === null) {
+      this.manifestDomains = null
+      this.manifestDomainsSig = null // 同上:不可用不留旧指纹,恢复后首次访问强制重载
+      this.manifestDomainError = `cli-manifest.json 不可读:${path}`
+      return null
+    }
+    if (this.manifestDomains === undefined || this.manifestDomainsSig !== sig) {
+      try {
+        const map = buildSiteDomainMap(JSON.parse(readFileSync(path, 'utf8')))
+        if (map === null) throw new Error('manifest 顶层不是数组')
+        this.manifestDomains = map
+        this.manifestDomainError = undefined
+      } catch (e) {
+        this.manifestDomains = null
+        this.manifestDomainError = `cli-manifest.json 解析失败:${e instanceof Error ? e.message.slice(0, 120) : '未知'}`
+      }
+      this.manifestDomainsSig = sig
+    }
+    const map = this.manifestDomains
+    return map !== null ? (map.get(norm) ?? null) : null
+  }
+
+  /**
+   * 漂移兜底专用域名解析(权威两级之上加推测末级,推测必须可标注):
+   * ① adapterList domain(1.x/未来带 domain 的运行时 list 输出,维持原行为);
+   * ② cli-manifest.json 映射(2.0.x 权威补位,171 站中 164 站有域名);
+   * ③ 站名推测 `<站名>.com`——仅当 manifest 在册该站而缺域名时才做(2.0.3 下在册缺域名
+   *    共 7 站,其中 6 站为 http 直连类适配器;第 7 站 web 系通用 read 命令,见下方排除),
+   *    且 speculative:true 让调用方逐处标注;manifest 整体不可用时绝不推测
+   *    (不瞎猜纪律),返回 reason 供兜底如实失败。
+   *  web 是通用 read 命令不是站点(web.com 为无关注册域)——已知必错的推测不做。
+   *  不在册的站名(adapterList/manifest 都没有)不推测:对凭空站名猜域名纯属编造。
+   */
+  private async fallbackDomain(site: string): Promise<{ domain: string; speculative: boolean } | { domain: null; reason: string }> {
+    const authoritative = await this.domainOf(site)
+    if (authoritative !== null) return { domain: authoritative, speculative: false }
+    // 确保 manifest 缓存已加载(domainOf 可能命中 adapterList 短路而未触 manifest 路径)
+    const fromManifest = this.manifestDomainOf(site)
+    if (fromManifest !== null) return { domain: fromManifest, speculative: false }
+    const map = this.manifestDomains
+    const norm = site.trim().toLowerCase()
+    if (map !== undefined && map !== null) {
+      if (map.get(norm) !== undefined) {
+        // 在册(rec=string 已被上方权威短路,此处必为 null=在册缺域名;2.0.3 下 7 站缺域名,
+        // 其中 6 站 http 直连类按 <站名>.com 推测,第 7 站 web 系通用 read 命令不推测):
+        if (norm !== 'web') return { domain: `${norm}.com`, speculative: true }
+        return { domain: null, reason: '「web」是通用 read 命令非站点,web.com 为无关注册域——已知必错的推测不做' }
+      }
+      return { domain: null, reason: this.manifestDomainError ?? `cli-manifest.json 无站点「${site}」(不在册)——不猜测域名` }
+    }
+    return { domain: null, reason: this.manifestDomainError ?? `cli-manifest.json 无站点「${site}」的域名记录(不在册或缺域名)` }
   }
   private checkAuthProfile(domain: string | null, authProfile?: string): string | null {
     if (authProfile === undefined || authProfile.length === 0) return null
@@ -3941,7 +4126,7 @@ export class OpencliService extends TypertRemoteService {
   /** 执行器桥(inbox-intent 与收件箱轮询共用;意图 → 既有 RPC 同源方法,一套逻辑两个入口)。 */
   private inboxExecutor(): IntentExecutor {
     return {
-      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}), ...((i as { jitter?: boolean }).jitter !== undefined ? { jitter: (i as { jitter?: boolean }).jitter } : {}), ...(i.preflight !== undefined ? { preflight: i.preflight } : {}), ...(i.keep !== undefined ? { keep: i.keep } : {}), ...(i.backoffMs !== undefined ? { backoffMs: i.backoffMs } : {}), ...(i.profile !== undefined ? { profile: i.profile } : {}) }),
+      scheduleAdd: async (i) => this.scheduleAdd({ site: i.site, cron: i.cron, ...(i.watch !== undefined ? { watch: i.watch } : {}), ...(i.notify !== undefined ? { notify: i.notify } : {}), ...(i.retry !== undefined ? { retry: i.retry } : {}), ...(i.source !== undefined ? { source: i.source } : {}), ...(i.notifyLevel !== undefined ? { notifyLevel: i.notifyLevel } : {}), ...((i as { quietHours?: string }).quietHours !== undefined ? { quietHours: (i as { quietHours?: string }).quietHours } : {}), ...((i as { jitter?: boolean }).jitter !== undefined ? { jitter: (i as { jitter?: boolean }).jitter } : {}), ...(i.preflight !== undefined ? { preflight: i.preflight } : {}), ...(i.keep !== undefined ? { keep: i.keep } : {}), ...(i.backoffMs !== undefined ? { backoffMs: i.backoffMs } : {}), ...(i.profile !== undefined ? { profile: i.profile } : {}), ...((i as { visibility?: string }).visibility !== undefined ? { visibility: (i as { visibility?: string }).visibility } : {}) }),
       scheduleRemove: async (id) => this.scheduleRemove({ id }),
       scheduleRun: async (id) => this.scheduleRunNow({ id }),
       // 运行级收件箱轻量意图(0.1.4 候选 5 ④):与面板 RPC 同源(inboxRead/inboxArchive),
@@ -4010,7 +4195,8 @@ export class OpencliService extends TypertRemoteService {
         this.addSchedMarker(histKey)
         void this.runSiteCommand(sch.site, sch.id)
       }
-      // 日结检查(0.1.4 候选 2):时点跟随调度 tick,不新增 timer;本地日期翻转时结算早报一次
+      // 日结检查(0.1.4 候选 2):时点跟随调度 tick,不新增 timer;本地日期翻转时翻账页并结算
+      // 早报一次(结算时点可配 DSH_OPENCLI_DIGEST_AT,0.1.5 C2 ①)
       void this.dailyDigestCheck()
     }, 15_000)
     try { this.schedTimer.unref?.() } catch { /* ignore */ }
@@ -4029,13 +4215,16 @@ export class OpencliService extends TypertRemoteService {
   /** 熔断窗默认 30 分钟(DSH_OPENCLI_CIRCUIT_MINUTES 可配)。 */
   private static readonly CIRCUIT_WINDOW_MS = 30 * 60 * 1000
 
-  // ── 0.1.4 候选 2:日结早报(触发=调度 tick 内建日结检查,本地日期翻转时结算一次,不新增 timer)
+  // ── 0.1.4 候选 2:日结早报(触发=调度 tick 内建日结检查;0.1.5 C2 ①:翻转翻账页与结算解耦,
+  // 结算装配+发送时点可配 DSH_OPENCLI_DIGEST_AT,不新增 timer)
   /** 当日日账(run 级聚合,早报数据源;进程内存态,重启丢账——早报尾行如实标注)。 */
   private dayLedger = new DigestDayLedger(localDateKey(new Date()))
   /** 进程实际启动时刻(日账缺口归因的证据:仅当启动落在覆盖日才写「进程当日启动/重启」)。 */
   private readonly bootedAt = new Date()
   /** 上次日结检查看到的本地日期(undefined=启动后首见,只记基准不补发——内存日账不完整,补发即虚报覆盖)。 */
   private lastDigestDay: string | undefined
+  /** 待结算账页(0.1.5 C2 ①:DSH_OPENCLI_DIGEST_AT 推迟结算时暂存旧账页,到点装配发送;null=无待结算)。 */
+  private pendingDigestSettlement: { day: string; ledger: DigestDayLedger } | null = null
   /** 早报卡顺延暂存(quietHours 窗内暂不出窗,出窗后第一个 tick 补发;新一天结算时被替换即丢弃——
    *  数据不丢:digest 事件与 md/json 落盘层不受顺延影响)。ok 随卡暂存:失败卡(带 ✗ 行)补发时
    *  模板 {{ok}} 必须如实 false,不回 sendDigestCard 的 true 默认——失败说真话在结构化字段上同成立。 */
@@ -4084,46 +4273,76 @@ export class OpencliService extends TypertRemoteService {
   // ── 0.1.4 候选 2:日结早报(调度 tick 内建日结检查 → 双层产物)─────────────────
 
   /**
+   * 早报结算时点(env DSH_OPENCLI_DIGEST_AT=HH:MM 本地时;缺省/非法=null=午夜翻转即结算,行为不变)。
+   * 0.1.5 C2 ①时机(knowra 教训=采集型放晚,默认值不拍脑袋):落地形态=时点可配而非默认改晚——
+   * 本早报内容是自家 run 账(本地午夜即完整),无 knowra 的上游生成滞后问题;推迟翻账页会让
+   * record 的跨账日丢弃窗放大成整夜(数据真丢),故账页仍在翻转时先行翻新,可推迟的只是
+   * 「装配+发送」。
+   */
+  private digestSettleMinutes(): number | null {
+    const raw = process.env.DSH_OPENCLI_DIGEST_AT
+    if (raw === undefined || raw.trim().length === 0) return null
+    const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim())
+    if (m === null) return null
+    const h = Number(m[1])
+    const min = Number(m[2])
+    if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) return null
+    return h * 60 + min
+  }
+
+  /**
    * 日结检查(调度 tick 每轮调用,时点跟随 tick 不新增 timer):
    *  - DSH_OPENCLI_DIGEST_DISABLE=1 整体可关(env 白名单字面量,其余值不关);
    *  - 启动后首见只记日期基准(内存日账自进程启动才记账,启动即补发昨日=虚报覆盖,不发);
-   *  - 本地日期翻转 → 结算昨日早报一次(lastDigestDay 即去重标记,一天至多一次);
-   *  - 日期未变 → 补发在途的顺延早报卡(如有,quietHours 出窗后)。
+   *  - 本地日期翻转 → 翻账页+待结算(lastDigestDay 即去重标记,一天至多一次);结算时点由
+   *    DSH_OPENCLI_DIGEST_AT 决定(缺省=同一 tick 立即结算,推迟能把 record 的跨账日丢弃窗
+   *    放大成整夜,账页翻新不可推迟);上一份未结算完(digestBusy)时待结算页保留,下 tick 再试
+   *    (修前直接丢这份——0.1.5 C2 ①顺手改为不丢,反正翻页已完成,重试零风险);
+   *  - 日期未变 → 到点结算在途待结算页 + 补发顺延早报卡(如有,quietHours 出窗后)。
    */
   private async dailyDigestCheck(): Promise<void> {
     if (process.env.DSH_OPENCLI_DIGEST_DISABLE === '1') return
-    const today = localDateKey(new Date())
+    const now = new Date()
+    const today = localDateKey(now)
     if (this.lastDigestDay === undefined) {
       this.lastDigestDay = today
       return
     }
-    if (today === this.lastDigestDay) {
-      await this.flushPendingDigestCard()
+    if (today !== this.lastDigestDay) {
+      // 本地日期翻转:先翻账页(数据面,不可推迟),结算装配挂起待时点
+      const prevDay = this.lastDigestDay
+      const prevLedger = this.dayLedger
+      this.lastDigestDay = today
+      this.dayLedger = new DigestDayLedger(today)
+      this.pendingDigestSettlement = { day: prevDay, ledger: prevLedger }
+    }
+    const settleAt = this.digestSettleMinutes()
+    const pending = this.pendingDigestSettlement
+    if (pending !== null && (settleAt === null || now.getHours() * 60 + now.getMinutes() >= settleAt)) {
+      if (this.digestBusy) return // 上一份还没结算完(发送极慢):待结算页保留,下一 tick 再试
+      this.pendingDigestSettlement = null
+      this.digestBusy = true
+      try {
+        await this.emitDigest(pending.day, pending.ledger)
+      } finally {
+        this.digestBusy = false
+      }
       return
     }
-    const prevDay = this.lastDigestDay
-    this.lastDigestDay = today
-    if (this.digestBusy) return // 上一份还没结算完(时钟跳变/发送极慢):丢这份保不重入,下一翻转再结
-    this.digestBusy = true
-    try {
-      await this.emitDigest(prevDay)
-    } finally {
-      this.digestBusy = false
-    }
+    await this.flushPendingDigestCard()
   }
 
   /**
-   * 结算昨日早报:日账 → buildDigest 三同源(compact 卡/md/json)。日账无论发不发都换新翻页
-   * (账按日切)。两层分开(深化轮 §九.7① 口径「推送 compact 卡与落盘 md+json 双产物两层分开」):
-   * 事件(digest)与落盘(md/json)层无条件执行——面板时间线与文件即真相,聚合报告先产出再谈
-   * 发送;两道门都在推送层(ask ①):存在 notify!==false 的启用任务才发——全部任务都关了通知
-   * 的用户默认不打扰;账面空(当日零 run)无事可推不闯通道。门只关发送,不关事件与文件。
+   * 结算昨日早报:日账 → buildDigest 三同源(compact 卡/md/json)。账页由 dailyDigestCheck 在
+   * 日期翻转时先行换新传入(0.1.5 C2 ①解耦:DSH_OPENCLI_DIGEST_AT 推迟结算时,推迟期间的 run
+   * 必须落进新一天的账)。两层分开(深化轮 §九.7① 口径「推送 compact 卡与落盘 md+json 双产物
+   * 两层分开」):事件(digest)与落盘(md/json)层无条件执行——面板时间线与文件即真相,聚合
+   * 报告先产出再谈发送;两道门都在推送层(ask ①):存在 notify!==false 的启用任务才发——全部
+   * 任务都关了通知的用户默认不打扰;账面空(当日零 run)无事可推不闯通道。门只关发送,不关事件与文件。
    */
-  private async emitDigest(prevDay: string): Promise<void> {
-    // 结算后立即翻页:结算期间在途的 run 属于新一天,不能记进旧账
-    const ledger = this.dayLedger
-    this.dayLedger = new DigestDayLedger(localDateKey(new Date()))
+  private async emitDigest(prevDay: string, ledger: DigestDayLedger): Promise<void> {
     try {
+      const firstAt = ledger.firstRecordedAt()
       const built = buildDigest({
         date: prevDay,
         genAt: new Date(),
@@ -4131,6 +4350,7 @@ export class OpencliService extends TypertRemoteService {
         streakOf: (id, sig) => this.failStreaks.daysOf(id, sig),
         attributions: this.circuitAttributions,
         processStartedAt: this.bootedAt.toISOString(),
+        ...(firstAt !== undefined ? { missedScheduledRuns: this.missedScheduledRunsBetween(prevDay, firstAt) } : {}),
       })
       this.pushIngestEvent('digest', `📰 早报 ${prevDay}:${built.overview}`)
       // 落盘层:md+json 双产物(dsh-ai-research 双产物纪律);无推送通道也落
@@ -4159,7 +4379,38 @@ export class OpencliService extends TypertRemoteService {
         return
       }
       await this.sendDigestCard(built.title, built.card, prevDay, built.json.totals.withFailure === 0)
-    } catch { /* 日结旁路:任何意外不反噬调度主链(通知旁路同纪律) */ }
+    } catch (e) {
+      // 日结旁路不等于无声(0.1.5 C2 ⑥,fe6fdfdc low#9):旁路纪律是「不反噬调度主链」,
+      // 不是「静默消失」——结算异常留痕进事件台账,失败说真话在旁路面同样成立(修前 catch
+      // 静默吞一切,早报无声消失是最难排查形态);留痕自身再包一层 try,双保险不反噬
+      const msg = e instanceof Error ? e.message.slice(0, 160) : '未知异常'
+      try { this.pushIngestEvent('digest-failed', `📰 日结结算失败(早报本回合未产出,下个本地日期翻转再试):${msg}`) } catch { /* 旁路的旁路:留痕失败也不再抛 */ }
+    }
+  }
+
+  /**
+   * 账目缺口「调度应跑未入账」计数(0.1.5 C2 ④):逐分钟用 cronMatches 数启用任务在
+   * [覆盖日 00:00, 首条入账-15min) 窗口内的应跑分钟(每任务每应跑分钟计 1 次)。余量 15 分钟
+   * 吸收 jitter 上限(DSH_OPENCLI_JITTER_MAX_MS 可调至 10 分钟)与执行时长,把「应跑但入账略晚」
+   * 排除在外——宁少记不冤枉,缺口注记只增可信度不产噪音。窗口天然 ≤24h(入账只收当日),
+   * 逐分钟扫描至多 1440 轮 × 任务数,日结一日一次,开销可忽略。
+   */
+  private missedScheduledRunsBetween(day: string, firstRecordedAt: string): number {
+    const first = new Date(firstRecordedAt)
+    if (Number.isNaN(first.getTime())) return 0
+    const [y, m, d] = day.split('-').map(Number)
+    const start = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
+    const end = new Date(first.getTime() - 15 * 60_000)
+    if (end <= start) return 0
+    const crons = this.schedules.filter((s) => s.enabled).map((s) => s.cron)
+    if (crons.length === 0) return 0
+    let missed = 0
+    for (const t = new Date(start); t < end; t.setMinutes(t.getMinutes() + 1)) {
+      for (const c of crons) {
+        if (this.cronMatches(c, t)) missed++
+      }
+    }
+    return missed
   }
 
   /** compact 卡群发(所有启用通道;模板变量给 digest 身份——site=digest <日期>,ok=当日无失败任务)。 */
@@ -4190,10 +4441,11 @@ export class OpencliService extends TypertRemoteService {
   // ── 0.1.4 候选 3:熔断归因(circuit-open 开窗后自动单跑一次 canary)──────────────
 
   /**
-   * 开窗后自动 canary 归因(既有 canary-run 面复用,无新执行面):把「系统面 or 站点面」
-   * 结论写进 circuit-attribution 事件并缓存(早报失败段按签名附注)。fire-and-forget——
+   * 开窗后自动 canary 归因(既有 canary-run 面复用,无新执行面):把「系统面 or 站点面 or
+   * 环境面」结论写进 circuit-attribution 事件并缓存(早报失败段按签名附注)。fire-and-forget——
    * canary 全程 top-20 站逐站跑,可能要几分钟,绝不挡调度收尾;同签名在途不重复跑。
-   * 归因是启发式判定(通过率分档),不自动改熔断/不停任务——只给结论给事件,诚实不替用户做主。
+   * 归因是启发式判定(0.1.5 C1 失败签名分类计数+站点基线归一;canaryRun 的 sites 逐站投影是
+   * 判据输入),不自动改熔断/不停任务——只给结论给证据行,诚实不替用户做主。
    */
   private async attributeCircuit(sig: string): Promise<void> {
     if (this.attributing.has(sig)) return
@@ -4214,8 +4466,9 @@ export class OpencliService extends TypertRemoteService {
   }
 
   /**
-   * 候选 5(C)归档接线缝:归档动作把 run 计入当日「空产出已归档」计数(早报首行 X 与
-   * json archivedEntries 的唯一来源)。B 侧只留此缝,归档模型/触发时机由 C 定;诚实边界:
+   * 候选 5(C)归档接线缝:归档动作把 run 计入当日「已归档 N 条」计数(早报首行 X 与
+   * json archivedEntries 的唯一来源;0.1.5 C2 ⑤:标签改中性「条已归档」——手动归档可归
+   * 非空产出/失败 run,不再宣称「空产出」)。B 侧只留此缝,归档模型/触发时机由 C 定;诚实边界:
    * 日账随日结算换新,跨日补归档记不进当日 X(当日早报已发),run 时点的自动归档
    * (候选 5④ 确定性闭环)不受影响。
    */
@@ -4416,8 +4669,13 @@ export class OpencliService extends TypertRemoteService {
         this.runHistory[id] = hist0.slice(0, 5)
         await this.saveState()
         this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:${hc.note ?? ''}`)
-        // 日账入账(0.1.4 候选 2):跳过也如实进早报失败面(失败不静默),skip 标记供折叠分组
+        // 日账入账(0.1.4 候选 2;0.1.5 C2 ②分账):跳过如实进早报但单独计数不冒充失败
+        // (跳过≠失败,⏸ 行呈现),skip 标记供分账
         this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}`, skip: true })
+        // 连败账跳过日链保活(0.1.5 复核③):跳过不计日不断链,但与 rebuildFromRunHistory
+        // 的桥接规则同口径地把链尾日前移到跳过日——修前严格衔接检查被 skip 日掐断,同段历史
+        // 在线算 1 日、重启重建算 2 日,「连续第 N 日」在重启前后凭空变大
+        this.failStreaks.keepAlive(id, new Date())
         return
       }
       healthNote = hc.note
@@ -4478,8 +4736,9 @@ export class OpencliService extends TypertRemoteService {
             this.runHistory[id] = hist0.slice(0, 5)
             await this.saveState()
             this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:登录态预检未过——${note}`)
-            // 日账入账(0.1.4 候选 2):同健康预检跳过,如实进早报失败面
+            // 日账入账(0.1.4 候选 2;0.1.5 C2 ②分账):同健康预检跳过,如实进早报不冒充失败
             this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: false, summary: hist0[0]?.summary ?? `⏸ 跳过:${note}`, skip: true })
+            this.failStreaks.keepAlive(id, new Date()) // 连败账跳过日链保活(复核③,同上)
             return
           }
         }
@@ -4668,25 +4927,31 @@ ${r.stderr}`
         // 多账号边界:任务指定了浏览器 profile 时不兜底——browser_* 原语(含生产直连路径)不按任务
         // profile 路由,兜底会落到默认档案、用**另一个账号**采到数据,标 degraded 也掩盖不了"账号错了";
         // 宁可如实报兜底不可用,也不拿错账号的数据顶替
-        const domain = sch?.profile !== undefined ? null : await this.domainOf(sSite)
+        // 域名解析(fallbackDomain 三级链):adapterList domain → cli-manifest.json 权威补位 →
+        // 站名推测(仅 manifest 在册缺域名的站,speculative 标注)。推测域名可能开到无关站点,
+        // 逐处标「推测域名」让读侧自辨;解析不出时 fb.note 带具体原因,兜底如实失败不伪造。
+        const fr = sch?.profile !== undefined ? null : await this.fallbackDomain(sSite)
+        const domain = fr !== null && fr.domain !== null ? fr.domain : null
+        const speculative = fr !== null && fr.domain !== null && fr.speculative
         const fb = sch?.profile !== undefined
           ? { ok: false, note: `任务指定了浏览器 profile「${sch.profile}」,browser_* 兜底不支持按 profile 路由——不用默认档案的账号顶替采集` }
-          : domain !== null ? await this.driftFallbackCollect(domain) : { ok: false, note: '适配器清单无该站点域名' }
+          : domain !== null ? await this.driftFallbackCollect(domain)
+            : { ok: false, note: fr !== null && 'reason' in fr ? fr.reason : '适配器清单无该站点域名' }
         if (fb.ok) {
           receipt.degraded = true
           if (snapPath !== undefined) {
             try {
               const snap = JSON.parse(readFileSync(snapPath, 'utf8')) as Record<string, unknown>
               snap.degraded = true
-              snap.fallback = { via: 'browser open + state', domain, bytes: fb.bytes, stdout: scrubUrlParams(fb.stdout ?? '') }
+              snap.fallback = { via: 'browser open + state', domain, bytes: fb.bytes, stdout: scrubUrlParams(fb.stdout ?? ''), ...(speculative ? { speculative: true } : {}) }
               snap.receipt = receipt
               await writeFile(snapPath, JSON.stringify(snap), 'utf8')
             } catch { /* 兜底数据并入快照失败不阻断主流程(回执与事件照常) */ }
           }
           if (hist[0] !== undefined) {
-            hist[0].summary = `${hist[0].summary} 🛟 漂移兜底:browser_* 原语已采集近似数据(${domain} 首页页面状态,degraded;非适配器结构化输出)`
+            hist[0].summary = `${hist[0].summary} 🛟 漂移兜底:browser_* 原语已采集近似数据(${domain}${speculative ? ',推测域名' : ''} 首页页面状态,degraded;非适配器结构化输出)`
           }
-          this.pushIngestEvent('adapter-drift-fallback', `🛟 ${siteCmd} 漂移兜底成功:browser_* 原语采集了 ${domain} 首页页面状态(degraded,已并入本次快照);适配器恢复前数据为近似口径`)
+          this.pushIngestEvent('adapter-drift-fallback', `🛟 ${siteCmd} 漂移兜底成功:browser_* 原语采集了 ${domain}${speculative ? '(推测域名,manifest 缺该站域名——近似口径里再打一层折扣)' : ''} 首页页面状态(degraded,已并入本次快照);适配器恢复前数据为近似口径`)
         } else {
           if (hist[0] !== undefined) {
             hist[0].summary = `${hist[0].summary} 🛟 漂移兜底失败(${fb.note ?? '未知'}):本 tick 无兜底数据`
@@ -4750,6 +5015,17 @@ ${r.stderr}`
       this.inboxFlagSet(id, runAt, { archived: true, by: 'auto' })
       this.pushIngestEvent('inbox-auto-archive', `📦 ${siteCmd} 无产出(空结果且无变化/无命中)——自动归档(不占收件箱未读;早报尾行计数)`)
     }
+    // 可见性档位归档(0.1.5 C5,§九.7⑤):archive-on-success=成功 run 一律归档;
+    // quiet-unless-actionable=无 actionable 信号(失败/watch 命中/有变化,worthPushing 同口径)
+    // 才归档——判定与组合语义在 runinbox.ts visibilityArchivesRun。与上方无产出自动归档的
+    // 关系:无产出归档对所有任务生效(C5 不改默认行为),命中时优先走它(早报尾行「自动归档
+    // N 条无产出」口径);档位归档只补无产出判定之外的情形(如成功有产出),同一状态键缝
+    // (by=auto),日账只带 archived 不带 autoArchived——早报「已归档 N 条」计数,不虚报「无产出」。
+    const visArchived = !autoArchived && visibilityArchivesRun(sch?.visibility, { ok: lastOk, diffed: diffText.length > 0, watchHit: watchHits.length > 0 })
+    if (visArchived) {
+      this.inboxFlagSet(id, runAt, { archived: true, by: 'auto' })
+      this.pushIngestEvent('inbox-auto-archive', `📦 ${siteCmd} 可见性档位归档(${sch?.visibility === 'archive-on-success' ? '成功即归档' : '无失败/命中/变化'}):不占收件箱未读(无损,归档区可回看;早报「已归档」计数)`)
+    }
     // 日账入账(0.1.4 候选 2):每个 runSiteCommand 一条(摘要=history 首行,已过 scrubUrlParams),
     // 含签名/watch/变化/空产出/熔断标记——早报结算时读,不重复解析输出;
     // archived/autoArchived(候选 5 ③):归档条目不进日报任何行,自动归档进尾行计数
@@ -4762,6 +5038,7 @@ ${r.stderr}`
       ...(diffText.length > 0 ? { diff: diffText } : {}),
       ...(receipt.empty === true ? { empty: true } : {}),
       ...(autoArchived ? { archived: true, autoArchived: true } : {}),
+      ...(visArchived ? { archived: true } : {}),
       circuit: circuitSkipped || circuitOpened,
     })
     await this.saveState()
@@ -4771,13 +5048,31 @@ ${r.stderr}`
     // 例行结果默认即发(成功=例行通知,失败=schedule-failed,watch 命中=正文加 🔔 前缀)——
     // 没有按通道的"安静成功"开关(早期注释曾宣称 wantRoutine 门,该字段从未实现,勿再引用)
     // ④补强:notifyLevel==='quiet' 只推有价值信号(watch 命中/有变化/失败),高频任务不再刷屏
+    // ⑤补强(C5 可见性档位)——组合优先级(谁优先,自上而下):
+    //   1. notify:false 任务级总闸,硬关(既有,最优先);
+    //   2. circuitSkipped 开窗任务已推过一次,窗内任务不逐任务外送(既有);
+    //   3. visibility='notify-on-failure':仅失败外送——ok run(含 watch 命中/有变化)一律不推;
+    //      唯一例外=出窗合并 flush(pendingFlush,见下):nof 任务窗内只暂存失败,flush 带出的
+    //      全是失败,不违反「仅失败外送」(0.1.5 复核④)。它比 notifyLevel='quiet' 的
+    //      worthPushing 门(失败∪命中∪变化)更窄(纯失败子集),两者同设时档位优先——档位是
+    //      更具体的任务级意图;想要命中/变化也推,请用 quiet 而非档位;
+    //   4. notifyLevel='quiet' worthPushing 门 + quietHours 窗(既有):quietHours 管「何时发」
+    //      (窗内暂存出窗合并),visibility 管「要不要发」,正交不冲突;档位归档面(上方
+    //      visArchived)与通知面(此处 nof)互不越界——archive-on-success 不改推送,
+    //      notify-on-failure 不改收件箱。
+    const nof = sch?.visibility === 'notify-on-failure'
     const quiet = sch?.notifyLevel === 'quiet'
     const worthPushing = !lastOk || watchHits.length > 0 || diffText.length > 0
     const inWin = sch?.quietHours !== undefined && inQuietHours(sch.quietHours)
-    // quiet 任务出窗后若暂存非空,本条即使为例行成功也要进合并清空(否则暂存滞留到下次有价值推送,复核 low)
+    // quiet/nof 任务出窗后若暂存非空,本条即使为例行成功也要进合并清空(否则暂存滞留到下次
+    // 有价值推送,quiet 系复核 low)。nof 的出窗合并 flush 绕过「仅失败外送」门(0.1.5 复核④):
+    // nof 任务窗内只暂存失败条目(成功 run 被 nof 门拦在暂存之外),flush 带出的全是失败,
+    // 不违反档位承诺;修前 nof 任务的出窗首跑被 nof 门整个拦住,窗内暂存的失败要等该任务
+    // 下一次失败才随合并带出——健康任务可滞留十几小时以上,SKILL.md「出窗首跑合并推送一条
+    // 😴 摘要」的无条件承诺失守(与 0.1.3 已修的 quiet 任务出窗暂存滞留同类)。
     const pendingFlush = (sch?.pendingNotify?.length ?? 0) > 0 && !inWin
     // 熔断短路(circuitSkipped)不外送:开窗任务的通知已发过一次,窗内任务不再逐任务推送
-    if (sch?.notify !== false && !circuitSkipped && (!quiet || worthPushing || pendingFlush)) {
+    if (sch?.notify !== false && !circuitSkipped && (!(nof && lastOk) || pendingFlush) && (!quiet || worthPushing || pendingFlush)) {
       // 静默时段(0.4.7 B2):窗内暂存(上限 20 条,防长窗爆内存;随任务落盘重启不丢),
       // 出窗首跑把暂存合并进正文一次推送后清空。窗解析失败按未配置处理(fail-open 多推不吞)。
       if (inWin) {

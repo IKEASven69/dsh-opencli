@@ -29,10 +29,15 @@ describe('diffKnowledge(双向 diff)', () => {
   it('一致 → 无漂移', () => {
     expect(driftLines(diffKnowledge(m, okPitfalls, okHealth))).toEqual([])
   })
-  it('① 卡→manifest:pitfalls 悬空卡(上游改名/下线)报出', () => {
+  it('① 卡→manifest:pitfalls 悬空卡(上游改名/下线)报出;`_` 前缀保留段(_global 全局坑)不参与站点核对', () => {
     const d = diffKnowledge(m, { ...okPitfalls, gone: ['z'] }, okHealth)
     expect(d.orphanPitfalls).toEqual(['gone'])
     expect(driftLines(d).join('\n')).toContain('pitfalls.json 悬空卡')
+    // 0.1.5 C7 复核⑦:pitfalls.json 的 `_global`(上游 #2813 工具面坑)是非站点保留段,
+    // 不判悬空卡(否则全局坑一入卡门禁整轮拒跑)
+    const withGlobal = diffKnowledge(m, { ...okPitfalls, _global: ['#2813 browser 原语'] }, okHealth)
+    expect(withGlobal.orphanPitfalls).toEqual([])
+    expect(driftLines(withGlobal)).toEqual([])
   })
   it('① health 非 unsupported 的悬空卡报出;unsupported 站本就不在 manifest 合法', () => {
     const d = diffKnowledge(m, okPitfalls, { ...okHealth, ghost: { status: 'degraded' } })

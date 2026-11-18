@@ -722,6 +722,24 @@ describe('normalizeNotifyConfig 新通道(bark/ntfy/pushover)+ telegram token �
     expect(c.channels[3]).toEqual({ type: 'webhook', enabled: true, url: 'https://hook.example.com/y', template: '{"a":1}', parseMode: 'HTML' })
   })
 
+  it('组合路径(0.1.5 L1):URL 带凭据+显式字段同给——显式字段优先,URL 存无凭据 base', () => {
+    const c = normalizeNotifyConfig({ channels: [
+      { type: 'bark', url: 'https://api.day.app/urlKey1', deviceKey: 'explicitKey', enabled: true },
+      { type: 'ntfy', url: 'https://ntfy.sh/urlTopic', topic: 'explicitTopic', enabled: true },
+      { type: 'webhook', platform: 'telegram', url: 'https://api.telegram.org/bot111:UrlTok', telegramToken: '222:ExplicitTok', enabled: true },
+    ] })
+    // 三通道同规:显式字段为用户最新意图保留;URL 段凭据一律摘除(修前组合整条跳过拆解,
+    // 原始带凭据 URL 直落 state.json,是「无凭据形态落盘」承诺的例外洞)
+    expect(c.channels[0]).toEqual({ type: 'bark', enabled: true, url: 'https://api.day.app', deviceKey: 'explicitKey' })
+    expect(c.channels[1]).toEqual({ type: 'ntfy', enabled: true, url: 'https://ntfy.sh', topic: 'explicitTopic' })
+    expect(c.channels[2]).toEqual({ type: 'webhook', enabled: true, url: 'https://api.telegram.org', platform: 'telegram', telegramToken: '222:ExplicitTok' })
+    // 幂等:拆净形态再过一遍无变化(第二遍 URL 已无凭据段,拆解为无操作)
+    expect(normalizeNotifyConfig(c)).toEqual(c)
+    // 显式 token + 无 bot 段 URL:不误伤(URL 原样,token 独立字段保留)
+    const plain = normalizeNotifyConfig({ channels: [{ type: 'webhook', platform: 'telegram', url: 'https://api.telegram.org/sendMessage?chat=42', telegramToken: '222:ExplicitTok', enabled: true }] })
+    expect(plain.channels[0]).toEqual({ type: 'webhook', enabled: true, url: 'https://api.telegram.org/sendMessage?chat=42', platform: 'telegram', telegramToken: '222:ExplicitTok' })
+  })
+
   it('归一幂等:已拆形态再过一遍无变化;未知 type 仍整条丢弃', () => {
     const once = normalizeNotifyConfig({ channels: [
       { type: 'bark', url: 'https://api.day.app/k1', enabled: true },
