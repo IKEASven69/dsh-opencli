@@ -379,6 +379,9 @@ export interface DigestDayEntry {
   archived?: boolean
   /** 候选 5 ③:自动归档来源标记(无产出确定性判定命中)——早报尾行计数的口径依据。 */
   autoArchived?: boolean
+  /** 补跑 run 标记(0.1.6 C1):环境跳过挂债当日恢复后的恢复采集——摘要文本已带 🔄 前缀,
+   *  此字段是 typed 口径(不解析文本),供后续账目统计使用。 */
+  catchup?: boolean
   /** 本 run 伴随熔断(开窗或窗内短路)。 */
   circuit?: boolean
   /** 健康预检/登录预检跳过(诚实进失败面,不静默)。 */

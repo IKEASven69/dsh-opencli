@@ -11,9 +11,12 @@ import { createElement, useEffect, useRef, useState } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AdapterDetailResult, AdapterDisableResult, AdapterInfo, AdaptersResult, ApprovalSetResult,
-  AuditListResult, DaemonStartResult, EventsGetResult, EvidenceGetItem, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, RunInboxEntry, RunInboxListResult, SettingsResult,
+  AuditListResult, CoexistenceInfo, DaemonStartResult, EventsGetResult, EvidenceGetItem, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, RunInboxEntry, RunInboxListResult, SettingsResult,
   TraceLine, TraceListResult,
 } from './types.ts'
+
+/** status RPC 的面板侧形态(含可选共存信息与冲突名单——与宿主返回类型同构)。 */
+type PanelStatus = OpencliStatus & { conflicts?: string[]; coexist?: CoexistenceInfo }
 import { siteIconOf } from './site-icons.ts'
 import { healthOf } from './knowledge.ts'
 // #59 装饰步识别与宿主侧同一口径(纯函数单一来源;只引此函数,打包按需摇树)
@@ -59,6 +62,7 @@ const STR = {
     diffT: '📊 变化', diffEmpty: '还没有两次采集的对比——再跑一次就有了', diffNone: '无变化',
     csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`, nfLevel: '级别', nfLevelAll: '全部', nfLevelQuiet: '仅变化', nfLevelTip: 'quiet=只推命中/变化/失败;all=例行也推', diffWeek: '近 7 天', diffAdded: '新增', diffGone: '消失', diffMoved: '位移', scTitle: '插件自检', scSub: '工具注册点名 + 入口在线 + 宿主匹配——“装上没效果”3 秒可见', scOk: '全部正常', scTools: (n: number) => `${n} 个工具已注册`, scConflict: (n: number) => `${n} 个工具撞名让位`, scDaemon: 'daemon', scCtl: 'ctl 收件箱', scPanel: '面板 RPC', scUpdate: (v: string) => `有新版本 v${v}`, scUpgradeTip: '复制升级命令到剪贴板(不自动执行——升级是你的显式决策)', scCurrent: (v: string) => `当前 v${v}`, qhLabel: '静默', qhOff: '关', qhTip: '窗内通知暂存,出窗合并推送', qhSetFail: '静默时段格式:HH:MM-HH:MM', qhPh: '😴 静默 23:00-07:00', qhTitle: '跨夜如 23:00-07:00;窗内暂存出窗合并',
     visLabel: '可见', visDefault: '默认', visArchiveOk: '成功归档', visNofFail: '仅失败推', visQuietAct: '有事才现身', visTip: '可见性档位:默认=每次 run 都现身收件箱;成功归档=成功的 run 自动沉归档区(可回看),失败照常现身;仅失败推=只有失败才推送通知(命中/变化也不推);有事才现身=无失败/命中/变化时自动归档不打扰。归档无损,早报「已归档」计数可见',
+    coT: '检测到两个 CLI 在互抢 daemon', coDescF: (c: number, d: number, n: number) => `插件用的 CLI 是 v${c}.x,daemon 却跑着 v${d}.x——大概率同时装着 OpenCLIApp 内置 CLI 与全局 CLI,二者互杀(#2761),daemon 近 7 天已翻转 ${n} 次;留一个,断连与熔断就会少`, coDescFlipF: (n: number) => `daemon 近 7 天翻转 ${n} 次(同版本重启或互杀前兆——App 内置守护与全局 CLI 二选一更稳)`, coA1: '退出或升级 OpenCLIApp(内置 CLI 与全局 CLI 二选一)', coA2: '或把本插件钉定到当前 CLI(系统环境变量,只复制不执行):', coCopy: '复制钉定命令',
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     hintT: '你是不是想用这些?点击直接跑:',
     quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑', quickMore: '↑ 每次刷新从你的站点目录抽 6 个——170+ 站都能这么用',
@@ -170,6 +174,7 @@ const STR = {
     diffT: 'Diff', diffEmpty: 'No pairs yet — run one more collection', diffNone: 'no change',
     csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`, nfLevel: 'level', nfLevelAll: 'all', nfLevelQuiet: 'changes', nfLevelTip: 'quiet=hits/changes/failures only; all=routine too', diffWeek: 'last 7 days', diffAdded: 'added', diffGone: 'gone', diffMoved: 'moved', scTitle: 'Plugin self-check', scSub: 'Tool registration roll-call + entries online + host match — "installed but no effect" visible in 3s', scOk: 'All good', scTools: (n: number) => `${n} tools registered`, scConflict: (n: number) => `${n} name conflicts yielded`, scDaemon: 'daemon', scCtl: 'ctl inbox', scPanel: 'panel RPC', scUpdate: (v: string) => `new version v${v} available`, scUpgradeTip: 'copy upgrade command to clipboard (never auto-runs — upgrading is your explicit call)', scCurrent: (v: string) => `current v${v}`, qhLabel: 'quiet', qhOff: 'off', qhTip: 'notifications during the window are merged and sent after it ends', qhSetFail: 'quiet hours format: HH:MM-HH:MM', qhPh: '😴 quiet 23:00-07:00', qhTitle: 'overnight ok e.g. 23:00-07:00; merged after window',
     visLabel: 'vis', visDefault: 'default', visArchiveOk: 'archive on success', visNofFail: 'failures only', visQuietAct: 'quiet unless actionable', visTip: 'Visibility level: default=every run shows up in the inbox; archive on success=successful runs sink to the archive automatically (still readable), failures stay visible; failures only=push notifications on failures exclusively (hits/changes included, no pushes); quiet unless actionable=routine runs auto-archive until a failure/hit/change shows up. Archiving is lossless — the digest counts archived runs',
+    coT: 'Two CLIs are fighting over one daemon', coDescF: (c: number, d: number, n: number) => `This plugin runs CLI v${c}.x but the daemon is v${d}.x — likely both OpenCLIApp's bundled CLI and the global CLI are installed, killing each other (#2761); ${n} daemon flips in the last 7 days. Keep one and the disconnects/meltdowns drop`, coDescFlipF: (n: number) => `daemon flipped ${n} times in the last 7 days (same-version restarts or a coexistence precursor — keeping one of the two daemons is steadier)`, coA1: 'Quit or upgrade OpenCLIApp (keep one of the two CLIs)', coA2: 'Or pin this plugin to the current CLI (system env var — copy only, never auto-runs):', coCopy: 'Copy pin command',
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     hintT: 'Did you mean? Click to run:',
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run', quickMore: '↑ 6 picked from your catalog on each refresh — 170+ sites work like this',
@@ -627,7 +632,7 @@ function Panel(): ReturnType<typeof createElement> {
   }
   const [tab, setTab] = useState<'ov' | 'cmd' | 'auto' | 'sec' | 'cv'>('ov')
   const [phase, setPhase] = useState<'loading' | 'ready'>('loading')
-  const [status, setStatus] = useState<OpencliStatus | null>(null)
+  const [status, setStatus] = useState<PanelStatus | null>(null)
   const [settings, setSettings] = useState<SettingsResult | null>(null)
   const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
   const [schedules, setSchedules] = useState<SchedItem[]>([])
@@ -717,7 +722,7 @@ function Panel(): ReturnType<typeof createElement> {
     try {
       const raw = localStorage.getItem(SWR_KEY)
       if (raw === null) return
-      const j = JSON.parse(raw) as { status?: OpencliStatus; adapters?: AdapterInfo[]; at?: number }
+      const j = JSON.parse(raw) as { status?: PanelStatus; adapters?: AdapterInfo[]; at?: number }
       if (typeof j.at === 'number' && Date.now() - j.at < 12 * 3600_000) {
         if (j.status !== null && typeof j.status === 'object') setStatus(j.status)
         if (Array.isArray(j.adapters) && j.adapters.length > 0) setAdapters(j.adapters)
@@ -1696,6 +1701,19 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
         status === null ? t2('loading') : (daemonUp && binOk ? t2('diagAll') : t2('depDaemon')),
         createElement('span', { className: 'o4arr' }, t2('detail'), ic('chev-d', true)),
       ),
+      // CLI 共存卡(0.1.6 C2,#2761):status.coexist 只在 major 不一致或近 7 天有 daemon 翻转时
+      // 才由宿主携带(零噪音)——建议只复制不执行(升级/退出是你的显式决策,与自检升级卡同纪律)
+      status?.coexist !== undefined ? createElement('div', { className: 'o4-card', style: { borderColor: 'rgba(255,171,64,.4)', marginBottom: '10px' } },
+        createElement('div', { className: 'o4-h3' }, ic('alert', true), t2('coT')),
+        createElement('div', { className: 'o4-sub' },
+          status.coexist.cliMajor !== null && status.coexist.daemonMajor !== null && status.coexist.cliMajor !== status.coexist.daemonMajor
+            ? (t2('coDescF') as unknown as (c: number, d: number, n: number) => string)(status.coexist.cliMajor, status.coexist.daemonMajor, status.coexist.flips7d)
+            : (t2('coDescFlipF') as unknown as (n: number) => string)(status.coexist.flips7d)),
+        createElement('div', { className: 'o4-qrow', style: { marginTop: '6px' } }, '· ', t2('coA1')),
+        createElement('div', { className: 'o4-qrow' }, '· ', t2('coA2')),
+        createElement('div', { style: { fontFamily: 'ui-monospace,Consolas,monospace', fontSize: '10.5px', color: '#79B7FF', margin: '4px 0 6px', wordBreak: 'break-all' } }, `setx DSH_OPENCLI_BIN "${status.coexist.binPath}"`),
+        createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void copyText(`setx DSH_OPENCLI_BIN "${status!.coexist!.binPath}"`).then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) } }, t2('coCopy')),
+      ) : null,
       // 内容
       loading
         ? loadingBlock()
@@ -2152,6 +2170,7 @@ function InboxPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
         e.digestDate !== undefined ? createElement('div', { style: { color: '#5F6873', fontSize: '10.5px', marginTop: '3px' } }, (tt('ibDigest') as unknown as (d: string) => string)(e.digestDate)) : null,
         createElement('div', { style: { color: '#8B9AFF', fontSize: '10.5px', marginTop: '4px' } }, tt('ibTrace')),
         traceErr.length > 0 ? createElement('div', { style: { color: '#5F6873', fontSize: '10.5px' } }, traceErr) : null,
+        traceErr.length === 0 && traces !== null && traces.length === 0 ? createElement('div', { style: { color: '#5F6873', fontSize: '10.5px' } }, tt('ibNoTrace')) : null, // L15(复核 fe6fdfdc):RPC 成功但 ±2 分钟窗口过滤出 0 行时,表头下不再空洞——空态与失败分支互斥,复用现成文案
         ...(traces ?? []).slice(0, 8).map((l, li) => createElement('div', { key: li, style: { fontSize: '10.5px', fontFamily: 'ui-monospace,Consolas,monospace', color: 'rgba(249,250,251,.7)' } },
           `${l.at.slice(11, 19)} ${l.cmd} · exit ${l.exitCode} · ${l.ms}ms`)),
       ) : null,

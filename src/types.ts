@@ -24,6 +24,20 @@ export interface OpencliStatus {
   error?: string
 }
 
+/** CLI 共存信息(0.1.6 C2,#2761):仅在「major 不一致」或「近 7 天有 daemon 翻转」时由
+ *  status RPC 携带(零噪音);面板据此渲染共存提示卡。major 侧取不到如实 null
+ *  (daemon 未运行/版本缺失),绝不编哨兵值——面板对 null 走「仅翻转频度」文案。 */
+export interface CoexistenceInfo {
+  /** 插件所使 CLI 的 major(resolveBin 级联目标);版本串取不到如实 null。 */
+  cliMajor: number | null
+  /** daemon 当前版本的 major;daemon 未运行/版本缺失如实 null(0.1.6 复核:哨兵 -1 会渲染成「v-1.x」伪造版本)。 */
+  daemonMajor: number | null
+  /** 近 7 天 daemon 版本翻转次数(事件史统计,#2761 互杀的实证信号)。 */
+  flips7d: number
+  /** 钉定建议指向的 CLI 绝对路径(setx DSH_OPENCLI_BIN 用,只复制不执行)。 */
+  binPath: string
+}
+
 /** 一个站点/应用适配器(由命令级 list JSON 聚合)。 */
 export interface AdapterInfo {
   name: string

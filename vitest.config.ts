@@ -9,6 +9,9 @@ export default defineConfig({
     // 门禁按数组序执行、先于一切用例:①知识卡⇄CLI manifest 漂移门禁挂首位(D#10,漂移即整轮拒跑)
     // ②lib 捆绑陈旧守卫(改 src 忘重建即拒跑)
     globalSetup: ['./tests/knowledge-gate-setup.ts', './tests/lib-staleness-setup.ts'],
+    // 失败用例归档 reporter(0.1.6 C5,L5 条件收项):默认 reporter 保留,归档 reporter 只在
+    // 有失败的轮次追加 .qa/test-failures.jsonl(绿轮零开销零文件)——flake 事后可归因
+    reporters: ['default', './tests/failure-archive-reporter.ts'],
     env: {
       DSH_OPENCLI_STATE: join(tmpdir(), `dsh-opencli-test-state-${process.pid}.json`),
       DSH_OPENCLI_REPORTS_DIR: join(tmpdir(), `dsh-opencli-test-reports-${process.pid}`),

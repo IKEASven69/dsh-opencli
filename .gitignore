@@ -6,3 +6,5 @@ tmp-client
 .research-tmp/
 package/
 .qa/token-*
+.qa/test-failures.jsonl*
+dsh-opencli-release/

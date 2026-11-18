@@ -23,7 +23,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type {
   AdapterDetailRequest, AdapterDetailResult, AdapterDisableRequest, AdapterDisableResult,
-  AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, DaemonStartResult, EvidenceGetResult,
+  AdaptersResult, ApprovalSetRequest, ApprovalSetResult, AuditListResult, CoexistenceInfo, DaemonStartResult, EvidenceGetResult,
   EventsGetResult, IngestEvent, LoginCheckItem, LoginCheckResult, LogsTailResult, OpencliStatus, RunInboxEntry, RunInboxListResult, SettingsResult, TraceLine, TraceListResult,
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, extractJsonObject, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
@@ -374,6 +374,11 @@ export class OpencliService extends TypertRemoteService {
      *  取值与语义见 runinbox.ts VISIBILITY_VALUES;归档面判定 visibilityArchivesRun,
      *  通知面优先级见 runSiteCommand 外送门注释。 */
     visibility?: string
+    /** 补跑挂债(0.1.6 C1):环境类跳过(扩展未连/daemon 未运行)或登录墙跳过后挂单槽债,
+     *  当日环境恢复后由 tick 的 catchupCheck 自动补跑一次。单槽有界(成功/换日/命令级失败即清),
+     *  attempts 防窗口/间隔被配坏;不设任务级开关——补跑是「完成当日既定意图」而非新行为,
+     *  全局 env DSH_OPENCLI_CATCHUP_DISABLE 一刀切。 */
+    pendingCatchup?: { forDay: string; skippedAt: string; reason: 'environment' | 'auth-wall'; attempts: number; lastAttemptAt?: string }
   }> = []
   private runHistory: Record<string, RunHistoryRow[]> = {}
   /** 快照根目录(DSH_OPENCLI_SNAPSHOTS_DIR 可覆盖,测试隔离用;与 traceDir 同款约定)。 */
@@ -1508,7 +1513,7 @@ export class OpencliService extends TypertRemoteService {
   // ── RPC(面板) ────────────────────────────────────────────
 
   @Remote('status')
-  async status(): Promise<OpencliStatus & { conflicts?: string[] }> {
+  async status(): Promise<OpencliStatus & { conflicts?: string[]; coexist?: CoexistenceInfo }> {
     const version = await this.runOpencli(['--version'])
     if (version.exitCode !== 0) {
       return {
@@ -1524,13 +1529,15 @@ export class OpencliService extends TypertRemoteService {
     const list = cached
     // opencli 某些版本把 --version 写到 stderr:两流合并取首个非空行
     let vraw = (version.stdout.trim() || version.stderr.trim()).split('\n')[0]?.trim() ?? ''
+    // CLI 共存(0.1.6 C2,#2761):major 不一致或近 7 天有翻转才携带(零噪音)
+    const coexist = this.cliCoexistence(vraw, daemon?.version)
         return {
       ok: true,
       bin: this.bin,
       version: vraw || null,
       daemon: daemon ?? null,
       adapterSites: list?.length ?? null,
-      // 重名让位名单:面板/agent 据此知道这些命令不归本插件(空省略,不占字段)
+      ...(coexist !== null ? { coexist } : {}),
       ...(this.toolConflicts.length > 0 ? { conflicts: [...this.toolConflicts] } : {}),
     }
   }
@@ -4021,6 +4028,60 @@ export class OpencliService extends TypertRemoteService {
     return parseDaemonStatus(r.stdout + '\n' + r.stderr)
   }
 
+  /**
+   * CLI 共存判定(0.1.6 C2,#2761 现实化):本机同时装着 OpenCLIApp 内置 CLI(1.8.x)与
+   * 全局 CLI(2.0.x)时互抢 daemon,实证=插件侧 CLI major ≠ daemon major,辅证=daemon-flip
+   * 事件频率(事件史 7 天窗口)。仅当「major 不一致」或「7 天内有翻转」时返回信息(否则 null,
+   * status RPC 省键——零噪音);只检测与呈现,钉定/退出是用户的显式决策,插件绝不自动动作。
+   */
+  private cliCoexistence(cliVersionRaw: string, daemonVersionRaw: string | undefined): CoexistenceInfo | null {
+    const majorOf = (v: string): number | null => {
+      const m = /\d+/.exec(v)
+      return m !== null ? Number(m[0]) : null
+    }
+    const cliMajor = majorOf(cliVersionRaw)
+    const daemonMajor = daemonVersionRaw !== undefined ? majorOf(daemonVersionRaw) : null
+    const flips7d = this.countDaemonFlips(7)
+    const coexist = cliMajor !== null && daemonMajor !== null && cliMajor !== daemonMajor
+    if (!coexist && flips7d === 0) return null
+    return {
+      // major 取不到如实 null(daemon 未运行/版本缺失)——0.1.6 复核:哨兵 -1 会经面板
+      // 渲染成「v-1.x」伪造版本数字,违背「数字口径不虚报」;null 由面板走仅翻转频度文案
+      cliMajor,
+      daemonMajor,
+      flips7d,
+      binPath: this.bin,
+    }
+  }
+
+  /** flip 计数短 TTL 缓存(0.1.6 复核 low):status 是面板心跳,事件档全量扫描(至多 ~10MB
+   *  同步 IO)不能每次刷新都付;60s 内复用,flips 统计是诊断信号,秒级陈旧无碍。 */
+  private flipCountCache: { at: number; count: number } | undefined
+
+  /** 事件史 daemon-flip 计数(事件文件与 eventsGet 同款读取:.1 旧档在前,脏行跳过)。 */
+  private countDaemonFlips(days: number): number {
+    if (this.flipCountCache !== undefined && Date.now() - this.flipCountCache.at < 60_000) return this.flipCountCache.count
+    const cutoff = Date.now() - days * 86_400_000
+    let count = 0
+    for (const file of [`${this.eventsFile}.1`, this.eventsFile]) {
+      let text = ''
+      try { text = readFileSync(file, 'utf8') } catch { continue /* 无档/无权限:跳过 */ }
+      for (const line of text.split('\n')) {
+        if (line.trim().length === 0) continue
+        try {
+          const v = JSON.parse(line) as unknown
+          if (v === null || typeof v !== 'object') continue
+          const e = v as { kind?: unknown; at?: unknown }
+          if (e.kind !== 'daemon-flip' || typeof e.at !== 'string') continue
+          const t = new Date(e.at).getTime()
+          if (Number.isFinite(t) && t >= cutoff) count += 1
+        } catch { /* 脏行跳过 */ }
+      }
+    }
+    this.flipCountCache = { at: Date.now(), count }
+    return count
+  }
+
   private async loadState(): Promise<void> {
     try {
       const text = await readFile(this.statePath, 'utf8')
@@ -4028,6 +4089,21 @@ export class OpencliService extends TypertRemoteService {
       if (parsed.approval === 'on' || parsed.approval === 'off') this.state.approval = parsed.approval
       if (Array.isArray(parsed.disabled)) this.state.disabled = parsed.disabled.filter((s) => typeof s === 'string')
       if (Array.isArray(parsed.schedules)) this.schedules = parsed.schedules
+      // pendingCatchup 形状收窄(0.1.6 复核):用户可手改 state.json,坏形状(attempts 成串会
+      // 让 attempts += 1 变字符串拼接)整字段丢弃——与 inboxFlags/audit 同款容错口径
+      for (const s of this.schedules) {
+        const p = s.pendingCatchup as unknown
+        if (p === undefined) continue
+        if (p === null || typeof p !== 'object'
+          || typeof (p as { forDay?: unknown }).forDay !== 'string'
+          || typeof (p as { skippedAt?: unknown }).skippedAt !== 'string'
+          || ((p as { reason?: unknown }).reason !== 'environment' && (p as { reason?: unknown }).reason !== 'auth-wall')
+          || !Number.isInteger((p as { attempts?: unknown }).attempts)
+          || (p as { attempts?: number }).attempts! < 0
+          || ((p as { lastAttemptAt?: unknown }).lastAttemptAt !== undefined && typeof (p as { lastAttemptAt?: unknown }).lastAttemptAt !== 'string')) {
+          delete s.pendingCatchup
+        }
+      }
       if (parsed.runHistory !== undefined && typeof parsed.runHistory === 'object') this.runHistory = parsed.runHistory as typeof this.runHistory
       // 自愈:清除旧版寄生在 runHistory 的调度 marker(键含 ':',曾累积 5055 个)
       for (const k of Object.keys(this.runHistory)) {
@@ -4195,11 +4271,72 @@ export class OpencliService extends TypertRemoteService {
         this.addSchedMarker(histKey)
         void this.runSiteCommand(sch.site, sch.id)
       }
+      // 补跑判定(0.1.6 C1):环境类跳过挂当日债,环境恢复后自动补跑一次(有界);
+      // 跟随 tick 不新增 timer(与 dailyDigestCheck 同款纪律),单飞闸防与常规 tick 挤 governor
+      void this.catchupCheck(now)
       // 日结检查(0.1.4 候选 2):时点跟随调度 tick,不新增 timer;本地日期翻转时翻账页并结算
       // 早报一次(结算时点可配 DSH_OPENCLI_DIGEST_AT,0.1.5 C2 ①)
       void this.dailyDigestCheck()
     }, 15_000)
     try { this.schedTimer.unref?.() } catch { /* ignore */ }
+  }
+
+  /** 补跑单飞闸:一轮 tick 至多发起一个补跑,且补跑进行中不重复进入(catchupBusy)。 */
+  private catchupBusy = false
+
+  /**
+   * 补跑判定(0.1.6 C1,plan §一):遍历当日有挂债的启用任务,窗口/间隔/次数/熔断全过才发起。
+   * 全部条件在发起前判定;债的续/清由 runSiteCommand 按结果处理(catchup 轮:再跳过=续债
+   * attempts++,成功=清,命令级失败=清不循环,熔断短路=记 lastAttemptAt 走间隔)。
+   * 本轮至多补一个任务(单飞),漏下的下轮 tick 继续——15s tick 足够密,不需要 fan-out。
+   */
+  private async catchupCheck(now: Date): Promise<void> {
+    if (process.env.DSH_OPENCLI_CATCHUP_DISABLE === '1') return
+    if (this.catchupBusy) return
+    // 熔断窗活跃(任一未过期签名)= 系统面故障期:补跑必然失败还可能二次开窗,整体不发起
+    const nowMs = Date.now()
+    for (const at of this.circuitOpen.values()) {
+      if (nowMs - at < this.circuitWindowMs()) return
+    }
+    const today = localDateKey(now)
+    const windowMin = this.numEnvMin('DSH_OPENCLI_CATCHUP_WINDOW_MIN', 240)
+    const everyMin = this.numEnvMin('DSH_OPENCLI_CATCHUP_EVERY_MIN', 30)
+    let cleaned = false // 清债落盘(0.1.6 复核):delete 是内存操作,无 run 时也得让 state 同步
+    for (const sch of this.schedules) {
+      if (!sch.enabled || sch.pendingCatchup === undefined) continue
+      // 换日清债:forDay 不是今天=过期债(昨日遗留),无条件清除——判定轮不只服务当日,
+      // 也负责收走过期债,否则陈年挂债永留 state
+      if (sch.pendingCatchup.forDay !== today) { delete sch.pendingCatchup; cleaned = true; continue }
+      const p = sch.pendingCatchup
+      // 窗口/间隔非法配置(≤0)如实拒绝补跑并清债(配置说不要,就真不要)
+      if (windowMin <= 0 || everyMin <= 0) { delete sch.pendingCatchup; cleaned = true; continue }
+      const skippedMs = nowMs - new Date(p.skippedAt).getTime()
+      if (!(Number.isFinite(skippedMs) && skippedMs >= 0) || skippedMs > windowMin * 60_000) { delete sch.pendingCatchup; cleaned = true; continue }
+      if (p.attempts >= 16) { delete sch.pendingCatchup; cleaned = true; continue }
+      if (p.lastAttemptAt !== undefined) {
+        const lastMs = nowMs - new Date(p.lastAttemptAt).getTime()
+        if (Number.isFinite(lastMs) && lastMs >= 0 && lastMs < everyMin * 60_000) continue
+      }
+      // 到期优先:cron 恰在本分钟到期的任务走正常分支(marker 消费),本轮不补
+      if (this.cronMatches(sch.cron, now)) continue
+      this.catchupBusy = true
+      try {
+        await this.runSiteCommand(sch.site, sch.id, { manual: true, catchup: true })
+      } finally {
+        this.catchupBusy = false
+      }
+      return // 单飞:漏下的任务下轮 tick 继续
+    }
+    // 本轮只清债未补跑:清债也落盘(runSiteCommand 不经过时 state 与内存一致)
+    if (cleaned) await this.saveState()
+  }
+
+  /** 数值 env 解析(SELFHEAL_BACKOFF_MS 同款口径):非法/负值如实回落默认,不猜。 */
+  private numEnvMin(name: string, fallback: number): number {
+    const raw = process.env[name]
+    if (raw === undefined || raw.length === 0) return fallback
+    const n = Number(raw)
+    return Number.isFinite(n) && n >= 0 ? n : fallback
   }
 
   /** 上次看到的 daemon 版本(版本翻转检测:CLI 2.0.x 与 App 内置 1.8.6 互杀,#2761 实测一天 3 翻)。 */
@@ -4655,7 +4792,7 @@ export class OpencliService extends TypertRemoteService {
     return { ok: true, ...(notes.length > 0 ? { note: notes.join(';') } : {}) }
   }
 
-  private async runSiteCommand(siteCmd: string, id: string, opts?: { manual?: boolean }): Promise<void> {
+  private async runSiteCommand(siteCmd: string, id: string, opts?: { manual?: boolean; catchup?: boolean }): Promise<void> {
     const sch = this.schedules.find((s) => s.id === id)
     // 健康预检:daemon 探测/自动拉起/版本翻转/扩展断连四合一;
     // fail-open 纪律:预检自身异常 → 放行(预检故障不能变成任务死因)
@@ -4664,11 +4801,23 @@ export class OpencliService extends TypertRemoteService {
       const hc = await this.taskHealthCheck(id)
         if (!hc.ok) {
           const hist0 = this.runHistory[id] ?? []
+        // 补跑挂债(0.1.6 C1):cron 轮跳过=挂当日债(环境恢复后 catchupCheck 自动补跑);
+        // 补跑轮再跳过=续债(attempts++/lastAttemptAt,间隔与窗口在 catchupCheck 判);
+        // manual 手动轮不挂债(用户当场在场,看得见报错,不需要隐形重试)
+        const today = localDateKey(new Date())
+        const isCatchup = opts?.catchup === true
+        if (isCatchup && sch?.pendingCatchup?.forDay === today) {
+          sch.pendingCatchup.attempts += 1
+          sch.pendingCatchup.lastAttemptAt = new Date().toISOString()
+        } else if (opts?.manual !== true && sch !== undefined && sch.pendingCatchup?.forDay !== today) {
+          sch.pendingCatchup = { forDay: today, skippedAt: new Date().toISOString(), reason: 'environment', attempts: 0 }
+        }
+        const skipSuffix = isCatchup ? `(补跑尝试 ${sch?.pendingCatchup?.attempts ?? 0})` : ''
         // skip 行带 typed 标记(0.1.4 候选 5):运行级收件箱状态判定认 skip 字段,不解析 summary 文本
-        hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}`, skip: true })
+        hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}${skipSuffix}`, skip: true })
         this.runHistory[id] = hist0.slice(0, 5)
         await this.saveState()
-        this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:${hc.note ?? ''}`)
+        this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:${hc.note ?? ''}${skipSuffix}`)
         // 日账入账(0.1.4 候选 2;0.1.5 C2 ②分账):跳过如实进早报但单独计数不冒充失败
         // (跳过≠失败,⏸ 行呈现),skip 标记供分账
         this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${hc.note ?? '健康预检未过'}`, skip: true })
@@ -4698,6 +4847,9 @@ export class OpencliService extends TypertRemoteService {
       await this.saveState()
       // 日账入账(0.1.4 候选 2):canary 任务同进早报(它的失败=自监控失败,不该在日报里隐身)
       this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: r.ok, summary: hist[0]?.summary ?? '' })
+      // 补跑清债(0.1.6 C1,canary 同规):canary 补跑成功=当日债已偿;失败不清(canary 自身
+      // 失败不代表环境恢复失败,窗口有界,出结果后下个间隔可再试)
+      if (r.ok && sch?.pendingCatchup?.forDay === localDateKey(new Date())) delete sch.pendingCatchup
       return
     }
     const cmdLine = norm.length > 0 ? norm : siteCmd
@@ -4729,13 +4881,24 @@ export class OpencliService extends TypertRemoteService {
             const detail = item.detail !== null && item.detail.length > 0 ? `:${item.detail}` : ''
             const note = `${sSite} 未登录(AUTH 预检未过${detail})`
             const hist0 = this.runHistory[id] ?? []
+            // 补跑挂债(0.1.6 C1):登录墙同 environment 类挂当日债——用户登录后当日自动补跑;
+            // 续债/免挂语义与健康预检跳过分支一致(manual 不挂,补跑轮 attempts++)
+            const isCatchupAuth = opts?.catchup === true
+            const today = localDateKey(new Date())
+            if (isCatchupAuth && sch.pendingCatchup?.forDay === today) {
+              sch.pendingCatchup.attempts += 1
+              sch.pendingCatchup.lastAttemptAt = new Date().toISOString()
+            } else if (opts?.manual !== true && sch.pendingCatchup?.forDay !== today) {
+              sch.pendingCatchup = { forDay: today, skippedAt: new Date().toISOString(), reason: 'auth-wall', attempts: 0 }
+            }
+            const skipSuffixAuth = isCatchupAuth ? `(补跑尝试 ${sch.pendingCatchup?.attempts ?? 0})` : ''
             // skip 行带 typed 标记(候选 5 ①同上);回执 stop_reason 落 null(语义修,0.1.3
             // 复核 low ①):本 tick 命令从未执行,stop_reason 未知——coverageStopReason
             // 「未知恒 null」纪律对跳过行同适用,硬编码 'error' 是虚报
-            hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${note}(先 site ${sSite} login;任务保留,下 tick 再检)`, skip: true, receipt: { auth_state: 'auth_wall', bytes: 0, stop_reason: null, remaining_cursor: null } })
+            hist0.unshift({ at: new Date().toISOString(), ok: false, summary: `⏸ 跳过:${note}${skipSuffixAuth}(先 site ${sSite} login;任务保留,下 tick 再检)`, skip: true, receipt: { auth_state: 'auth_wall', bytes: 0, stop_reason: null, remaining_cursor: null } })
             this.runHistory[id] = hist0.slice(0, 5)
             await this.saveState()
-            this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:登录态预检未过——${note}`)
+            this.pushIngestEvent('schedule-skipped', `⏸ ${siteCmd} 本 tick 跳过:登录态预检未过——${note}${skipSuffixAuth}`)
             // 日账入账(0.1.4 候选 2;0.1.5 C2 ②分账):同健康预检跳过,如实进早报不冒充失败
             this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: false, summary: hist0[0]?.summary ?? `⏸ 跳过:${note}`, skip: true })
             this.failStreaks.keepAlive(id, new Date()) // 连败账跳过日链保活(复核③,同上)
@@ -4797,7 +4960,9 @@ ${r.stderr}`
       // 回执卫生:history 摘要是输出前 120 字,登录态页面链接的 ?token=/?code= 会原样进
       // state.json 与面板 tooltip——落 history 前过 URL 参数脱敏(通知出口另有全量 scrub)
       const sum = scrubUrlParams(attempts > 1 ? `#${attempt}/${attempts} ${lastSummary}` : lastSummary)
-      hist.unshift({ at: new Date().toISOString(), ok: lastOk, summary: healthNote !== undefined ? `【${healthNote}】${sum}` : sum })
+      // 补跑标记(0.1.6 C1):history/日账/早报同一份文本可见 🔄 前缀——恢复行为不隐身
+      const sumShown = opts?.catchup === true ? `🔄 ${sum}` : sum
+      hist.unshift({ at: new Date().toISOString(), ok: lastOk, summary: healthNote !== undefined ? `【${healthNote}】${sumShown}` : sumShown })
       if (lastOk) break
       // 熔断检查(§七#4,置于自愈/挑战/退避之前:窗已开=系统性故障且修复已试过,不再烧链):
       // 同签名失败跨任务去重——首个任务烧完链开窗,窗内其余任务首败即短路,单行诚实落史
@@ -5037,10 +5202,29 @@ ${r.stderr}`
       ...(watchHits.length > 0 ? { watchHits } : {}),
       ...(diffText.length > 0 ? { diff: diffText } : {}),
       ...(receipt.empty === true ? { empty: true } : {}),
+      ...(opts?.catchup === true ? { catchup: true } : {}),
       ...(autoArchived ? { archived: true, autoArchived: true } : {}),
       ...(visArchived ? { archived: true } : {}),
       circuit: circuitSkipped || circuitOpened,
     })
+    // 补跑清债/续债(0.1.6 C1):
+    //  - 成功(任何 run,含 manual)= 当日债已偿 → 清;
+    //  - 补跑命令级失败(非熔断短路)= 试过不循环(失败照常入账,不静默)→ 清;
+    //  - 补跑遭熔断短路(系统面故障期,非站点本意失败)= 债仍在,记 lastAttemptAt 走间隔
+    //    (熔断窗内 catchupCheck 整体不发起,出窗后按间隔继续);
+    //  - 普通 run 失败不动债(窗口有界,环境恢复后仍可补)。
+    if (sch?.pendingCatchup !== undefined && sch.pendingCatchup.forDay === localDateKey(new Date())) {
+      if (lastOk) delete sch.pendingCatchup
+      else if (opts?.catchup === true) {
+        if (circuitSkipped) sch.pendingCatchup.lastAttemptAt = new Date().toISOString()
+        else delete sch.pendingCatchup
+      }
+    }
+    // 补跑结果事件(0.1.6 C1):只在补跑成功时发——失败已由 schedule-failed 覆盖,双发是噪音;
+    // 面板时间线「这条是补跑」可见,与历史行 🔄 前缀同源
+    if (lastOk && opts?.catchup === true) {
+      this.pushIngestEvent('schedule-catchup', `🔄 ${siteCmd} 补跑成功(当日跳过后的恢复采集;账目照常入账)`)
+    }
     await this.saveState()
     // 任务 E:结果外送通知——重试链走完、状态落盘后一次群发。放在 saveState 之后:
     // 通知发送(webhook/email 各有 10s 收端超时)不挡状态持久化;await 保证测试可确定性断言。

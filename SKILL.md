@@ -47,6 +47,8 @@ ctl status                   # 插件版本/任务数/通道数
 - `--backoff-ms`:风控退避起点(默认 15s,下限 120s);`--keep`:快照留存份数(5-500,默认 50);
 - `--visibility`:可见性档位——`always-visible`(默认,每次 run 现身收件箱)/`archive-on-success`(成功 run 自动归档,失败照常现身)/`notify-on-failure`(仅失败推送,命中/变化也不推)/`quiet-unless-actionable`(无失败/命中/变化时自动归档不打扰);归档无损,早报「已归档」计数可见。
 
+补跑(catch-up,默认开启):定时任务因浏览器扩展未连接/daemon 未运行/登录墙被 ⏸ 跳过时挂当日债,当日环境恢复后自动补跑一次(有界:距跳过 4h 内、每 30 分钟一试、至多 16 次、熔断窗内静默);补跑行带 🔄 前缀并发 schedule-catchup 事件,成功/命令级失败即清债,换日作废。`DSH_OPENCLI_CATCHUP_DISABLE=1` 全局关;`DSH_OPENCLI_CATCHUP_WINDOW_MIN`(默认 240)与 `DSH_OPENCLI_CATCHUP_EVERY_MIN`(默认 30)可调,任一配 0 即整体禁用并清债。
+
 cron 五段(分 时 日 月 周)。超时用 `--timeout <秒>` 调;若报"插件消费者未运行",提示用户打开 dsh 面板(插件随面板进程运行)。
 
 安全提醒:ctl 只接受白名单结构化意图(建删任务/配通道/出报告/状态),**不能**执行任意代码;写命令类操作(发帖/删评)不在 ctl 面内——那些必须经插件工具的审批门,人工确认才执行。
