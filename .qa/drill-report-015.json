@@ -1,0 +1,147 @@
+{
+  "tool": "fallback-drill",
+  "at": "2026-11-18T01:35:16.108Z",
+  "siteCmd": "site juejin hot",
+  "sSite": "juejin",
+  "sCmd": "hot",
+  "session": "drift-drill-1794965701414",
+  "cli": {
+    "desc": "[本地路径]",
+    "major": 2
+  },
+  "adapter": {
+    "domain": "api.juejin.cn",
+    "access": "read",
+    "source": "manifest",
+    "speculative": false
+  },
+  "baseline": {
+    "exitCode": 0,
+    "itemCount": 20,
+    "structured": true
+  },
+  "scenario": {
+    "mode": "shrink",
+    "samples": [
+      {
+        "items": 20,
+        "structured": true
+      },
+      {
+        "items": 10,
+        "structured": true
+      },
+      {
+        "items": 5,
+        "structured": true
+      },
+      {
+        "items": 2,
+        "structured": true
+      }
+    ],
+    "trips": true,
+    "negativeControls": {
+      "平稳序列": false,
+      "回升序列": false,
+      "从未结构化": false
+    }
+  },
+  "fallback": {
+    "executed": true,
+    "ok": true,
+    "note": "未执行",
+    "open": {
+      "exitCode": 0,
+      "head": "Extension update available: v1.0.26 → v1.0.27 Download: https://github.com/jackwener/opencli/releases"
+    },
+    "state": {
+      "exitCode": 0,
+      "bytes": 735,
+      "head": "{\"ok\":true,\"data\":{\"url\":\"https://api.juejin.cn/\",\"snapshot\":\"url: https://api.juejin.cn/\\ntitle: \\nviewport: 1258x727\\n---\\n<body />\\n <pre>{ \\\"applinks\\\": { \\\"apps\\\": [], \\\"details\\\": [ { \\\"appID\\\":"
+    },
+    "close": {
+      "exitCode": 0,
+      "head": "Extension update available: v1.0.26 → v1.0.27 Download: https://github.com/jackwener/opencli/releases"
+    },
+    "stdoutHead": "{\"ok\":true,\"data\":{\"url\":\"https://api.juejin.cn/\",\"snapshot\":\"url: https://api.juejin.cn/\\ntitle: \\nviewport: 1258x727\\n---\\n<body />\\n <pre>{ \\\"applinks\\\": { \\\"apps\\\": [], \\\"details\\\": [ { \\\"appID\\\": \\\"HD29GU94HU.com.Ming-Zhe.circle-ios\\\", \\\"paths\\\": [\\\"/app/*\\\",\\\"/qq_conn/1…</pre>\\n <kimi-web-extension />\\n |shadow|\\n <html />\\n <body />\\n <div id=kimi-web-extension />\\n [1]<img alt=kimi src=dat",
+    "bytes": 735
+  },
+  "receipt": {
+    "degraded": true,
+    "fallback": {
+      "via": "browser open + state",
+      "domain": "api.juejin.cn",
+      "bytes": 735,
+      "stdout": "{\"ok\":true,\"data\":{\"url\":\"https://api.juejin.cn/\",\"snapshot\":\"url: https://api.juejin.cn/\\ntitle: \\nviewport: 1258x727\\n---\\n<body />\\n <pre>{ \\\"applinks\\\": { \\\"apps\\\": [], \\\"details\\\": [ { \\\"appID\\\": \\\"HD29GU94HU.com.Ming-Zhe.circle-ios\\\", \\\"paths\\\": [\\\"/app/*\\\",\\\"/qq_conn/1…</pre>\\n <kimi-web-extension />\\n |shadow|\\n <html />\\n <body />\\n <div id=kimi-web-extension />\\n [1]<img alt=kimi src=dat"
+    }
+  },
+  "events": [
+    {
+      "kind": "adapter-drift",
+      "text": "⚠ site juejin hot 疑似适配器坏/灰度漂移:连续 3 次结果结构突变(条目骤降/结构翻转)——自动接 browser_* 原语兜底采集"
+    },
+    {
+      "kind": "adapter-drift-fallback",
+      "text": "🛟 site juejin hot 漂移兜底成功:browser_* 原语采集了 api.juejin.cn 首页页面状态(degraded,已并入本次快照);适配器恢复前数据为近似口径"
+    }
+  ],
+  "observedLive": {
+    "file": "[本地路径]",
+    "adapter-drift": 0,
+    "adapter-drift-fallback": 0
+  },
+  "checks": [
+    {
+      "name": "CLI 可用(--version)",
+      "pass": true,
+      "detail": "0"
+    },
+    {
+      "name": "适配器清单可取(list --format json)",
+      "pass": true,
+      "detail": "1292 条命令"
+    },
+    {
+      "name": "命令在册且为只读",
+      "pass": true,
+      "detail": "access=read(只读纪律:演练只采不写,同 canary 只读门)"
+    },
+    {
+      "name": "站点域名可解析(兜底路由前提:adapterList/manifest/推测三级链)",
+      "pass": true,
+      "detail": "api.juejin.cn · 源=manifest"
+    },
+    {
+      "name": "基线采集成功",
+      "pass": true,
+      "detail": "4289B"
+    },
+    {
+      "name": "漂移场景可构造(需结构化基线)",
+      "pass": true,
+      "detail": "shrink 序列:[20,10,5,2]"
+    },
+    {
+      "name": "判定触发(detectDrift=true)",
+      "pass": true,
+      "detail": "序列 [20,10,5,2] → true"
+    },
+    {
+      "name": "判定鉴别(阴性对照全不触发)",
+      "pass": true,
+      "detail": "{\"平稳序列\":false,\"回升序列\":false,\"从未结构化\":false}"
+    },
+    {
+      "name": "兜底采集成功(open+state 同判据)",
+      "pass": true,
+      "detail": "735B 页面状态"
+    }
+  ],
+  "boundaries": [
+    "driftHistory 为面板进程内存态,外部不可注入——演练=触发判定(构造序列+纯函数复刻)+兜底采集(真实 browser_* 序列)两段,不经 schedule tick 全链(tick 内接线由单元测试覆盖)",
+    "事件台账零写入:events 数组是演练文本,不追加 [home路径]",
+    "会话名 drift-drill-<ts> 与生产兜底 drift-<ts> 可区分;多账号边界与生产一致(不走 profile)"
+  ],
+  "verdict": "FALLBACK-DRILL PASS (9/9)"
+}
