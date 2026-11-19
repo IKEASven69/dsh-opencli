@@ -28,7 +28,7 @@ import type {
 } from './types.ts'
 import { approvalDecision, buildAdapterDirectory, commandAccess, extractJsonObject, normalizeAdapterList, parseDaemonStatus, sitesWithWhoami } from './parsers.ts'
 import { SystemOne, noulYes } from './systemone.ts'
-import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, SITE_HEALTH, type RawEntry } from './knowledge.ts'
+import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, healthOf, PITFALLS, SITE_HEALTH, SITE_HEALTH_STATUS_LABELS, type RawEntry } from './knowledge.ts'
 import { buildReport, type ReportSource } from './reports.ts'
 import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, renderTransportBenchmark, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
@@ -379,6 +379,12 @@ export class OpencliService extends TypertRemoteService {
      *  attempts 防窗口/间隔被配坏;不设任务级开关——补跑是「完成当日既定意图」而非新行为,
      *  全局 env DSH_OPENCLI_CATCHUP_DISABLE 一刀切。 */
     pendingCatchup?: { forDay: string; skippedAt: string; reason: 'environment' | 'auth-wall'; attempts: number; lastAttemptAt?: string }
+    /** 任务健康面(0.1.7 C1):真实 run(跳过不计)的成功/失败累计与统计起点——面板成功率 chip
+     *  的数据源;typed 字段而非解析 history 文本。 */
+    stats?: { ok: number; fail: number; since: string }
+    /** 建任务时的站点健康快照(0.1.7 C1):knowledge healthOf(degraded/unsupported)+ pitfalls
+     *  条数;静态知识,随插件更新刷新(重新 add 同任务即更新)。面板 ⚠ chip 的 tooltip 来源。 */
+    healthNote?: string
   }> = []
   private runHistory: Record<string, RunHistoryRow[]> = {}
   /** 快照根目录(DSH_OPENCLI_SNAPSHOTS_DIR 可覆盖,测试隔离用;与 traceDir 同款约定)。 */
@@ -1729,7 +1735,7 @@ export class OpencliService extends TypertRemoteService {
   }
 
   @Remote('schedule-add')
-  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string; visibility?: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+  async scheduleAdd(request: { site: string; cron: string; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; jitter?: boolean; preflight?: boolean; keep?: number; backoffMs?: number; profile?: string; visibility?: string }): Promise<{ ok: boolean; id?: string; error?: string; warning?: string }> {
     if (request === undefined) request = {} as never
     if (typeof request.site !== 'string' || request.site.trim().length === 0) return { ok: false, error: 'site 不能为空' }
     if (typeof request.cron !== 'string' || request.cron.trim().length === 0) return { ok: false, error: 'cron 不能为空' }
@@ -1821,7 +1827,11 @@ export class OpencliService extends TypertRemoteService {
       else if (profile !== undefined && dup.profile !== profile) { dup.profile = profile; await this.saveState() }
       if (visibilityClear && dup.visibility !== undefined) { delete dup.visibility; await this.saveState() }
       else if (visibility !== undefined && dup.visibility !== visibility) { dup.visibility = visibility; await this.saveState() }
-      return { ok: true, id: dup.id }
+      // 任务健康面(0.1.7 C1):复用既有任务时也刷新健康快照(knowledge 随插件更新,快照会陈旧)
+      const dupNote = this.siteHealthNote(dup.site)
+      if (dupNote !== dup.healthNote) { if (dupNote === undefined) delete dup.healthNote; else dup.healthNote = dupNote; await this.saveState() }
+      const dupWarning = dupNote !== undefined ? `${dup.site}:${dupNote}` : undefined
+      return { ok: true, id: dup.id, ...(dupWarning !== undefined ? { warning: dupWarning } : {}) }
     }
     const id = String(Date.now())
     const entry: typeof this.schedules[number] = { id, site, cron, createdAt: new Date().toISOString(), enabled: true }
@@ -1838,10 +1848,31 @@ export class OpencliService extends TypertRemoteService {
     if (backoffMs !== undefined) entry.backoffMs = backoffMs
     if (profile !== undefined) entry.profile = profile
     if (visibility !== undefined) entry.visibility = visibility
+    // 任务健康面(0.1.7 C1):建任务即查站点健康快照(degraded/unsupported + pitfalls 条数),
+    // 返回 warning 让调用方(面板 toast/ctl stdout/agent 结果)当场知道「这站有已知坑」
+    const healthNote = this.siteHealthNote(entry.site)
+    if (healthNote !== undefined) entry.healthNote = healthNote
     this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
-    return { ok: true, id }
+    return { ok: true, id, ...(healthNote !== undefined ? { warning: `${entry.site}:${healthNote}` } : {}) }
+  }
+
+  /**
+   * 站点健康快照(0.1.7 C1):knowledge healthOf(degraded/unsupported)+ pitfalls 条数;
+   * 静态知识随插件更新,重新 add 同任务即刷新快照。无已知问题返回 undefined(省键)。
+   */
+  private siteHealthNote(siteCmd: string): string | undefined {
+    const site = siteCmd.replace(/^\s*site\s+/i, '').trim().split(/\s+/)[0] ?? ''
+    if (site.length === 0) return undefined
+    const parts: string[] = []
+    const health = healthOf(site)
+    if (health !== null && (health.status === 'degraded' || health.status === 'unsupported')) {
+      parts.push(`上游状态 ${SITE_HEALTH_STATUS_LABELS[health.status] ?? health.status}${health.issues.length > 0 ? `(${health.issues[0]})` : ''}`)
+    }
+    const pits = PITFALLS[site]
+    if (Array.isArray(pits) && pits.length > 0) parts.push(`${pits.length} 条已知坑(面板知识卡可查)`)
+    return parts.length > 0 ? parts.join(';') : undefined
   }
 
   @Remote('schedule-list')
@@ -4103,6 +4134,15 @@ export class OpencliService extends TypertRemoteService {
           || ((p as { lastAttemptAt?: unknown }).lastAttemptAt !== undefined && typeof (p as { lastAttemptAt?: unknown }).lastAttemptAt !== 'string')) {
           delete s.pendingCatchup
         }
+        // stats 形状收窄(0.1.7 复核):手改 state 写坏 stats 会让 ok/fail 计数变 NaN、成功率
+        // chip 静默消失——整数校验不过整字段丢弃,与 pendingCatchup 同款容错口径
+        const st = s.stats as unknown
+        if (st !== undefined && (st === null || typeof st !== 'object'
+          || !Number.isInteger((st as { ok?: unknown }).ok) || ((st as { ok?: number }).ok ?? 0) < 0
+          || !Number.isInteger((st as { fail?: unknown }).fail) || ((st as { fail?: number }).fail ?? 0) < 0
+          || typeof (st as { since?: unknown }).since !== 'string')) {
+          delete s.stats
+        }
       }
       if (parsed.runHistory !== undefined && typeof parsed.runHistory === 'object') this.runHistory = parsed.runHistory as typeof this.runHistory
       // 自愈:清除旧版寄生在 runHistory 的调度 marker(键含 ':',曾累积 5055 个)
@@ -4844,6 +4884,12 @@ export class OpencliService extends TypertRemoteService {
       // 链接/本机路径,落 state.json 与日账(→ 早报)前同过 URL 参数脱敏,不留裸入口
       hist.unshift({ at: new Date().toISOString(), ok: r.ok, summary: r.ok ? `canary:${r.passed}/${r.total}${r.newFailures.length > 0 ? ' 新失败:' + r.newFailures.slice(0, 3).join(',') : ''}` : `canary 失败:${scrubUrlParams(r.error ?? '未知')}` })
       this.runHistory[id] = hist.slice(0, 5)
+      // canary run 同计任务健康统计(0.1.7 C1)
+      if (sch !== undefined) {
+        if (sch.stats === undefined) sch.stats = { ok: 0, fail: 0, since: localDateKey(new Date()) }
+        if (r.ok) sch.stats.ok += 1
+        else sch.stats.fail += 1
+      }
       await this.saveState()
       // 日账入账(0.1.4 候选 2):canary 任务同进早报(它的失败=自监控失败,不该在日报里隐身)
       this.dayLedger.record(id, siteCmd, sch?.source, { at: new Date().toISOString(), ok: r.ok, summary: hist[0]?.summary ?? '' })
@@ -5207,6 +5253,13 @@ ${r.stderr}`
       ...(visArchived ? { archived: true } : {}),
       circuit: circuitSkipped || circuitOpened,
     })
+    // 任务健康面(0.1.7 C1):真实 run(跳过在预检层提前 return,不进这里)计入成功/失败累计——
+    // 面板成功率 chip 的数据源;since=首计日期,数字型累计不设上限(每任务一个对象,体积可忽略)
+    if (sch !== undefined) {
+      if (sch.stats === undefined) sch.stats = { ok: 0, fail: 0, since: localDateKey(new Date()) }
+      if (lastOk) sch.stats.ok += 1
+      else sch.stats.fail += 1
+    }
     // 补跑清债/续债(0.1.6 C1):
     //  - 成功(任何 run,含 manual)= 当日债已偿 → 清;
     //  - 补跑命令级失败(非熔断短路)= 试过不循环(失败照常入账,不静默)→ 清;

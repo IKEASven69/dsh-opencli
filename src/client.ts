@@ -63,6 +63,9 @@ const STR = {
     csvT: '导出', csvDone: (n: number) => `✓ 已复制 CSV(${n} 行)到剪贴板`, nfQuiet: '安静', nfQuietTip: '只推变化/命中/失败,不推例行成功', nfSrcTip: (s: string) => `这个任务是 ${s} 创建的`, nfLevel: '级别', nfLevelAll: '全部', nfLevelQuiet: '仅变化', nfLevelTip: 'quiet=只推命中/变化/失败;all=例行也推', diffWeek: '近 7 天', diffAdded: '新增', diffGone: '消失', diffMoved: '位移', scTitle: '插件自检', scSub: '工具注册点名 + 入口在线 + 宿主匹配——“装上没效果”3 秒可见', scOk: '全部正常', scTools: (n: number) => `${n} 个工具已注册`, scConflict: (n: number) => `${n} 个工具撞名让位`, scDaemon: 'daemon', scCtl: 'ctl 收件箱', scPanel: '面板 RPC', scUpdate: (v: string) => `有新版本 v${v}`, scUpgradeTip: '复制升级命令到剪贴板(不自动执行——升级是你的显式决策)', scCurrent: (v: string) => `当前 v${v}`, qhLabel: '静默', qhOff: '关', qhTip: '窗内通知暂存,出窗合并推送', qhSetFail: '静默时段格式:HH:MM-HH:MM', qhPh: '😴 静默 23:00-07:00', qhTitle: '跨夜如 23:00-07:00;窗内暂存出窗合并',
     visLabel: '可见', visDefault: '默认', visArchiveOk: '成功归档', visNofFail: '仅失败推', visQuietAct: '有事才现身', visTip: '可见性档位:默认=每次 run 都现身收件箱;成功归档=成功的 run 自动沉归档区(可回看),失败照常现身;仅失败推=只有失败才推送通知(命中/变化也不推);有事才现身=无失败/命中/变化时自动归档不打扰。归档无损,早报「已归档」计数可见',
     coT: '检测到两个 CLI 在互抢 daemon', coDescF: (c: number, d: number, n: number) => `插件用的 CLI 是 v${c}.x,daemon 却跑着 v${d}.x——大概率同时装着 OpenCLIApp 内置 CLI 与全局 CLI,二者互杀(#2761),daemon 近 7 天已翻转 ${n} 次;留一个,断连与熔断就会少`, coDescFlipF: (n: number) => `daemon 近 7 天翻转 ${n} 次(同版本重启或互杀前兆——App 内置守护与全局 CLI 二选一更稳)`, coA1: '退出或升级 OpenCLIApp(内置 CLI 与全局 CLI 二选一)', coA2: '或把本插件钉定到当前 CLI(系统环境变量,只复制不执行):', coCopy: '复制钉定命令',
+    okRate: '成功率', statsSince: '统计自 ', failStreak: '连败', failStreakTip: '最近几次连续失败(跳过不计)——打开浏览器/检查登录态,或考虑暂停这个任务',
+    billT: '效率账单', billLine: (n: number, m: number, t: string) => `${n} 个定时任务 · 累计成功采集 ${m} 次 · 按人工逐一刷新约 3 分钟/次估算,已为你省下约 ${t}(估算口径)`, billFail: (n: number) => `失败 ${n} 次(失败行可查原因)`, billStuck: (n: number) => `${n} 个任务连败中(建议检查登录态或暂停)`,
+    sweepT: '一键巡圈', sweepSub: '串行采一轮默认社媒面(B站/微博/知乎/小红书/V2EX/掘金:热榜+关注流,8 条只读命令,已避开已知坏点)——结果就地成简报,可复制给 agent 做交叉热点分析或沉淀进知识库', sweepGo: '🔍 一键巡圈', sweepRunning: '巡圈中', sweepDone: (ok: number, n: number) => `巡圈完成:${ok}/${n} 站成功`,
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     hintT: '你是不是想用这些?点击直接跑:',
     quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑', quickMore: '↑ 每次刷新从你的站点目录抽 6 个——170+ 站都能这么用',
@@ -175,6 +178,9 @@ const STR = {
     csvT: 'Export', csvDone: (n: number) => `✓ CSV (${n} rows) copied to clipboard`, nfQuiet: 'quiet', nfQuietTip: 'only push changes/hits/failures', nfSrcTip: (s: string) => `created by ${s}`, nfLevel: 'level', nfLevelAll: 'all', nfLevelQuiet: 'changes', nfLevelTip: 'quiet=hits/changes/failures only; all=routine too', diffWeek: 'last 7 days', diffAdded: 'added', diffGone: 'gone', diffMoved: 'moved', scTitle: 'Plugin self-check', scSub: 'Tool registration roll-call + entries online + host match — "installed but no effect" visible in 3s', scOk: 'All good', scTools: (n: number) => `${n} tools registered`, scConflict: (n: number) => `${n} name conflicts yielded`, scDaemon: 'daemon', scCtl: 'ctl inbox', scPanel: 'panel RPC', scUpdate: (v: string) => `new version v${v} available`, scUpgradeTip: 'copy upgrade command to clipboard (never auto-runs — upgrading is your explicit call)', scCurrent: (v: string) => `current v${v}`, qhLabel: 'quiet', qhOff: 'off', qhTip: 'notifications during the window are merged and sent after it ends', qhSetFail: 'quiet hours format: HH:MM-HH:MM', qhPh: '😴 quiet 23:00-07:00', qhTitle: 'overnight ok e.g. 23:00-07:00; merged after window',
     visLabel: 'vis', visDefault: 'default', visArchiveOk: 'archive on success', visNofFail: 'failures only', visQuietAct: 'quiet unless actionable', visTip: 'Visibility level: default=every run shows up in the inbox; archive on success=successful runs sink to the archive automatically (still readable), failures stay visible; failures only=push notifications on failures exclusively (hits/changes included, no pushes); quiet unless actionable=routine runs auto-archive until a failure/hit/change shows up. Archiving is lossless — the digest counts archived runs',
     coT: 'Two CLIs are fighting over one daemon', coDescF: (c: number, d: number, n: number) => `This plugin runs CLI v${c}.x but the daemon is v${d}.x — likely both OpenCLIApp's bundled CLI and the global CLI are installed, killing each other (#2761); ${n} daemon flips in the last 7 days. Keep one and the disconnects/meltdowns drop`, coDescFlipF: (n: number) => `daemon flipped ${n} times in the last 7 days (same-version restarts or a coexistence precursor — keeping one of the two daemons is steadier)`, coA1: 'Quit or upgrade OpenCLIApp (keep one of the two CLIs)', coA2: 'Or pin this plugin to the current CLI (system env var — copy only, never auto-runs):', coCopy: 'Copy pin command',
+
+    billT: 'Efficiency ledger', billLine: (n: number, m: number, t: string) => `${n} schedules · ${m} successful collections so far · at ~3 min per manual sweep, that is roughly ${t} of your time saved (estimate)`, billFail: (n: number) => `${n} failures (see failure rows for causes)`, billStuck: (n: number) => `${n} task(s) on a losing streak (check login or pause)`,
+    sweepT: 'One-tap sweep', sweepSub: 'Serially collect the default social surface (Bilibili/Weibo/Zhihu/XHS/V2EX/Juejin: hot lists + follow feeds, 8 read-only commands, known broken spots avoided) — results render in place; copy them for agent-level cross-site analysis or sink into the knowledge base', sweepGo: '🔍 Sweep now', sweepRunning: 'Sweeping', sweepDone: (ok: number, n: number) => `Sweep done: ${ok}/${n} sites ok`,
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     hintT: 'Did you mean? Click to run:',
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run', quickMore: '↑ 6 picked from your catalog on each refresh — 170+ sites work like this',
@@ -267,7 +273,7 @@ const STR = {
 
 type StrKey = keyof typeof STR.zh
 
-interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; profile?: string; keep?: number; backoffMs?: number; visibility?: string; history?: Array<{ at: string; ok: boolean; summary: string }> }
+interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; profile?: string; keep?: number; backoffMs?: number; visibility?: string; history?: Array<{ at: string; ok: boolean; summary: string; skip?: boolean }>; stats?: { ok: number; fail: number; since: string }; healthNote?: string }
 interface AssetHit { id: string; name: string }
 interface BuiltinScript { name: string; sha256: string; description: string }
 interface ToastMsg { msg: string; ok: boolean }
@@ -686,6 +692,8 @@ function Panel(): ReturnType<typeof createElement> {
   // 批量管理:选中任务 id 集 + 来源过滤 + 批量操作进行中
   const [schedSel, setSchedSel] = useState<Set<string>>(new Set())
   const [schedSrc, setSchedSrc] = useState<'all' | 'agent' | 'chat' | 'panel' | 'ctl'>('all')
+  // 一键巡圈(0.1.7 社媒雷达):串行 try-run 默认清单,逐站落状态;结果就地渲染简报卡
+  const [sweep, setSweep] = useState<{ busy: boolean; done: number; total: number; rows: Array<{ line: string; ok: boolean; text: string }> }>({ busy: false, done: 0, total: 0, rows: [] })
   const [schedBatchBusy, setSchedBatchBusy] = useState(false)
   const [recordings, setRecordings] = useState<Recording[]>(() => {
     try { return JSON.parse(localStorage.getItem('dsh-opencli-recordings') ?? '[]') as Recording[] } catch { return [] }
@@ -892,9 +900,13 @@ function Panel(): ReturnType<typeof createElement> {
     const prof = schedProfile.trim()
     // 可见性档位(C5):默认档不发键(省键=服务端天然落默认,与可选字段纪律一致)
     const vis = schedVis
-    const r = await rpc<{ id?: string; error?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, source: 'panel', ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}), ...(prof.length > 0 ? { profile: prof } : {}), ...(vis !== 'always-visible' ? { visibility: vis } : {}) } } as unknown as Record<string, unknown>)
+    const r = await rpc<{ id?: string; error?: string; warning?: string }>('schedule-add', { request: { site: schedSite.trim(), cron: schedCron, retry: 3, notify: true, source: 'panel', ...(watch.length > 0 ? { watch } : {}), ...(qh.length > 0 ? { quietHours: qh } : {}), ...(prof.length > 0 ? { profile: prof } : {}), ...(vis !== 'always-visible' ? { visibility: vis } : {}) } } as unknown as Record<string, unknown>)
     setSchedBusy(false)
-    if (r.ok) { setSchedSite(''); setSchedWatch(''); setSchedQuiet(''); setSchedProfile(''); setSchedVis('always-visible'); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
+    if (r.ok) {
+      setSchedSite(''); setSchedWatch(''); setSchedQuiet(''); setSchedProfile(''); setSchedVis('always-visible'); void loadSchedules()
+      // 任务健康面(0.1.7 C1):建任务当场告知站点已知坑(任务行另有常驻 ⚠ 徽章)
+      if (r.warning !== undefined) showToast(`⚠ ${r.warning}`, false)
+    } else showToast(r.error?.message ?? t2('errReq'), false)
   }
   // 通知通道(D):保存当前所选平台通道;测试按钮发一条真实测试消息(用户配置的通道)。
   // dingtalk secret 支持钉在 URL query(secret=...)——保存原样,发送时由适配层处理。
@@ -1354,9 +1366,46 @@ function Panel(): ReturnType<typeof createElement> {
   }
 
   /* ── 自动化 ── */
+  /** 一键巡圈(0.1.7 社媒雷达):默认清单串行 try-run(同域/登录态互踩最小化),逐站落状态。
+   *  清单依据勘察:避开已知坏点(xhs search #2786/#2791、reddit 封锁 #2798/#2801)、优先免登录
+   *  兜底(v2ex/juejin)+ 登录态主力(bilibili/weibo/zhihu/xhs feed);改清单=改这一个数组。 */
+  const runSweep = async (): Promise<void> => {
+    if (sweep.busy) return
+    const lines = [
+      'site bilibili hot',
+      'site bilibili feed',
+      'site weibo hot',
+      'site weibo feed --type following',
+      'site zhihu hot',
+      'site xiaohongshu feed',
+      'site v2ex hot',
+      'site juejin hot',
+    ]
+    setSweep({ busy: true, done: 0, total: lines.length, rows: [] })
+    const rows: Array<{ line: string; ok: boolean; text: string }> = []
+    for (const line of lines) {
+      const r = await rpc<{ text?: string; error?: string }>('try-run', { request: { line } } as unknown as Record<string, unknown>)
+      rows.push({ line, ok: r.ok, text: r.ok ? (r.text ?? '').slice(0, 1200) : (r.error?.message ?? r.error ?? '失败') })
+      setSweep({ busy: true, done: rows.length, total: lines.length, rows: [...rows] })
+    }
+    setSweep({ busy: false, done: lines.length, total: lines.length, rows })
+    showToast(`${t2('sweepDone')(rows.filter((r) => r.ok).length, rows.length)}`, true)
+  }
+
   const renderAutomation = (): ReturnType<typeof createElement> => {
     // 批量管理:来源过滤只作用于显示(列表与全选范围),不动选中集本身
     const filteredSchedules = schedSrc === 'all' ? schedules : schedules.filter((s) => s.source === schedSrc)
+    // 效率账单(0.1.7 情绪价值):stats 聚合——成功采集折算省时(口径:人工逐一刷新约 3 分钟/次,
+    // 估算值如实标注,不虚报精确性);连败任务计数来自 history 头部连续失败
+    const agg = schedules.reduce((acc, s) => {
+      if (s.stats !== undefined) { acc.ok += s.stats.ok; acc.fail += s.stats.fail }
+      let streak = 0
+      for (const r of s.history ?? []) { if (r.ok === true) break; if (r.skip === true) continue; streak += 1 }
+      if (streak >= 2) acc.stuck += 1
+      return acc
+    }, { ok: 0, fail: 0, stuck: 0 })
+    const savedMin = agg.ok * 3
+    const savedText = savedMin >= 60 ? `${Math.floor(savedMin / 60)} 小时 ${savedMin % 60} 分钟` : `${savedMin} 分钟`
     const allSel = filteredSchedules.length > 0 && filteredSchedules.every((s) => schedSel.has(s.id))
     // 全选/反选:未全中→全选可见项;已全中→整组反选(清空)
     const toggleSelAll = (): void => {
@@ -1367,6 +1416,33 @@ function Panel(): ReturnType<typeof createElement> {
       })
     }
     return createElement('div', null,
+      // 效率账单卡(0.1.7 情绪价值):stats 聚合 + 省时折算(估算口径如实标注)——
+      // 「你让 agent 跑了多少采集、省了多少刷站时间」第一次有处可见
+      (agg.ok + agg.fail) > 0 ? createElement('div', { className: 'o4-card', style: { marginBottom: '10px', borderColor: 'rgba(74,159,255,.35)' } },
+        createElement('div', { className: 'o4-h3' }, ic('activity', true), t2('billT')),
+        createElement('div', { className: 'o4-sub' }, (t2('billLine') as unknown as (n: number, m: number, t: string) => string)(schedules.length, agg.ok, savedText),
+          agg.fail > 0 ? ` · ${t2('billFail')(agg.fail)}` : '', agg.stuck > 0 ? ` · ${t2('billStuck')(agg.stuck)}` : ''),
+      ) : null,
+      // 一键巡圈卡(0.1.7 社媒雷达):默认清单 8 条 read-only 串行 try-run(避开已知坑:
+      // xhs search 坏走 feed、reddit 封锁不入列),逐站落状态就地渲染简报;深度交叉分析
+      // 走 agent(SKILL.md「一键巡圈」配方)+ 可选 kb_note 沉淀/notify 推送
+      createElement('div', { className: 'o4-card', style: { marginBottom: '10px' } },
+        createElement('div', { className: 'o4-h3' },
+          createElement('span', { className: 'o4-miniico' }, ic('search', true)), t2('sweepT'),
+          createElement('span', { className: 'rt' }, createElement('button', { className: 'o4-btn sm', disabled: sweep.busy, onClick: () => { void runSweep() } }, sweep.busy ? `${t2('sweepRunning')} ${sweep.done}/${sweep.total}` : t2('sweepGo'))),
+        ),
+        createElement('div', { className: 'o4-sub' }, t2('sweepSub')),
+        sweep.rows.length > 0 ? createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } },
+          ...sweep.rows.map((row, i) => createElement('div', { key: i },
+            createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+              createElement('span', { className: `o4-bdg${row.ok ? ' b' : ' w'}` }, row.ok ? '✓' : '✗'),
+              createElement('span', { style: { fontFamily: 'ui-monospace,Consolas,monospace', fontSize: '11px', color: '#79B7FF' } }, row.line),
+            ),
+            createElement('div', { style: { fontFamily: 'ui-monospace,Consolas,monospace', fontSize: '10.5px', color: 'rgba(249,250,251,.65)', whiteSpace: 'pre-wrap', maxHeight: '110px', overflow: 'hidden', marginTop: '2px', padding: '4px 8px', background: '#14171C', borderRadius: '8px' } }, row.text.slice(0, 420)),
+          )),
+          createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void copyText(sweep.rows.map((r) => `## ${r.line}\n${r.text}`).join('\n\n')).then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) } }, t2('copy')),
+        ) : null,
+      ),
       createElement('div', { className: 'o4-card' },
         createElement('div', { className: 'o4-h3' },
           createElement('span', { className: 'o4-miniico' }, ic('clock', true)), t2('autoT'),
@@ -1443,6 +1519,24 @@ function Panel(): ReturnType<typeof createElement> {
               createElement('button', { className: 'o4-sw' + (s.enabled ? ' on' : ''), title: s.enabled ? 'enabled' : 'disabled', onClick: () => { void toggleSchedule(s.id, !s.enabled) } }),
               createElement('div', { className: 'meta' },
                 createElement('span', { className: 'o4-cron' }, s.cron),
+                // 任务健康面(0.1.7 C1):累计成功率(stats,≥3 次才显示——样本太小不虚报)+
+                // 连败 chip(history 头部连续失败≥2,跳过行不计入连败但会打断计数链)+
+                // 坏站徽章(实时 healthOf,degraded 才亮——与命令页同款口径)
+                s.stats !== undefined && s.stats.ok + s.stats.fail >= 3
+                  ? createElement('span', { className: 'o4-bdg', title: `${t2('statsSince')}${s.stats.since}` }, `${t2('okRate')} ${Math.round((s.stats.ok / (s.stats.ok + s.stats.fail)) * 100)}% (${s.stats.ok}/${s.stats.ok + s.stats.fail})`)
+                  : null,
+                (() => {
+                  let streak = 0
+                  for (const r of hist) { if (r.ok === true) break; if (r.skip === true) continue; streak += 1 }
+                  return streak >= 2 ? createElement('span', { className: 'o4-bdg w', title: t2('failStreakTip') }, `✗ ${t2('failStreak')} ${streak}`) : null
+                })(),
+                (() => {
+                  const siteName = s.site.replace(/^\s*site\s+/i, '').trim().split(/\s+/)[0] ?? ''
+                  const hh = healthOf(siteName)
+                  return hh !== null && hh.status === 'degraded'
+                    ? createElement('span', { className: 'o4-bdg w', title: `${t2('healthIssueT')(hh.updated)}\n${hh.issues.join('\n')}` }, `⚠ ${t2('healthDegraded')}`)
+                    : null
+                })(),
                 createElement('span', null, `${t2('last')} ${hist[0]?.at?.slice(5, 16) ?? '—'}`,
                   // verdict 真实着色:空史不挂符号;有失败全红 ✗;有成功绿 ✓——此前恒亮 ✓,
                   // 与时间线红失败行同屏自相矛盾(2026-10-08 界面逐项检查发现)

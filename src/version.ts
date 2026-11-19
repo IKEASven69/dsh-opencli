@@ -5,4 +5,4 @@
  * 出现过「同屏自检卡 v0.1.4 / 更新卡 v0.4.1」互相矛盾的陈年残留。
  * @module dsh-opencli/version
  */
-export const PLUGIN_VERSION = '0.1.6'
+export const PLUGIN_VERSION = '0.1.7'

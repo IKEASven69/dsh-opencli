@@ -86,6 +86,28 @@ curl -X POST http://127.0.0.1:<port>/mcp -H "authorization: Bearer <token>" -H "
 
 失败自救:输出命中 `EMPTY_RESULT/AUTH_REQUIRED/请先登录/验证码/NAVIGATION_REJECTED` 等签名时,按 `site_knowledge` 卡片恢复表行动(登录→`opencli <site> login`;风控→冷却 ≥2 分钟;改版→换命令或 browser 兜底)。
 
+## 一键巡圈与社媒追更(0.1.7 社媒雷达)
+
+**一键巡圈(agent 深度版)**:面板「一键巡圈」按钮只做采集;你在会话里做的是**交叉分析**。标准配方:
+
+```
+site_batch { command: "hot", sites: ["bilibili","weibo","zhihu","v2ex","juejin"], preflight: true }
+site_batch { command: "feed", sites: ["bilibili","xiaohongshu"] }        # 关注流/推荐流(免 id)
+site_batch { command: "feed", sites: ["weibo"], args: ["--type","following"] }
+```
+
+拿到结果后:①按站归并列 top 条目;②**交叉热点**——≥2 站同时出现的议题单独提出(这是巡圈独有的信号);③用户装了知识库插件(dsh-intelhub)时,把要点 `kb_note` 沉淀(标题=日期+主题),说一句"已沉淀进知识库";④用户配了通知通道时问一句"要不要推出去"。已知坑(勿踩):小红书 `search` 上游坏(走 `feed` 替代)、reddit `.json` 全封锁(整站不入圈)、知乎 `search` 低频使用防反爬。
+
+**追更配方(按对象类型选命令)**:
+- B 站 UP:**免 id 路线** = `site bilibili feed`(不传 uid 即关注时间线);精查单个 UP = `site bilibili user-videos --uid <id>`;列关注对象 = `site bilibili following`
+- 微博博主(天然增量):`site weibo user-posts --id <id> --start <上次时间> --end <现在>`——start/end 水位线;cookie 短效,提示用户每周重登
+- 知乎答主:`site zhihu user-answers --user <人>`(逐个拉;无关注流命令)
+- Twitter:聚合神器 `site twitter device-follow`(@A 和 N 人新帖,免参);列表追更 `site twitter list-tweets --list-id <id>`;关注流 `site twitter timeline --type following`
+- YouTube 频道:`site youtube channel --id <id>`;订阅列表 `site youtube subscriptions`(再逐个 channel)
+- 变成定时任务:`ctl schedule add --site "<上面任一命令>" --cron "0 9 * * *" --watch "关键词"`——命中即推送;开 `--preflight` 可防登录墙烧重试
+
+**工作流组合**:巡圈简报 → 用户挑出有价值条目 → `kb_note` 沉淀知识库 / `site <站> <命令>` 深读单条 → 判断台账。采集是手,知识库是仓库,判断是资产——三件套闭环无需离开 dsh 会话。
+
 ## 现场创作适配器(网站没被覆盖时)
 
 1. 侦察:`opencli_do(command="analyze", args=["<url>"])`(反防爬厂商/API 候选/最近似适配器);
