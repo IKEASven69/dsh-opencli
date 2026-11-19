@@ -681,9 +681,10 @@ export class OpencliService extends TypertRemoteService {
       },
       output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
       execute: async (a: ToolArgs) => {
-        const r = await this.so.ask(String(a.page_text ?? ''), {
+        const r = await this.soAskTimed<{ ok: boolean; error?: string; answers: { verify?: { value?: number } }; latencyMs?: number }>(String(a.page_text ?? ''), {
           verify: { type: 'noul', instructions: String(a.expectation ?? '页面状态符合任务预期') },
-        })
+        }, 60_000)
+        if (r === null) return { text: 'SystemOne 判定超时(60s)——请用常规方式自行判断' }
         if (!r.ok) return { text: `SystemOne 不可用:${r.error ?? '未知'}——请用常规方式自行判断` }
         const v = r.answers.verify
         const p = typeof v?.value === 'number' ? v.value : null
@@ -704,9 +705,10 @@ export class OpencliService extends TypertRemoteService {
       execute: async (a: ToolArgs) => {
         const options = Array.isArray(a.options) ? a.options.map(String).filter((o) => o.length > 0) : []
         if (options.length < 2 || options.length > 30) return { text: `选项数量需在 2-30 之间(当前 ${options.length});过多请先分层(先选类目再选具体)` }
-        const r = await this.so.ask(String(a.state ?? ''), {
+        const r = await this.soAskTimed<{ ok: boolean; error?: string; answers: { pick?: { value?: string } }; latencyMs?: number }>(String(a.state ?? ''), {
           pick: { type: 'choice', instructions: String(a.goal ?? '选出最符合目标的选项'), criteria: Object.fromEntries(options.map((o) => [o, o])) },
-        })
+        }, 60_000)
+        if (r === null) return { text: 'SystemOne 选择超时(60s)——请用常规方式自行选择' }
         if (!r.ok) return { text: `SystemOne 不可用:${r.error ?? '未知'}——请用常规方式自行选择` }
         const pick = r.answers.pick
         const choice = typeof pick?.value === 'string' ? pick.value : ''
@@ -1350,20 +1352,20 @@ export class OpencliService extends TypertRemoteService {
         let siteName = pool[0]?.name ?? ''
         if (pool.length > 1) {
           const cand = pool.slice(0, 24)
-          const r1 = await this.so.ask(cand.map((x) => `${x.name}(${x.commandCount} 命令,示例:${x.commands.slice(0, 3).join('/')})`).join('; '), {
+          const r1 = await this.soAskTimed<{ ok: boolean; answers: { pickSite?: { value?: string } } }>(cand.map((x) => `${x.name}(${x.commandCount} 命令,示例:${x.commands.slice(0, 3).join('/')})`).join('; '), {
             pickSite: { type: 'choice', instructions: `目标:${goal}。选出最合适的站点`, criteria: Object.fromEntries(cand.map((x) => [x.name, `${x.commandCount} 命令:${x.commands.slice(0, 5).join(',')}...`])) },
-          })
-          if (r1.ok && typeof r1.answers.pickSite?.value === 'string' && r1.answers.pickSite.value.length > 0) siteName = r1.answers.pickSite.value
+          }, 30_000)
+          if (r1 !== null && r1.ok && typeof r1.answers.pickSite?.value === 'string' && r1.answers.pickSite.value.length > 0) siteName = r1.answers.pickSite.value
           else return { text: '路由不可用(SystemOne down)——请直接查 systemPrompt 目录选命令' }
         }
         // 第二层:该站选命令
         const detail = await this.adapterDetail({ name: siteName } as never).catch(() => null)
         const cmds = detail?.ok === true ? detail.commands.map((c: { name: string; description?: string }) => ({ n: c.name, d: c.description ?? '' })) : pool.find((x) => x.name === siteName)?.commands.slice(0, 24).map((c) => ({ n: c, d: '' })) ?? []
         if (cmds.length === 0) return { text: `${siteName} 无命令目录` }
-        const r2 = await this.so.ask(`站点:${siteName}。目标:${goal}`, {
+        const r2 = await this.soAskTimed<{ ok: boolean; answers: { pickCmd?: { value?: string; probabilities?: Record<string, unknown> } } }>(`站点:${siteName}。目标:${goal}`, {
           pickCmd: { type: 'choice', instructions: '选出最合适的命令', criteria: Object.fromEntries(cmds.slice(0, 24).map((c) => [c.n, c.d])) },
-        })
-        if (!r2.ok || typeof r2.answers.pickCmd?.value !== 'string') return { text: `站点锁定 ${siteName};命令层 SystemOne 不可用,备选:${cmds.slice(0, 6).map((c) => c.n).join(', ')}` }
+        }, 30_000)
+        if (r2 === null || !r2.ok || typeof r2.answers.pickCmd?.value !== 'string') return { text: `站点锁定 ${siteName};命令层 SystemOne 不可用,备选:${cmds.slice(0, 6).map((c) => c.n).join(', ')}` }
         const top = Object.entries(r2.answers.pickCmd.probabilities ?? {}).sort((x, y) => (y[1] as number) - (x[1] as number)).slice(0, 3).map(([c, p]) => `${c} ${(Number(p) * 100).toFixed(0)}%`).join(' / ')
         return { text: `命令:\`site ${siteName} ${r2.answers.pickCmd.value}\`${top ? `\nTop3:${top}` : ''}(低置信或不对时查 site_knowledge ${siteName} 或 systemPrompt 目录)` }
       },
@@ -1612,6 +1614,24 @@ export class OpencliService extends TypertRemoteService {
    * ②laya noul 兜底判未知形态,只做标注。返回:null=不可用(调用方走原行为);verdict=false 即拦截级失败;
    * noul 0.35-0.7 可疑(verdict=true 但 p<0.7)。判别力阈值来自 2026-09 对宿主内嵌模型真实样本的实测。
    */
+  /**
+   * SystemOne ask 加超时兜底(0.1.7 真机抓):provider 慢/挂时 try-run/路由等主链路曾被无限
+   * 阻塞(实机证据:面板一键巡圈第一条 6 分钟零进展,同期 CLI 直跑秒回=上游无罪)——标注/
+   * 路由层是锦上添花,超时返回 null,调用方按各自「SystemOne 不可用」降级路径走。
+   */
+  private async soAskTimed<R>(input: string, opts: unknown, timeoutMs = 20_000): Promise<R | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs) })
+    try {
+      return await Promise.race([
+        this.so.ask(input, opts as never) as Promise<R>,
+        timeout,
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
   private async verifyResult(site: string, command: string, text: string, opts?: { warmOnly?: boolean }): Promise<{ verdict: boolean; p: number; why?: string } | null> {
     const trimmed = text.trim()
     if (trimmed.length === 0) return { verdict: false, p: 0, why: '空输出' }
@@ -1636,10 +1656,10 @@ export class OpencliService extends TypertRemoteService {
     if (opts?.warmOnly === true && (this.so as { warm?: boolean }).warm === false) return null
     // noul 兜底:只对规则放行的文本做模型判定
     if (!this.so.configured) return null
-    const r = await this.so.ask(head, {
+    const r = await this.soAskTimed<{ ok: boolean; answers: { valid?: { value?: number } }; latencyMs?: number }>(head, {
       valid: { type: 'noul', instructions: `site ${site} ${command} 的输出包含真实的网站数据内容` },
     })
-    if (!r.ok) return null
+    if (r === null || !r.ok) return null // 超时=null=标注缺席降级(不阻塞 site 调用)
     const v = r.answers.valid
     // 注意:两个 provider 都归一化为 {type,value,confidence}——读 value,不要读原始字段名 noul
     const p = typeof v?.value === 'number' ? v.value : null
