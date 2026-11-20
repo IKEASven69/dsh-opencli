@@ -35,10 +35,15 @@
 - B+C:构建绿+面板渲染(渲染无组件测试基建,真机走查归用户下次打开面板);逻辑零新增 RPC(全部复用 try-run/site 既有链)
 - 全量:0.1.6 基线 811 + 新增 4 → 815 预期
 
-## 五、实机走查记录(2026-11-20,3080 实例)
+## 五、实机走查记录(2026-11-20 两轮,3080 实例)
 
-**已验证**:①0.1.7 在宿主 0.2.2-rc.5 加载正常(插件页无异常标记;同机 billion-context-dsh/dsh-mystery-novelist/dsh-sensenova-image 三插件因 peer 要求旧 rc 被宿主拒载——#2582 形态,与本插件无关);②面板挂载:管理中心页头/五 tab/双语切换全渲染;③一键巡圈卡+按钮渲染(自动化 tab);④**真机实抓真 bug 并修复**:一键巡圈第一条 try-run 6 分钟零进展,同期 CLI 直跑 bilibili hot 秒回(上游无罪)→ 根因=verifyResult/site_pick/noul/so_pick 五处 SystemOne so.ask 无超时,宿主 provider 慢/挂时无限阻塞主链路 → soAskTimed 兜底(20s/30s/60s 分档,超时=标注缺席降级),`560951e` 已推送并部署。
+**第一轮(晨)**:①0.1.7 在宿主 0.2.2-rc.5 加载正常(插件页无异常标记;同机 billion-context-dsh/dsh-mystery-novelist/dsh-sensenova-image 三插件因 peer 要求旧 rc 被宿主拒载——#2582 形态,与本插件无关);②面板挂载:管理中心页头/五 tab/双语切换全渲染;③一键巡圈卡+按钮渲染;④**真机实抓真 bug 并修复**:一键巡圈第一条 try-run 6 分钟零进展,同期 CLI 直跑 bilibili hot 秒回(上游无罪)→ 根因=verifyResult/site_pick/noul/so_pick 五处 SystemOne so.ask 无超时,宿主 provider 慢/挂时无限阻塞主链路 → soAskTimed 兜底(20s/30s/60s 分档,超时=标注缺席降级),`560951e` 已推送并部署。
 
-**环境受限未走完**(如实):巡圈实点的简报渲染与效率账单卡首现(stats>0 触发)——opencli 浏览器桥持续间歇挂起(#2836 家族:bridge 命令挂起/commandResultUnknown,doctor 全绿;本日 CLI 直跑全绿而桥命令全挂),不是本插件缺陷;两处均属「用户下次打开面板第一眼可自验」项:实例已在 3080 运行 0.1.7(带 token),自动化页点「一键巡圈」即走完整链路(修复后单条最坏 60s+20s)。
+**第二轮(扩展已连,doctor 全绿:daemon 2.0.3/扩展 1.0.26/连通性 1969ms)**:
+- **0.1.6/0.1.7 面板特性真机首现**:CLI 共存卡(「近 7 天 daemon 翻转 4 次」+钉定命令,只复制不执行)、效率账单卡(真实数据:2 任务·成功 0·失败 1·2 任务连败中——今晨 07:02 v2ex 0/3 失败计入,stats 重启后持久)、任务行连败徽章(✗ 连败 3)。
+- **一键巡圈实点两轮,实抓第二个真 bug**:首跑 8/8 全绿但简报恒空 → 根因=runSweep 直读 rpc 信封(`{ok, value?}`),信封 ok 恒真(命令失败也会画 ✓,违反诚实失败)、r.text 恒 undefined(成功简报恒空);其余 38 处调用均为正确 value 解包,唯此一处新写错 → 修复(client.ts 信封解包读 value.ok/text/error)+ 816/816 + 热部属重启实例。
+- **复跑全链路如实渲染(截图存证)**:6 ✓ 2 ✗——bilibili hot/feed、xiaohongshu feed、juejin hot 带实测有效徽章(P=0.84-0.94)+内容简报,weibo hot ⚠ 内容可疑 P=0.43 建议复核,weibo feed ✗ 登录态缺失(AUTH_REQUIRED+恢复指引),v2ex hot ✗ fetch failed(与知识卡上游坏一致),zhihu hot ✓ P=1.00;逐站简报+复制按钮渲染确认,全程约 2 分半(修复前单条挂 6 分钟)。复制按钮点击执行成功(剪贴板内容 IAB 环境无法程序化读取,如实记录)。
 
-**遗留**(下版候选):①面板连败 chip 显示上限 3(history 窗口)——可透真值 failStreaks;②saveState 并发乱序窗口(benchmark flake 根因,loadState 单调序号加固);③status RPC 每次 panel 刷新全量扫事件档(flip 计数已有 60s 缓存,status 其它段未缓存)。
+**观察(0.1.8 候选)**:①zhihu hot 返回 `[]` 却判实测有效 P=1.00——判定层把空数组当有效,空结果口径待收;②效率账单卡 0 成功时也渲染(失败/连败警示先行,估算口径如实,行为合理)。
+
+**遗留(下版候选)**:①面板连败 chip 显示上限 3(history 窗口)——可透真值 failStreaks;②saveState 并发乱序窗口(benchmark flake 根因,loadState 单调序号加固);③status RPC 每次 panel 刷新全量扫事件档(flip 计数已有 60s 缓存,status 其它段未缓存)。

@@ -1384,8 +1384,13 @@ function Panel(): ReturnType<typeof createElement> {
     setSweep({ busy: true, done: 0, total: lines.length, rows: [] })
     const rows: Array<{ line: string; ok: boolean; text: string }> = []
     for (const line of lines) {
-      const r = await rpc<{ text?: string; error?: string }>('try-run', { request: { line } } as unknown as Record<string, unknown>)
-      rows.push({ line, ok: r.ok, text: r.ok ? (r.text ?? '').slice(0, 1200) : (r.error?.message ?? r.error ?? '失败') })
+      const r = await rpc<{ ok?: boolean; text?: string; error?: string }>('try-run', { request: { line } } as unknown as Record<string, unknown>)
+      // 信封解包(0.1.7 真机走查实抓):rpc 返回 {ok, value?} 信封——直接读 r.text 恒 undefined(成功行简报恒空),
+      // 且信封 ok 恒真会掩盖 payload ok:false(命令失败也画 ✓,违反诚实失败)。payload.ok 才是命令真伪;
+      // 仅 transport 失败(信封 ok:false)才看信封 error。其余 38 处调用均为正确的 value 解包,唯此一处是新写错的。
+      const v = r.value
+      const ok = r.ok && v?.ok === true
+      rows.push({ line, ok, text: ok ? (v?.text ?? '').slice(0, 1200) : (v?.error ?? r.error?.message ?? '失败') })
       setSweep({ busy: true, done: rows.length, total: lines.length, rows: [...rows] })
     }
     setSweep({ busy: false, done: lines.length, total: lines.length, rows })

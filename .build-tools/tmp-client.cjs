@@ -2996,10 +2996,12 @@ ${c.description}`,
           line
         }
       });
+      const v = r.value;
+      const ok = r.ok && v?.ok === true;
       rows.push({
         line,
-        ok: r.ok,
-        text: r.ok ? (r.text ?? "").slice(0, 1200) : r.error?.message ?? r.error ?? "\u5931\u8D25"
+        ok,
+        text: ok ? (v?.text ?? "").slice(0, 1200) : v?.error ?? r.error?.message ?? "\u5931\u8D25"
       });
       setSweep({
         busy: true,
