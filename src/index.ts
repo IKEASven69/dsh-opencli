@@ -382,6 +382,10 @@ export class OpencliService extends TypertRemoteService {
     /** 任务健康面(0.1.7 C1):真实 run(跳过不计)的成功/失败累计与统计起点——面板成功率 chip
      *  的数据源;typed 字段而非解析 history 文本。 */
     stats?: { ok: number; fail: number; since: string }
+    /** 连败真值(0.1.8 ②):run 级连续失败计数——失败 +1、成功清删(省键,语义=0)、跳过不动。
+     *  持久化随 state.json 走;面板 chip/stuck 优先读此字段(history 窗口 3 条会顶死显示上限),
+     *  旧数据无字段时回退 history 头部计算。 */
+    failRunStreak?: number
     /** 建任务时的站点健康快照(0.1.7 C1):knowledge healthOf(degraded/unsupported)+ pitfalls
      *  条数;静态知识,随插件更新刷新(重新 add 同任务即更新)。面板 ⚠ chip 的 tooltip 来源。 */
     healthNote?: string
@@ -1520,8 +1524,16 @@ export class OpencliService extends TypertRemoteService {
 
   // ── RPC(面板) ────────────────────────────────────────────
 
+  /** status 5s TTL 缓存(0.1.8 ④):每次刷新实付两次 CLI 子进程(--version + daemon status,
+   *  秒级)——面板 action 连发时成本翻倍;健康信号对 5s 陈旧不敏感,又足够短:面板外手动重启
+   *  daemon 的场景下次刷新即见新态。仅 ok:true 路径缓存(CLI 不可用不缓存,下次调用立即重试);
+   *  daemon-start 成功后主动清缓存(状态刚变了)。测试重桩 shell/daemon 后清 statusCache 即可
+   *  立见新值(与 flipCountCache 同款私有清理模式)。 */
+  private statusCache: { at: number; result: OpencliStatus & { conflicts?: string[]; coexist?: CoexistenceInfo } } | undefined
+
   @Remote('status')
   async status(): Promise<OpencliStatus & { conflicts?: string[]; coexist?: CoexistenceInfo }> {
+    if (this.statusCache !== undefined && Date.now() - this.statusCache.at < 5_000) return this.statusCache.result
     const version = await this.runOpencli(['--version'])
     if (version.exitCode !== 0) {
       return {
@@ -1539,7 +1551,7 @@ export class OpencliService extends TypertRemoteService {
     let vraw = (version.stdout.trim() || version.stderr.trim()).split('\n')[0]?.trim() ?? ''
     // CLI 共存(0.1.6 C2,#2761):major 不一致或近 7 天有翻转才携带(零噪音)
     const coexist = this.cliCoexistence(vraw, daemon?.version)
-        return {
+    const result: OpencliStatus & { conflicts?: string[]; coexist?: CoexistenceInfo } = {
       ok: true,
       bin: this.bin,
       version: vraw || null,
@@ -1548,6 +1560,8 @@ export class OpencliService extends TypertRemoteService {
       ...(coexist !== null ? { coexist } : {}),
       ...(this.toolConflicts.length > 0 ? { conflicts: [...this.toolConflicts] } : {}),
     }
+    this.statusCache = { at: Date.now(), result }
+    return result
   }
 
   @Remote('adapters')
@@ -1573,6 +1587,7 @@ export class OpencliService extends TypertRemoteService {
     if (before?.running === true) return { ok: true, started: false, message: 'daemon 已在运行' }
     const r = await this.runOpencli(['daemon', 'restart'], 30000)
     const after = await this.daemonStatus()
+    this.statusCache = undefined // daemon 状态刚变,TTL 缓存(0.1.8 ④)立即失效让面板看到新态
     if (r.exitCode !== 0 && after?.running !== true) {
       return { ok: false, started: false, message: `启动失败(退出码 ${r.exitCode}):${clip(r.stderr || r.stdout, 300)}` }
     }
@@ -1635,8 +1650,10 @@ export class OpencliService extends TypertRemoteService {
   private async verifyResult(site: string, command: string, text: string, opts?: { warmOnly?: boolean }): Promise<{ verdict: boolean; p: number; why?: string } | null> {
     const trimmed = text.trim()
     if (trimmed.length === 0) return { verdict: false, p: 0, why: '空输出' }
-    // 裸 '[]'=#2708 canonical 空形态:合法成功不再判死重试(重试无意义),真空/登录后空壳由 receipt.empty 标注
-    if (trimmed === '[]') return { verdict: true, p: 1, why: '空数组' }
+    // 裸 '[]'=#2708 canonical 空形态:合法成功不再判死重试(重试无意义),真空/登录后空壳由 receipt.empty 标注。
+    // 0.1.8:放宽为 /^\[\s*\]$/——pretty-print 的多行空数组同属 canonical 空,精确匹配漏掉它;
+    // 判定语义不动(合法空≠虚构,也≠有货),诚实区分交由 verifyBadge 徽章层(0.1.8 走查观察①)
+    if (/^\[\s*\]$/.test(trimmed)) return { verdict: true, p: 1, why: '空数组' }
     // 规则层:opencli 已知失败词汇 + 风控/登录墙关键词(实测覆盖 #2497/#2515/#2528/#2470 类)
     const head = trimmed.slice(0, 2000)
     const RULES: Array<[RegExp, string]> = [
@@ -1672,6 +1689,9 @@ export class OpencliService extends TypertRemoteService {
   private verifyBadge(v: { verdict: boolean; p: number; why?: string } | null): string {
     if (v === null) return ''
     if (!v.verdict) return `(⚠ 疑似静默失败:${v.why ?? `P=${v.p.toFixed(2)}`})`
+    // 合法空数组(#2708)≠「实测有效」——它只证明「没拿到东西」且非虚构,断言有货是撒谎
+    // (0.1.8 走查观察①:zhihu hot 返回 [] 曾渲染成 实测有效 P=1.00)
+    if (v.why === '空数组') return '(⚪ 空结果:合法空数组——非虚构,但本次没抓到内容)'
     if (v.p < 0.7) return `(⚠ 内容可疑:P=${v.p.toFixed(2)},建议复核)`
     return `(实测有效 P=${v.p.toFixed(2)})`
   }
@@ -4143,15 +4163,18 @@ export class OpencliService extends TypertRemoteService {
       // pendingCatchup 形状收窄(0.1.6 复核):用户可手改 state.json,坏形状(attempts 成串会
       // 让 attempts += 1 变字符串拼接)整字段丢弃——与 inboxFlags/audit 同款容错口径
       for (const s of this.schedules) {
+        // pendingCatchup 形状收窄(0.1.6 复核):用户可手改 state.json,坏形状(attempts 成串会
+        // 让 attempts += 1 变字符串拼接)整字段丢弃——与 inboxFlags/audit 同款容错口径。
+        // 修(0.1.8 测试实抓):原「p === undefined 则 continue」把无债条目全部短路——0.1.7 加进
+        // 本循环的 stats 收窄对多数条目是死代码,stats/failRunStreak 校验改独立条件不再短路
         const p = s.pendingCatchup as unknown
-        if (p === undefined) continue
-        if (p === null || typeof p !== 'object'
+        if (p !== undefined && (p === null || typeof p !== 'object'
           || typeof (p as { forDay?: unknown }).forDay !== 'string'
           || typeof (p as { skippedAt?: unknown }).skippedAt !== 'string'
           || ((p as { reason?: unknown }).reason !== 'environment' && (p as { reason?: unknown }).reason !== 'auth-wall')
           || !Number.isInteger((p as { attempts?: unknown }).attempts)
           || (p as { attempts?: number }).attempts! < 0
-          || ((p as { lastAttemptAt?: unknown }).lastAttemptAt !== undefined && typeof (p as { lastAttemptAt?: unknown }).lastAttemptAt !== 'string')) {
+          || ((p as { lastAttemptAt?: unknown }).lastAttemptAt !== undefined && typeof (p as { lastAttemptAt?: unknown }).lastAttemptAt !== 'string'))) {
           delete s.pendingCatchup
         }
         // stats 形状收窄(0.1.7 复核):手改 state 写坏 stats 会让 ok/fail 计数变 NaN、成功率
@@ -4163,6 +4186,9 @@ export class OpencliService extends TypertRemoteService {
           || typeof (st as { since?: unknown }).since !== 'string')) {
           delete s.stats
         }
+        // failRunStreak 形状收窄(0.1.8 ②):正整数才留(0/负数/小数/字符串整字段丢弃——写侧
+        // 成功即清删,0 不应出现在盘上),与 stats/pendingCatchup 同款手改容错口径
+        if (s.failRunStreak !== undefined && (!Number.isInteger(s.failRunStreak) || s.failRunStreak < 1)) delete s.failRunStreak
       }
       if (parsed.runHistory !== undefined && typeof parsed.runHistory === 'object') this.runHistory = parsed.runHistory as typeof this.runHistory
       // 自愈:清除旧版寄生在 runHistory 的调度 marker(键含 ':',曾累积 5055 个)
@@ -4198,14 +4224,31 @@ export class OpencliService extends TypertRemoteService {
   /** 原子写的临时文件序号(同毫秒并发 saveState 防自撞)。 */
   private stateTmpSeq = 0
 
+  /** 写链(0.1.8 ③):并发 saveState 的落盘按调用顺序串行——body 快照在调用时同步捕获,
+   *  链上依次写盘。修前各写者 await writeFile 耗时不同,rename 顺序≠调用顺序,旧状态快照
+   *  可后落盘覆盖新状态(benchmark flake 根因,.qa/test-failures.jsonl 归档留痕);串行链后
+   *  最后调用者必胜。链内单次写失败不外抛不阻断(权限等,仅本次会话生效,与旧口径一致)。 */
+  private saveChain: Promise<void> = Promise.resolve()
+
   private async saveState(): Promise<void> {
+    let body: string
+    try {
+      // 快照在调用时捕获(JSON.stringify 同步执行):调用之后的 state 改动不混入本次落盘
+      body = JSON.stringify({ ...this.state, schedules: this.schedules, runHistory: this.runHistory, audit: this.state.audit }, null, 2)
+    } catch { /* 序列化失败:与旧「try 包全函数」同口径,静默跳过本次落盘 */ return }
+    const write = this.saveChain.then(() => this.writeStateFile(body))
+    this.saveChain = write
+    await write
+  }
+
+  private async writeStateFile(body: string): Promise<void> {
     try {
       await mkdir(join(homedir(), '.dsh'), { recursive: true })
       // 原子写:先写同目录临时文件再 rename——writeFile 是"截断再写",并发读者
       // (tests/benchmark.test.ts 的裸 JSON.parse 回读、面板 settings)会撞见空文件窗口,
       // 全量门禁实测以低概率红(Unexpected end of JSON input);rename 落盘只见旧或新。
-      // 并发写者(recordAudit 的 void saveState 与后台调度任务)各写各的 tmp,后 rename 者胜。
-      const body = JSON.stringify({ ...this.state, schedules: this.schedules, runHistory: this.runHistory, audit: this.state.audit }, null, 2)
+      // 并发写者(recordAudit 的 void saveState 与后台调度任务)各写各的 tmp,
+      // 落盘顺序由写链保证=调用顺序(0.1.8 ③)。
       const tmp = `${this.statePath}.${process.pid}.${Date.now()}.${++this.stateTmpSeq}.tmp`
       await writeFile(tmp, body, 'utf8')
       await rename(tmp, this.statePath)
@@ -4904,11 +4947,11 @@ export class OpencliService extends TypertRemoteService {
       // 链接/本机路径,落 state.json 与日账(→ 早报)前同过 URL 参数脱敏,不留裸入口
       hist.unshift({ at: new Date().toISOString(), ok: r.ok, summary: r.ok ? `canary:${r.passed}/${r.total}${r.newFailures.length > 0 ? ' 新失败:' + r.newFailures.slice(0, 3).join(',') : ''}` : `canary 失败:${scrubUrlParams(r.error ?? '未知')}` })
       this.runHistory[id] = hist.slice(0, 5)
-      // canary run 同计任务健康统计(0.1.7 C1)
+      // canary run 同计任务健康统计(0.1.7 C1);连败真值同点维护(0.1.8 ②)
       if (sch !== undefined) {
         if (sch.stats === undefined) sch.stats = { ok: 0, fail: 0, since: localDateKey(new Date()) }
-        if (r.ok) sch.stats.ok += 1
-        else sch.stats.fail += 1
+        if (r.ok) { sch.stats.ok += 1; delete sch.failRunStreak }
+        else { sch.stats.fail += 1; sch.failRunStreak = (sch.failRunStreak ?? 0) + 1 }
       }
       await this.saveState()
       // 日账入账(0.1.4 候选 2):canary 任务同进早报(它的失败=自监控失败,不该在日报里隐身)
@@ -5274,11 +5317,12 @@ ${r.stderr}`
       circuit: circuitSkipped || circuitOpened,
     })
     // 任务健康面(0.1.7 C1):真实 run(跳过在预检层提前 return,不进这里)计入成功/失败累计——
-    // 面板成功率 chip 的数据源;since=首计日期,数字型累计不设上限(每任务一个对象,体积可忽略)
+    // 面板成功率 chip 的数据源;since=首计日期,数字型累计不设上限(每任务一个对象,体积可忽略)。
+    // 连败真值同点维护(0.1.8 ②):失败累积、成功清删(省键,语义=0)、跳过不进此处天然不动
     if (sch !== undefined) {
       if (sch.stats === undefined) sch.stats = { ok: 0, fail: 0, since: localDateKey(new Date()) }
-      if (lastOk) sch.stats.ok += 1
-      else sch.stats.fail += 1
+      if (lastOk) { sch.stats.ok += 1; delete sch.failRunStreak }
+      else { sch.stats.fail += 1; sch.failRunStreak = (sch.failRunStreak ?? 0) + 1 }
     }
     // 补跑清债/续债(0.1.6 C1):
     //  - 成功(任何 run,含 manual)= 当日债已偿 → 清;

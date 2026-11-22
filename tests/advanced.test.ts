@@ -311,6 +311,20 @@ describe('真实性判定(noul 体检:site_batch/try-run 共用)', () => {
     const v = await verifyResult('zhihu', 'hot', '[]')
     expect(v).toEqual({ verdict: true, p: 1, why: '空数组' })
     expect(state.calls).toBe(0)
+    // 0.1.8 走查观察①:pretty-print 多行空数组同属 canonical 空(精确匹配漏掉它)
+    const v2 = await verifyResult('zhihu', 'hot', '[\n]')
+    expect(v2).toEqual({ verdict: true, p: 1, why: '空数组' })
+    expect(state.calls).toBe(0)
+  })
+
+  it('verifyBadge:合法空数组标注「空结果」而非「实测有效」(走查观察①:[] 曾渲染成 实测有效 P=1.00)', () => {
+    const verifyBadge = (v: { verdict: boolean; p: number; why?: string } | null): string =>
+      (svc as unknown as { verifyBadge: (x: { verdict: boolean; p: number; why?: string } | null) => string }).verifyBadge.call(svc, v)
+    const empty = verifyBadge({ verdict: true, p: 1, why: '空数组' })
+    expect(empty).toContain('空结果')
+    expect(empty).not.toContain('实测有效')
+    // 有货判定不受影响(同一函数的另一分支)
+    expect(verifyBadge({ verdict: true, p: 0.95 })).toContain('实测有效')
   })
 
   it('verifyResult:规则层命中失败词汇/风控墙/错误 JSON,均不消耗推理', async () => {

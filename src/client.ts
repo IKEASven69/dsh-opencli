@@ -273,7 +273,7 @@ const STR = {
 
 type StrKey = keyof typeof STR.zh
 
-interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; profile?: string; keep?: number; backoffMs?: number; visibility?: string; history?: Array<{ at: string; ok: boolean; summary: string; skip?: boolean }>; stats?: { ok: number; fail: number; since: string }; healthNote?: string }
+interface SchedItem { id: string; site: string; cron: string; createdAt: string; enabled: boolean; retry?: number; notify?: boolean; watch?: string; source?: string; notifyLevel?: string; quietHours?: string; profile?: string; keep?: number; backoffMs?: number; visibility?: string; history?: Array<{ at: string; ok: boolean; summary: string; skip?: boolean }>; stats?: { ok: number; fail: number; since: string }; failRunStreak?: number; healthNote?: string }
 interface AssetHit { id: string; name: string }
 interface BuiltinScript { name: string; sha256: string; description: string }
 interface ToastMsg { msg: string; ok: boolean }
@@ -1404,8 +1404,10 @@ function Panel(): ReturnType<typeof createElement> {
     // 估算值如实标注,不虚报精确性);连败任务计数来自 history 头部连续失败
     const agg = schedules.reduce((acc, s) => {
       if (s.stats !== undefined) { acc.ok += s.stats.ok; acc.fail += s.stats.fail }
-      let streak = 0
-      for (const r of s.history ?? []) { if (r.ok === true) break; if (r.skip === true) continue; streak += 1 }
+      // 连败任务计数:优先 failRunStreak 真值(0.1.8 ②),旧数据回退 history 头部(窗口顶死 3)
+      let streak: number
+      if (s.failRunStreak !== undefined) streak = s.failRunStreak
+      else { streak = 0; for (const r of s.history ?? []) { if (r.ok === true) break; if (r.skip === true) continue; streak += 1 } }
       if (streak >= 2) acc.stuck += 1
       return acc
     }, { ok: 0, fail: 0, stuck: 0 })
@@ -1531,8 +1533,11 @@ function Panel(): ReturnType<typeof createElement> {
                   ? createElement('span', { className: 'o4-bdg', title: `${t2('statsSince')}${s.stats.since}` }, `${t2('okRate')} ${Math.round((s.stats.ok / (s.stats.ok + s.stats.fail)) * 100)}% (${s.stats.ok}/${s.stats.ok + s.stats.fail})`)
                   : null,
                 (() => {
-                  let streak = 0
-                  for (const r of hist) { if (r.ok === true) break; if (r.skip === true) continue; streak += 1 }
+                  // 连败真值(0.1.8 ②):failRunStreak 持久字段不受 history 窗口(3 条)顶死;
+                  // 旧数据无字段回退 history 头部计算(跳过不计入连败但会打断计数链)
+                  let streak: number
+                  if (s.failRunStreak !== undefined) streak = s.failRunStreak
+                  else { streak = 0; for (const r of hist) { if (r.ok === true) break; if (r.skip === true) continue; streak += 1 } }
                   return streak >= 2 ? createElement('span', { className: 'o4-bdg w', title: t2('failStreakTip') }, `✗ ${t2('failStreak')} ${streak}`) : null
                 })(),
                 (() => {

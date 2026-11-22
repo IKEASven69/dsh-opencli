@@ -1,3 +1,19 @@
+## 0.1.8 — 2026-11-22
+
+### 真实性判定
+- **空结果徽章诚实化**:合法空数组(#2708 canonical 空)不再渲染成「实测有效 P=1.00」——0.1.7 走查实抓:zhihu hot 返回 `[]` 被标成有货;现在标注 `⚪ 空结果`(判定语义不动:合法空不重试,诚实区分交徽章层),顺带覆盖 pretty-print 多行空数组(`/^\[\s*\]$/`)
+
+### 任务健康面
+- **连败真值**:任务新增持久字段 failRunStreak(run 失败累积/成功清删/跳过不动)——面板连败 chip 与效率账单「连败中」计数不再被 history 窗口(3 条)顶死上限,第 4 连败起显示不再失真;旧数据无字段回退原 history 头部计算(行为零变化);loadState 同款手改容错(非正整数整字段丢弃)
+- **修(实抓)**:loadState 的收窄循环原以「无 pendingCatchup 债则 continue」开头——0.1.7 加进该循环的 stats 形状收窄对多数条目(无债)是死代码;改独立条件,三个字段收窄各自生效
+
+### 质量
+- **saveState 并发写链**:并发写者的落盘按调用顺序串行(body 调用时快照)——修前各写者 writeFile 耗时不同,rename 顺序≠调用顺序,旧状态快照可后落盘覆盖新状态(benchmark flake 根因,归档留痕);原子写(tmp+rename)保持不变
+- **status RPC 5s TTL 缓存**:面板每次刷新实付两次 CLI 子进程(--version + daemon status)——action 连发成本翻倍;TTL 内复用(仅成功路径缓存,失败每次真实重试),daemon-start 后主动清缓存;5s 足够短:面板外手动重启 daemon 下次刷新即见新态
+
+### 文档
+- **能力面对账**(docs/xray-capability-notes.md):第三方扫描 7 项敏感标记逐条对账——eval/base64/system commands 三类计数全部来自仓库开发脚手架目录(.build-tools/,npm 发布物 files 白名单不含),发布物内 eval 0 处、base64 仅分页游标编解码 1 处、进程 spawn 4 处全部指向 OpenCLI CLI;每条附可当场复现的验证命令
+
 ## 0.1.7 — 2026-11-20
 
 ### 一键巡圈(社媒雷达)

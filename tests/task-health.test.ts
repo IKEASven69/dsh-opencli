@@ -29,7 +29,7 @@ class ThPrompt extends Service {
   section(): void {}
 }
 
-type Sched = { id: string; site: string; cron: string; stats?: { ok: number; fail: number; since: string }; healthNote?: string }
+type Sched = { id: string; site: string; cron: string; stats?: { ok: number; fail: number; since: string }; failRunStreak?: number; healthNote?: string }
 type Priv = {
   schedules: Sched[]
   taskHealthCheck: (id: string) => Promise<{ ok: boolean; note?: string }>
@@ -139,17 +139,21 @@ describe('任务健康面(0.1.7 C1:站点预警 + stats 计数)', () => {
       await S.runSiteCommand(sch.site, sch.id) // 成功 run
       expect(sch.stats!.ok).toBe(1)
       expect(sch.stats!.fail).toBe(0)
+      expect(sch.failRunStreak).toBeUndefined() // 成功清删连败真值(省键,语义=0)
       P.runOpencli = async () => ({ exitCode: 1, stdout: '', stderr: 'boom' })
       await S.runSiteCommand(sch.site, sch.id) // 失败 run
       expect(sch.stats!.ok).toBe(1)
       expect(sch.stats!.fail).toBe(1)
+      expect(sch.failRunStreak).toBe(1) // 连败真值累积(0.1.8 ②)
+      await S.runSiteCommand(sch.site, sch.id) // 再败
+      expect(sch.failRunStreak).toBe(2)
     } finally {
       P.runOpencli = origRun
       if (origDs !== undefined) (P as unknown as Record<string, unknown>).daemonStatus = origDs
       P.taskHealthCheck = origHealth
     }
-    // 跳过:健康预检失败 → 提前 return,不进终判块 → stats 不动
-    const before = { ok: sch.stats!.ok, fail: sch.stats!.fail }
+    // 跳过:健康预检失败 → 提前 return,不进终判块 → stats 与连败真值都不动
+    const before = { ok: sch.stats!.ok, fail: sch.stats!.fail, streak: sch.failRunStreak }
     const origHealth2 = P.taskHealthCheck
     P.taskHealthCheck = async () => ({ ok: false, note: '浏览器扩展未连接' })
     try {
@@ -157,5 +161,6 @@ describe('任务健康面(0.1.7 C1:站点预警 + stats 计数)', () => {
     } finally { P.taskHealthCheck = origHealth2 }
     expect(sch.stats!.ok).toBe(before.ok)
     expect(sch.stats!.fail).toBe(before.fail)
+    expect(sch.failRunStreak).toBe(before.streak) // 跳过不动连败真值
   })
 })

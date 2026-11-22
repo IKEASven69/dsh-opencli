@@ -3027,11 +3027,15 @@ ${c.description}`,
         acc.ok += s.stats.ok;
         acc.fail += s.stats.fail;
       }
-      let streak = 0;
-      for (const r of s.history ?? []) {
-        if (r.ok === true) break;
-        if (r.skip === true) continue;
-        streak += 1;
+      let streak;
+      if (s.failRunStreak !== void 0) streak = s.failRunStreak;
+      else {
+        streak = 0;
+        for (const r of s.history ?? []) {
+          if (r.ok === true) break;
+          if (r.skip === true) continue;
+          streak += 1;
+        }
       }
       if (streak >= 2) acc.stuck += 1;
       return acc;
@@ -3505,11 +3509,15 @@ ${r.text}`).join("\n\n")).then((ok) => showToast(ok ? t2("copied") : t2("errReq"
               title: `${t2("statsSince")}${s.stats.since}`
             }, `${t2("okRate")} ${Math.round(s.stats.ok / (s.stats.ok + s.stats.fail) * 100)}% (${s.stats.ok}/${s.stats.ok + s.stats.fail})`) : null,
             (() => {
-              let streak = 0;
-              for (const r of hist) {
-                if (r.ok === true) break;
-                if (r.skip === true) continue;
-                streak += 1;
+              let streak;
+              if (s.failRunStreak !== void 0) streak = s.failRunStreak;
+              else {
+                streak = 0;
+                for (const r of hist) {
+                  if (r.ok === true) break;
+                  if (r.skip === true) continue;
+                  streak += 1;
+                }
               }
               return streak >= 2 ? (0, import_react.createElement)("span", {
                 className: "o4-bdg w",

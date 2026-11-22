@@ -139,6 +139,7 @@ describe('CLI 共存判定(0.1.6 C2:major 不一致/flip 统计/零噪音/status
         return { exitCode: 0, stdout: '{}', stderr: '' }
       }
       P.daemonStatus = async () => ({ running: true, version: '1.8.6', extension: 'connected' })
+      ;(S as unknown as { statusCache?: unknown }).statusCache = undefined // 防用例间渗透(0.1.8 ④)
       const r1 = await S.status()
       expect(r1.ok).toBe(true)
       expect(r1.coexist).toBeDefined()
@@ -147,9 +148,12 @@ describe('CLI 共存判定(0.1.6 C2:major 不一致/flip 统计/零噪音/status
       expect(r1.coexist!.flips7d).toBe(1)
       P.daemonStatus = async () => ({ running: true, version: '2.0.3', extension: 'connected' })
       // 同 major+无翻转:临时指空事件文件,断言省键(不是 coexist: undefined)
+      // statusCache 清缓存(0.1.8 ④):上一调用的 status 已入 TTL 缓存,重桩后须清才见新值
+      // (与 flipCountCache 同款私有清理模式)
       const origFile = P.eventsFile
       P.eventsFile = join(dir, 'empty2.jsonl')
       P.flipCountCache = undefined
+      ;(S as unknown as { statusCache?: unknown }).statusCache = undefined
       try {
         writeFileSync(P.eventsFile, '', 'utf8')
         const r2 = await S.status()
@@ -158,6 +162,43 @@ describe('CLI 共存判定(0.1.6 C2:major 不一致/flip 统计/零噪音/status
     } finally {
       P.runOpencli = origRun
       P.daemonStatus = origDs
+    }
+  })
+
+  it('⑥ status 5s TTL 缓存(0.1.8 ④):TTL 内二连发只付一次 --version;清缓存后重新付;失败不缓存', async () => {
+    const origRun = P.runOpencli
+    const origDs = P.daemonStatus
+    try {
+      let versionCalls = 0
+      P.runOpencli = async (...a: unknown[]) => {
+        if (JSON.stringify(a[0]).includes('--version')) { versionCalls += 1; return { exitCode: 0, stdout: '2.0.3', stderr: '' } }
+        return { exitCode: 0, stdout: '{}', stderr: '' }
+      }
+      P.daemonStatus = async () => ({ running: true, version: '2.0.3', extension: 'connected' })
+      ;(S as unknown as { statusCache?: unknown }).statusCache = undefined
+      const r1 = await S.status()
+      expect(r1.ok).toBe(true)
+      const r2 = await S.status()
+      expect(versionCalls).toBe(1) // TTL 内复用:第二次不再 spawn
+      expect(r2.version).toBe(r1.version)
+      ;(S as unknown as { statusCache?: unknown }).statusCache = undefined
+      const r3 = await S.status()
+      expect(versionCalls).toBe(2) // 清缓存(面板 daemon-start 同款路径)→ 重新付
+      // 失败路径不缓存:CLI 失败每次都真实重试
+      P.runOpencli = async (...a: unknown[]) => {
+        if (JSON.stringify(a[0]).includes('--version')) { versionCalls += 1; return { exitCode: 1, stdout: '', stderr: 'stub down' } }
+        return { exitCode: 0, stdout: '{}', stderr: '' }
+      }
+      ;(S as unknown as { statusCache?: unknown }).statusCache = undefined
+      const r4 = await S.status()
+      expect(r4.ok).toBe(false)
+      const r5 = await S.status()
+      expect(r5.ok).toBe(false)
+      expect(versionCalls).toBe(4) // 失败没进缓存:r4/r5 各真实付一次(3、4)
+    } finally {
+      P.runOpencli = origRun
+      P.daemonStatus = origDs
+      ;(S as unknown as { statusCache?: unknown }).statusCache = undefined
     }
   })
 })
