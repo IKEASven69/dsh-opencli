@@ -516,6 +516,63 @@ function buildCanvasData(traces, evidence, snapshots, range, page) {
   return filtered.slice(offset, offset + limit).map(({ atMs: _a, endMs: _e, ...card }) => card);
 }
 
+// .build-tools/tmp-src/cron-utils.js
+var CRON_BOUNDS = [
+  [
+    0,
+    59
+  ],
+  [
+    0,
+    23
+  ],
+  [
+    1,
+    31
+  ],
+  [
+    1,
+    12
+  ],
+  [
+    0,
+    7
+  ]
+];
+function cronValid(cron) {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  return parts.every((spec, i) => {
+    const [lo, hi] = CRON_BOUNDS[i];
+    return spec.split(",").every((tok) => {
+      if (tok === "*") return true;
+      const step = tok.startsWith("*/");
+      const n = Number(step ? tok.slice(2) : tok);
+      return Number.isFinite(n) && Number.isInteger(n) && n >= (step ? 1 : lo) && n <= hi;
+    });
+  });
+}
+function nextCronFire(cron, from = /* @__PURE__ */ new Date()) {
+  if (!cronValid(cron)) return null;
+  const parts = cron.trim().split(/\s+/);
+  const matchField = (spec, v, lo) => {
+    if (spec === "*") return true;
+    if (spec.startsWith("*/")) {
+      const step = Number(spec.slice(2));
+      return Number.isFinite(step) && step > 0 && (v - lo) % step === 0;
+    }
+    return spec.split(",").some((tok) => Number(tok) === v);
+  };
+  const d = new Date(from.getTime());
+  d.setSeconds(0, 0);
+  d.setMinutes(d.getMinutes() + 1);
+  for (let i = 0; i < 90 * 24 * 60; i++) {
+    if (matchField(parts[0], d.getMinutes(), 0) && matchField(parts[1], d.getHours(), 0) && matchField(parts[2], d.getDate(), 1) && matchField(parts[3], d.getMonth() + 1, 1) && matchField(parts[4], d.getDay(), 0)) return d;
+    d.setMinutes(d.getMinutes() + 1);
+  }
+  return null;
+}
+
 // .build-tools/tmp-src/client.js
 var inject = [
   "slots"
@@ -1264,66 +1321,12 @@ function keyActivate(e) {
     e.currentTarget.click();
   }
 }
-var CRON_BOUNDS = [
-  [
-    0,
-    59
-  ],
-  [
-    0,
-    23
-  ],
-  [
-    1,
-    31
-  ],
-  [
-    1,
-    12
-  ],
-  [
-    0,
-    7
-  ]
-];
 var MODE_LABEL_KEYS = {
   "read-only": "modeReadOnly",
   standard: "modeStandard",
-  autonomous: "modeAutonomous",
-  unrestricted: "modeUnrestricted"
+  autonomous: "modeAuto",
+  unrestricted: "modeUnres"
 };
-function cronValid(cron) {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  return parts.every((spec, i) => {
-    const [lo, hi] = CRON_BOUNDS[i];
-    return spec.split(",").every((tok) => {
-      const step = tok.startsWith("*/");
-      const n = Number(step ? tok.slice(2) : tok);
-      return Number.isFinite(n) && Number.isInteger(n) && n >= (step ? 1 : lo) && n <= hi;
-    });
-  });
-}
-function nextCronFire(cron, from = /* @__PURE__ */ new Date()) {
-  if (!cronValid(cron)) return null;
-  const parts = cron.trim().split(/\s+/);
-  const matchField = (spec, v, lo) => {
-    if (spec === "*") return true;
-    if (spec.startsWith("*/")) {
-      const step = Number(spec.slice(2));
-      return Number.isFinite(step) && step > 0 && (v - lo) % step === 0;
-    }
-    return spec.split(",").some((tok) => Number(tok) === v);
-  };
-  const d = new Date(from.getTime());
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + 1);
-  for (let i = 0; i < 90 * 24 * 60; i++) {
-    if (matchField(parts[0], d.getMinutes(), 0) && matchField(parts[1], d.getHours(), 0) && matchField(parts[2], d.getDate(), 1) && matchField(parts[3], d.getMonth() + 1, 1) && matchField(parts[4], d.getDay(), 0)) return d;
-    d.setMinutes(d.getMinutes() + 1);
-  }
-  return null;
-}
 function sampleQuick(ads) {
   const pool = [];
   for (const a of ads) {
