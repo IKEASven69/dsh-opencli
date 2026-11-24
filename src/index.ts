@@ -35,6 +35,11 @@ import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBench
 import { EVIDENCE_FILE_RE, EVIDENCE_KEEP, buildEvidence, parseEvidenceFileName, saveEvidence, type EvidenceRecord } from './evidence.ts'
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, inQuietHours, parseQuietHours, renderQuietDigest, scrubLocalPaths, scrubUrlParams, type NotifyConfig, type QuietPendingItem } from './notify.ts'
 import { PLUGIN_VERSION } from './version.ts'
+// 0.2.0 H②:宿主 ctx.jobs 最小结构面(守卫式;不 import @deepseek-ai/dsh-jobs——宿主版本
+// 差异下包可能未装)。kind 运行时为字符串(registry 按 <kind>-N 发 id),类型合并在宿主侧。
+interface HostJobOutcome { status: 'completed' | 'killed' | 'failed'; detail?: string }
+interface HostJobHooks { cancel(reason?: string): void; done: Promise<HostJobOutcome>; readOutput?(): string }
+interface HostJobRegistry { start(spec: { kind: string; label: string; run(): HostJobHooks }): string }
 import { CANVAS_CLICK_UNTRUSTED_NOTE, buildCanvasDiscoveryJs, buildCanvasReadJs, buildCoordClickJs } from './vom.ts'
 import { directCapability, directProbe, directExec } from './direct.ts'
 import { composeClick, composeCloseWindow, composeOpen, composeScreenshot, composeScroll, composeState, composeTabs, setCliDistDir, type CliEnvelope } from './direct-compose.ts'
@@ -481,6 +486,25 @@ export class OpencliService extends TypertRemoteService {
     void this.extensionState().catch(() => {})
     void this.injectSystemPrompt()
     if (this.schedules.some((s) => s.enabled)) this.startScheduler()
+    // 0.2.0 H③:宿主 webServer 健康路由(守卫式)——服务缺席/路径冲突/形状不符一律静默
+    // 回现行为;探测/编排面可打 /opencli/health 拿版本与时间
+    try {
+      const ws = (this.ctx as unknown as Record<string, unknown>).webServer as
+        | { register(route: { kind: string; path: string; handler: (req: unknown, res: unknown) => void }): () => void }
+        | undefined
+      if (ws !== undefined && ws !== null && typeof ws.register === 'function') {
+        ws.register({
+          kind: 'exact',
+          path: '/opencli/health',
+          handler: (_req: unknown, res: unknown) => {
+            const r = res as { statusCode?: number; setHeader(key: string, value: string): void; end(body: string): void }
+            r.statusCode = 200
+            r.setHeader('content-type', 'application/json; charset=utf-8')
+            r.end(JSON.stringify({ ok: true, version: PLUGIN_VERSION, at: new Date().toISOString() }))
+          },
+        })
+      }
+    } catch { /* 冲突/缺席:静默回现行为 */ }
     // 命令收件箱:ctl 助手写意图 → 本消费者执行并回写结果。面板/ZCode/任意
     // dsh 会话的 agent 都能用 shell 驱动插件(预设门绕开的生态面)。vitest 里只由专项
     // 用例手动 drain(自动轮询会与隔离目录用例互相踩);单测环境外 3s 一拍。
@@ -1899,6 +1923,7 @@ export class OpencliService extends TypertRemoteService {
     this.schedules.push(entry)
     await this.saveState()
     this.startScheduler()
+    this.emitScheduleChanged(id, 'add') // 0.2.0 H①
     return { ok: true, id, ...(healthNote !== undefined ? { warning: `${entry.site}:${healthNote}` } : {}) }
   }
 
@@ -2551,6 +2576,7 @@ export class OpencliService extends TypertRemoteService {
     hit.enabled = request.enabled !== false
     await this.saveState()
     if (hit.enabled) this.startScheduler()
+    this.emitScheduleChanged(hit.id, 'toggle') // 0.2.0 H①
     return { ok: true }
   }
 
@@ -2655,6 +2681,7 @@ export class OpencliService extends TypertRemoteService {
     this.failStreaks.reset(removedId)
     // 运行级收件箱状态随任务删除清理(0.1.4 候选 5 ①):任务没了,read/archived 键不留孤儿
     purgeInboxFlags(this.state.inboxFlags, removedId)
+    this.emitScheduleChanged(removedId, 'remove') // 0.2.0 H①
     await this.saveState()
     return { ok: true }
   }
@@ -4000,6 +4027,35 @@ export class OpencliService extends TypertRemoteService {
     } catch { /* 目录不可读:跳过 */ }
   }
 
+  /** 0.2.0 H①:任务变更域事件(cordis 事件总线,守卫式)——未来面板/插件可订阅替代轮询;
+   *  事件名命名空间 'opencli/',不含状态详情(订阅方走既有 RPC 拉详情,事件只做通知)。 */
+  private emitScheduleChanged(id: string, action: 'add' | 'remove' | 'toggle' | 'run' | 'skip'): void {
+    try { (this.ctx as unknown as { emit?: (name: string, payload: unknown) => void }).emit?.('opencli/schedule-changed', { id, action, at: new Date().toISOString() }) } catch { /* 旁路:静默 */ }
+  }
+
+  /** 0.2.0 H②:守卫式取宿主 job registry(ctx.get('jobs') 免注入读取;dsh-jobs-local 在宿主
+   *  组合提供)。服务缺席(早期宿主)/形状不符 → null,现行为不变。 */
+  private hostJobs(): { start(spec: { kind: string; label: string; run(): HostJobHooks }): string } | null {
+    try {
+      const j = (this.ctx as unknown as Record<string, unknown>).jobs as HostJobRegistry | undefined
+      return j !== undefined && j !== null && typeof (j as HostJobRegistry).start === 'function' ? (j as HostJobRegistry) : null
+    } catch { return null }
+  }
+
+  /** 0.2.0 H②:调度/手动 run 注册为宿主可观测 job(unowned:调度运行无 owner 会话;
+   *  省略 readOutput=终态输出型 job,只报终态)。kind='opencli'。启动失败/达未 owned
+   *  并发帽(默认 10)→ null,采集照跑;settle 由 runSiteCommand 终点调用。 */
+  private jobStartFor(cmdLine: string): { settle(ok: boolean, detail?: string): void } | null {
+    const jobs = this.hostJobs()
+    if (jobs === null) return null
+    try {
+      let settleFn: ((o: HostJobOutcome) => void) | undefined
+      const done = new Promise<HostJobOutcome>((resolve) => { settleFn = resolve })
+      jobs.start({ kind: 'opencli', label: cmdLine, run: () => ({ cancel: () => { /* 调度运行重试链自管生命周期;宿主 kill 记为 no-op */ }, done }) })
+      return { settle: (ok, detail) => { settleFn?.({ status: ok ? 'completed' : 'failed', ...(detail !== undefined && detail.length > 0 ? { detail } : {}) }) } }
+    } catch { return null }
+  }
+
   private async captureStepShot(session: string | undefined, argv: string[], out: { exitCode: number; stdout: string; stderr: string; unavailable?: string }, major: number, force = false): Promise<string | undefined> {
     if (!this.shotCapture) return undefined
     const sub = String(argv[0] ?? '')
@@ -5051,10 +5107,13 @@ export class OpencliService extends TypertRemoteService {
         // 的桥接规则同口径地把链尾日前移到跳过日——修前严格衔接检查被 skip 日掐断,同段历史
         // 在线算 1 日、重启重建算 2 日,「连续第 N 日」在重启前后凭空变大
         this.failStreaks.keepAlive(id, new Date())
+        this.emitScheduleChanged(id, 'skip') // 0.2.0 H①:跳过也是任务面变化(面板/订阅方零轮询可知)
         return
       }
       healthNote = hc.note
     } catch { /* 预检异常 → 放行(fail-open) */ }
+    // 0.2.0 H②:宿主可观测 job(守卫式;跳过路径不注册——宿主面只呈现真实执行)
+    const hostJob = this.jobStartFor(siteCmd)
     const attempts = Math.max(1, Math.min(5, sch?.retry ?? 3))
     // notify 读取只剩外送门一处(sch?.notify !== false 直读):诊断面(熔断开窗/schedule-failed,
     // 语义修 ③)已与通知解耦,不再需要独立的 notify 变量
@@ -5082,6 +5141,8 @@ export class OpencliService extends TypertRemoteService {
       // 补跑清债(0.1.6 C1,canary 同规):canary 补跑成功=当日债已偿;失败不清(canary 自身
       // 失败不代表环境恢复失败,窗口有界,出结果后下个间隔可再试)
       if (r.ok && sch?.pendingCatchup?.forDay === localDateKey(new Date())) delete sch.pendingCatchup
+      hostJob?.settle(r.ok, (hist[0]?.summary ?? '').slice(0, 80))
+      this.emitScheduleChanged(id, 'run')
       return
     }
     const cmdLine = norm.length > 0 ? norm : siteCmd
@@ -5447,6 +5508,9 @@ ${r.stderr}`
       if (lastOk) { sch.stats.ok += 1; delete sch.failRunStreak }
       else { sch.stats.fail += 1; sch.failRunStreak = (sch.failRunStreak ?? 0) + 1 }
     }
+    // 0.2.0 H②/H①:宿主 job 终态结算 + 任务面变化事件(订阅方零轮询可知)
+    hostJob?.settle(lastOk, (hist[0]?.summary ?? '').slice(0, 80))
+    this.emitScheduleChanged(id, 'run')
     // 补跑清债/续债(0.1.6 C1):
     //  - 成功(任何 run,含 manual)= 当日债已偿 → 清;
     //  - 补跑命令级失败(非熔断短路)= 试过不循环(失败照常入账,不静默)→ 清;

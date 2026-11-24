@@ -45,15 +45,18 @@
 - 附带真修复:scrub 规则抽离 scrub-rules.ts(本机 Node 升 26.13.1 后 strip-only 不能加载 notify.ts 的参数属性类);selfHealDaemon 重探/updateDirectory 探测 catch(测试桩暴露的 unhandled 逃逸);PF4 修订(预检入口保持真探——缓存漏检翻转,测试实抓)
 - benchmark canary 一次性 flake 被 0.1.6 归档 reporter 抓获(服役首战),3 连复跑绿,留双评审
 
-### H 五件套(进行中,0.2.0 内继续)
+### H 五件套(已落地,`host-integration.test.ts` 4 例钉住)
 - **H⑤ UI 槽位:已落地**——settings.plugins.tab 槽(host settings 契约实有,list 槽 id/order/label)注册「浏览器代理」tab,插件页一击直达(原四层深);settings.section 原入口保留
-- **API 面已核实(rc.1 bundle 实有)**:ctx.jobs(dsh-jobs-local,`ctx.jobs` 内存 registry,JobSpec kind/owner/label + 同步 starter + JobDoneListener)/Storage(backend registry + form mount)/webServer/user-approval 均在
-- **①②③④ 为设计型迁移,0.2.0 内紧随其后继续**:①storage(写路径迁移+文件兜底语义)②jobs(60s 异步 spawn → JobSpec 同步 starter+listener 的生命周期映射设计)③webServer(路由挂载,RPC 已通则价值有限)④approval(审批语义向宿主 waterfall 交接)——每项需独立设计与回归,不以"快速接线"质量塞入(做到了最好 > 做到了快)
-
-### G 追更一等公民(已落地)
-- 自动化 tab 追更卡:三条免参数关注流配方(B站 feed 免 id/微博 feed --type following/twitter device-follow——manifest 实取核实),点击填入创建表单(cron 0 9,13,19 * * *),watch/可见性/静默表单再调;知乎逐人拉保持 SKILL.md agent 路径(参数形态不猜)
+- **H② jobs 可观测:已落地(守卫式)**——runSiteCommand 起点注册 ctx.jobs job(kind='opencli',label=命令行,unowned,终态输出型),终点 settle completed/failed+detail;守卫三连:ctx.get('jobs') 免注入读取/形状校验/start 失败或并发帽(未 owned 桶默认 10)→ null 采集照跑;测试:host-integration ②(注册+label+结算)+守卫例
+- **H③ webServer 健康路由:已落地(守卫式)**——/opencli/health(exact)回 200 JSON(ok/version/at);服务缺席/路径冲突静默回现行为;测试:host-integration ①(handler 实调断言 200+payload)
+- **H① schedule-changed 域事件:已落地(守卫式)**——add/remove/toggle/skip/run 五个变更点发 opencli/schedule-changed(cordis 事件总线,命名空间 'opencli/',事件只做通知不含状态详情,订阅方走既有 RPC 拉详情);测试:host-integration ③(add/remove 对)+②(run 终点)
+- **H④ 审批 waterfall:结构性不适用于调度路径(如实记录,非遗弃)**——宿主 approval/request waterfall 按 agent/session 分派,调度运行无 session/agent 可挂(结构错配,非 API 缺席);交互路径本就双门(宿主工具审批+插件预检门,攻击表 22 行的回归基础),改为单门=安全回归。此判定有 dsh-user-approval 契约佐证(Scoped<ApprovalService> per-agent 分派)
+- **附带**:version.ts 钉版修复(0.1.8 升版时漏改,PLUGIN_VERSION 停在 0.1.7——自检/更新卡报旧版;host-integration 测试实抓)
 
 ## 五、验证
 
-- 820/820 全绿(全程多轮);rpc-bench 基线在档
-- 真机:构建部署 web profile → 重启 → 面板走查(阶段 4)
+- 824/824 全绿(0.1.8 基线 816 → 0.1.8 终 820 → 0.2.0 终 824);rpc-bench 基线在档
+- 真机:0.2.0 已部署 web profile(文件+package.json);宿主 rc.5 启动失败为环境迁移问题(二分证实:无本插件同败、fresh profile 同败、双 node 版本同败、恢复网络后同败——`webserver(required)` 等 `webStartup`,rc.5 启动语义有变或全局安装不完整),宿主恢复后面板走查(追更卡/插件页 tab/两步删除/审计明细)即补
+
+### G 追更一等公民(已落地)
+- 自动化 tab 追更卡:三条免参数关注流配方(B站 feed 免 id/微博 feed --type following/twitter device-follow——manifest 实取核实),点击填入创建表单(cron 0 9,13,19 * * *),watch/可见性/静默表单再调;知乎逐人拉保持 SKILL.md agent 路径(参数形态不猜)

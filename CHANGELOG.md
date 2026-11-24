@@ -25,6 +25,14 @@
 - **scrub 规则抽离**(src/scrub-rules.ts):规则与函数从 notify.ts 抽出为 strip-only 可加载文件(fallback-drill 直引 TS 源;notify.ts 的构造器参数属性类在 Node 26 剥离模式不可加载)——适配 Node ≥23.6/26 原生类型剥离,老 Node 仍支持类型转换档运行
 - **健壮性**:daemon 自愈重探/目录文案探测的自身爆炸不再以 unhandled rejection 逃逸(fail-open 纪律归 failed/null);PF4 缓存曾漏检窗内版本翻转——测试实抓后修订,预检入口保持真探(诚实口径,PLAN 记录全程)
 
+### 宿主原生集成(五件套,守卫式)
+- **调度可观测(ctx.jobs)**:每次定时/手动采集在宿主 job registry 注册可观测 job(kind='opencli',label=命令行,终态输出型)——宿主面可见运行中/已完成与终态摘要;服务缺席、形状不符或达并发帽一律静默回现行为(host-integration 测试钉住注册/结算/守卫三面)
+- **健康路由(webServer)**:/opencli/health 回 200 JSON(ok/version/at)——探测编排面免面板直达;守卫式,缺席/冲突静默
+- **任务变更域事件**:add/remove/toggle/skip/run 五点发 opencli/schedule-changed(cordis 事件总线,命名空间 'opencli/')——面板与第三方插件可订阅替代轮询,事件只做通知、详情走既有 RPC
+- **审批边界(如实)**:调度路径无 session/agent 可挂,宿主 approval/request waterfall 结构性不适用;交互路径维持双门(宿主工具审批+插件预检门,安全回归基准不变)
+- **插件页直达**:settings.plugins.tab 槽注册「浏览器代理」tab(见上面板直达节)
+- **修**:version.ts 钉版漏改(0.1.8 升版时 PLUGIN_VERSION 停在 0.1.7,自检/更新卡报旧版)——集成测试实抓后修正至 0.2.0
+
 ## 0.1.8 — 2026-11-22
 
 ### 真实性判定
