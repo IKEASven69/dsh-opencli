@@ -65,10 +65,14 @@ const STR = {
     coT: '检测到两个 CLI 在互抢 daemon', coDescF: (c: number, d: number, n: number) => `插件用的 CLI 是 v${c}.x,daemon 却跑着 v${d}.x——大概率同时装着 OpenCLIApp 内置 CLI 与全局 CLI,二者互杀(#2761),daemon 近 7 天已翻转 ${n} 次;留一个,断连与熔断就会少`, coDescFlipF: (n: number) => `daemon 近 7 天翻转 ${n} 次(同版本重启或互杀前兆——App 内置守护与全局 CLI 二选一更稳)`, coA1: '退出或升级 OpenCLIApp(内置 CLI 与全局 CLI 二选一)', coA2: '或把本插件钉定到当前 CLI(系统环境变量,只复制不执行):', coCopy: '复制钉定命令',
     okRate: '成功率', statsSince: '统计自 ', failStreak: '连败', failStreakTip: '最近几次连续失败(跳过不计)——打开浏览器/检查登录态,或考虑暂停这个任务',
     billT: '效率账单', billLine: (n: number, m: number, t: string) => `${n} 个定时任务 · 累计成功采集 ${m} 次 · 按人工逐一刷新约 3 分钟/次估算,已为你省下约 ${t}(估算口径)`, billFail: (n: number) => `失败 ${n} 次(失败行可查原因)`, billStuck: (n: number) => `${n} 个任务连败中(建议检查登录态或暂停)`,
-    sweepT: '一键巡圈', sweepSub: '串行采一轮默认社媒面(B站/微博/知乎/小红书/V2EX/掘金:热榜+关注流,8 条只读命令,已避开已知坏点)——结果就地成简报,可复制给 agent 做交叉热点分析或沉淀进知识库', sweepGo: '🔍 一键巡圈', sweepRunning: '巡圈中', sweepDone: (ok: number, n: number) => `巡圈完成:${ok}/${n} 站成功`,
+    sweepT: '一键巡圈', sweepSub: '采一轮默认社媒面(B站/微博/知乎/小红书/V2EX/掘金:热榜+关注流,8 条只读命令,已避开已知坏点)——同域串行跨域并行,结果就地成简报,可复制给 agent 做交叉热点分析或沉淀进知识库', sweepGo: '🔍 一键巡圈', sweepRunning: '巡圈中', sweepStop: '停止', sweepDone: (ok: number, n: number) => `巡圈完成:${ok}/${n} 站成功`,
+    cronBad: 'cron 格式不对(5 段:分 时 日 月 周)', cronNext: '下次执行:',
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     hintT: '你是不是想用这些?点击直接跑:',
     quickT: '实用快捷', quickSub: '点击 → 填入输入框;Ctrl+Enter 直接跑', quickMore: '↑ 每次刷新从你的站点目录抽 6 个——170+ 站都能这么用',
+    // 0.2.0 A 包:删除二次确认/异步触发如实文案/回放进度与失败即停/登录态未巡检/webhook 凭据显隐
+    delConfirm: '确认删?', runOk: '已触发,后台执行中', replayDone: (n: number) => `回放完成:${n} 步`, replayFail: (i: number, n: number) => `第 ${i}/${n} 步失败,已停止`, notChecked: '未巡检', notCheckedTip: '尚未巡检登录态——点此发起', nfShow: '显示', nfHide: '隐藏',
+    disConfirm: '再点一次确认禁用', heroSites: '站点', heroSiteUnit: '站', heroExt: 'Chrome 扩展', heroAudit: '拦截(7d)', heroAuditUnit: '次', heroMode: '自动化模式', recSteps: (n: number) => `${n} 步`,
     loginT: '登录态巡检', loginSub: '绿=已登 黄=超时 红=未登 · 状态条只亮灯,操作在这里',
     online: '在线', expired: '失效', unknown: '未知', timeout: '超时', openLogin: '打开登录',
     secT: '安全中心', secSub: '写操作全部经过你批准', lastBlocked: '最近拦截',
@@ -87,7 +91,7 @@ const STR = {
     cmdT: '命令', cmdSearch: '搜索站点或命令,如:热榜 / search / bilibili',
     cmdFmt: '点命令行 → 复制调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)',
     knowExp: '导出知识卡', knowExpDo: '导出中…',
-    timeline: '时间线', reportBtn: '生成报告', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=内容规模)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计', tlFlow: '画布卡片流(本站近 24h,替代运行史文本)',
+    timeline: '时间线', reportBtn: '生成报告', tlT: '采集快照趋势', tlSub: '每根柱 = 一次成功采集(体积=快照落盘大小)', tlEmpty: '暂无快照——到点采集后这里会长出来', tlN: (n: number) => `${n} 份快照`, tlTotal: '累计', tlFlow: '画布卡片流(本站近 24h,替代运行史文本)',
     // 画布:全活动卡片流;文案与色调口径见 canvasCardTone/CANVAS_SUSPECT_P
     canvasT: '活动画布', canvasSub: '轨迹 / 写操作 / 定时采集聚合为卡片 · 点卡片展开步骤回放 · 拖拽平移,滚轮缩放 · canvas_read 读到的网页画布位图会以图片步骤出现在卡片里',
     canvasEmpty: '暂无活动——跑一条命令或到点采集后,这里会长出卡片',
@@ -180,10 +184,13 @@ const STR = {
     coT: 'Two CLIs are fighting over one daemon', coDescF: (c: number, d: number, n: number) => `This plugin runs CLI v${c}.x but the daemon is v${d}.x — likely both OpenCLIApp's bundled CLI and the global CLI are installed, killing each other (#2761); ${n} daemon flips in the last 7 days. Keep one and the disconnects/meltdowns drop`, coDescFlipF: (n: number) => `daemon flipped ${n} times in the last 7 days (same-version restarts or a coexistence precursor — keeping one of the two daemons is steadier)`, coA1: 'Quit or upgrade OpenCLIApp (keep one of the two CLIs)', coA2: 'Or pin this plugin to the current CLI (system env var — copy only, never auto-runs):', coCopy: 'Copy pin command',
 
     billT: 'Efficiency ledger', billLine: (n: number, m: number, t: string) => `${n} schedules · ${m} successful collections so far · at ~3 min per manual sweep, that is roughly ${t} of your time saved (estimate)`, billFail: (n: number) => `${n} failures (see failure rows for causes)`, billStuck: (n: number) => `${n} task(s) on a losing streak (check login or pause)`,
-    sweepT: 'One-tap sweep', sweepSub: 'Serially collect the default social surface (Bilibili/Weibo/Zhihu/XHS/V2EX/Juejin: hot lists + follow feeds, 8 read-only commands, known broken spots avoided) — results render in place; copy them for agent-level cross-site analysis or sink into the knowledge base', sweepGo: '🔍 Sweep now', sweepRunning: 'Sweeping', sweepDone: (ok: number, n: number) => `Sweep done: ${ok}/${n} sites ok`,
+    sweepT: 'One-tap sweep', sweepSub: 'Collect the default social surface (Bilibili/Weibo/Zhihu/XHS/V2EX/Juejin: hot lists + follow feeds, 8 read-only commands, known broken spots avoided) — same-site serial, cross-site parallel; results render in place, copy for agent-level analysis or sink into the knowledge base', sweepGo: '🔍 Sweep now', sweepRunning: 'Sweeping', sweepStop: 'Stop', sweepDone: (ok: number, n: number) => `Sweep done: ${ok}/${n} sites ok`,
+    cronBad: 'Bad cron (5 fields: min hour dom mon dow)', cronNext: 'Next run:',
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     hintT: 'Did you mean? Click to run:',
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run', quickMore: '↑ 6 picked from your catalog on each refresh — 170+ sites work like this',
+    delConfirm: 'Sure?', runOk: 'Triggered — running in background', replayDone: (n: number) => `Replay done: ${n} steps`, replayFail: (i: number, n: number) => `Step ${i}/${n} failed — stopped`, notChecked: 'Not checked', notCheckedTip: 'Login state not checked yet — click to run', nfShow: 'Show', nfHide: 'Hide',
+    disConfirm: 'Click again to disable', heroSites: 'sites', heroSiteUnit: 'adapters', heroExt: 'Chrome extension', heroAudit: 'Blocks (7d)', heroAuditUnit: '×', heroMode: 'Automation mode', recSteps: (n: number) => `${n} steps`,
     loginT: 'Login check', loginSub: 'green=logged-in yellow=timeout red=expired · status bar shows dots, actions live here',
     online: 'online', expired: 'expired', unknown: 'unknown', timeout: 'timeout', openLogin: 'Open login',
     secT: 'Security center', secSub: 'Every write goes through your approval', lastBlocked: 'Blocked (7d)',
@@ -202,7 +209,7 @@ const STR = {
     cmdT: 'Commands', cmdSearch: 'Search sites or commands, e.g. trending / search / bilibili',
     cmdFmt: 'Click a command row → copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)',
     knowExp: 'Export knowledge cards', knowExpDo: 'Exporting…',
-    timeline: 'Timeline', reportBtn: 'Build report', tlT: 'Collection snapshot trend', tlSub: 'Each bar = one successful collection (size = content scale)', tlEmpty: 'No snapshots yet — they grow after scheduled runs', tlN: (n: number) => `${n} snapshots`, tlTotal: 'total', tlFlow: 'Canvas card flow (this site, last 24h — replaces text history)',
+    timeline: 'Timeline', reportBtn: 'Build report', tlT: 'Collection snapshot trend', tlSub: 'Each bar = one successful collection (size = snapshot file size)', tlEmpty: 'No snapshots yet — they grow after scheduled runs', tlN: (n: number) => `${n} snapshots`, tlTotal: 'total', tlFlow: 'Canvas card flow (this site, last 24h — replaces text history)',
     canvasT: 'Activity canvas', canvasSub: 'Traces, write evidence and scheduled runs as cards · click a card to replay its steps · drag to pan, wheel to zoom · canvas_read bitmaps show up as image steps',
     canvasEmpty: 'No activity yet — cards appear after your first command or scheduled run',
     canvasZoomIn: 'Zoom in', canvasZoomOut: 'Zoom out', canvasReplay: 'Step replay', canvasMore: 'Load more',
@@ -297,6 +304,56 @@ async function rpc<T>(method: string, args: Record<string, unknown> = {}): Promi
   } catch (e) {
     return { ok: false, error: { message: e instanceof Error ? e.message : String(e) } }
   }
+}
+
+// 0.2.0 C-H7:cron 本地校验 + 下次触发预览(纯函数;与服务端 cronMatches 同款 5 段语义:
+// *、数字、逗号、*/步长;域界 分0-59 时0-23 日1-31 月1-12 周0-7)。预览逐分钟扫描上限 90 天,
+// 超过返回 null(UI 显示为不渲染预览行,不撒谎)。服务端仍是权威,此处只是提交前提示。
+const CRON_BOUNDS: Array<[number, number]> = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]]
+// 0.2.0 D-M9:自动化模式档位本地化(hero 卡此前显示英文原枚举 'standard')
+const MODE_LABEL_KEYS: Record<string, string> = { 'read-only': 'modeReadOnly', standard: 'modeStandard', autonomous: 'modeAutonomous', unrestricted: 'modeUnrestricted' }
+function cronValid(cron: string): boolean {
+  const parts = cron.trim().split(/\s+/)
+  if (parts.length !== 5) return false
+  return parts.every((spec, i) => {
+    const [lo, hi] = CRON_BOUNDS[i]!
+    return spec.split(',').every((tok) => {
+      const step = tok.startsWith('*/')
+      const n = Number(step ? tok.slice(2) : tok)
+      return Number.isFinite(n) && Number.isInteger(n) && n >= (step ? 1 : lo) && n <= hi
+    })
+  })
+}
+function nextCronFire(cron: string, from = new Date()): Date | null {
+  if (!cronValid(cron)) return null
+  const parts = cron.trim().split(/\s+/)
+  const matchField = (spec: string, v: number, lo: number): boolean => {
+    if (spec === '*') return true
+    if (spec.startsWith('*/')) { const step = Number(spec.slice(2)); return Number.isFinite(step) && step > 0 && (v - lo) % step === 0 }
+    return spec.split(',').some((tok) => Number(tok) === v)
+  }
+  const d = new Date(from.getTime())
+  d.setSeconds(0, 0)
+  d.setMinutes(d.getMinutes() + 1)
+  for (let i = 0; i < 90 * 24 * 60; i++) {
+    if (matchField(parts[0]!, d.getMinutes(), 0) && matchField(parts[1]!, d.getHours(), 0)
+      && matchField(parts[2]!, d.getDate(), 1) && matchField(parts[3]!, d.getMonth() + 1, 1)
+      && matchField(parts[4]!, d.getDay(), 0)) return d
+    d.setMinutes(d.getMinutes() + 1)
+  }
+  return null
+}
+
+// 0.2.0 A-M18:从站点目录随机抽 6 条命令(禁用适配器跳过;Fisher-Yates 后取头)——快捷区
+// 「每次刷新抽 6 个」文案的实现;常驻 4 条精选保留其上,抽选行紧随其后
+function sampleQuick(ads: AdapterInfo[]): Array<{ label: string; cmd: string }> {
+  const pool: Array<{ label: string; cmd: string }> = []
+  for (const a of ads) {
+    if (a.disabled === true) continue
+    for (const c of a.commands ?? []) pool.push({ label: a.name, cmd: `site ${a.name} ${c}` })
+  }
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const tmp = pool[i]!; pool[i] = pool[j]!; pool[j] = tmp }
+  return pool.slice(0, 6)
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -622,7 +679,9 @@ const CSS = `
 `
 
 function Panel(): ReturnType<typeof createElement> {
-  const [lang, setLang] = useState<Lang>('zh')
+  // 0.2.0 D-L1:语言持久化(localStorage,重开面板不再恒回中文)
+  const [lang, setLang] = useState<Lang>(() => { try { return localStorage.getItem('o4lang') === 'en' ? 'en' : 'zh' } catch { return 'zh' } })
+  const switchLang = (l: Lang): void => { setLang(l); try { localStorage.setItem('o4lang', l) } catch { /* 隐私模式忽略 */ } }
   const t = (k: StrKey): string => (STR[lang][k] ?? STR.zh[k]) as string
   type SelfCheckResult4 = SelfCheckResult
   type SelfCheckResult = {
@@ -636,11 +695,16 @@ function Panel(): ReturnType<typeof createElement> {
     upgradeCmd?: string
     error?: string
   }
-  const [tab, setTab] = useState<'ov' | 'cmd' | 'auto' | 'sec' | 'cv'>('ov')
+  // 0.2.0 D-L10:tab 记忆(高频 tab 是自动化,重开面板不再恒回总览;坏值回落总览)
+  const [tab, setTab] = useState<'ov' | 'cmd' | 'auto' | 'sec' | 'cv'>(() => { try { const t = localStorage.getItem('o4tab'); return t === 'cmd' || t === 'auto' || t === 'sec' || t === 'cv' ? t : 'ov' } catch { return 'ov' } })
+  useEffect(() => { try { localStorage.setItem('o4tab', tab) } catch { /* 隐私模式忽略 */ } }, [tab])
   const [phase, setPhase] = useState<'loading' | 'ready'>('loading')
   const [status, setStatus] = useState<PanelStatus | null>(null)
   const [settings, setSettings] = useState<SettingsResult | null>(null)
   const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
+  // 0.2.0 A-M18:快捷区抽选——quickMore 文案称「每次刷新从站点目录抽 6 个」,实现此前写死 4 条
+  // 与文案不符;现在每次 adapters 加载随机抽 6 条只读命令(禁用适配器跳过),常驻 4 条保留其上
+  const [quickSample, setQuickSample] = useState<Array<{ label: string; cmd: string }>>([])
   const [schedules, setSchedules] = useState<SchedItem[]>([])
   const [autoMode, setAutoMode] = useState('standard')
   const [audit, setAudit] = useState<AuditListResult | null>(null)
@@ -651,7 +715,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [selfCheck, setSelfCheck] = useState<SelfCheckResult | null>(null)
   const [toast, setToast] = useState<ToastMsg | null>(null)
   // 试试看
-  const [runInput, setRunInput] = useState('site zhihu hot')
+  const [runInput, setRunInput] = useState('') // 0.2.0 D-L13:默认留空靠 placeholder 示例,默认值与 placeholder 同文像死输入框
   const [running, setRunning] = useState(false)
   const [runOut, setRunOut] = useState<{ cmd: string; text: string; ok: boolean } | null>(null)
   const [runHints, setRunHints] = useState<Array<[string, string]>>([])
@@ -668,6 +732,7 @@ function Panel(): ReturnType<typeof createElement> {
   // 自动化
   // 通知通道(D):平台下拉+URL+测试按钮(ctl notify set/test 的面板同款)
   const [nfPlatform, setNfPlatform] = useState('feishu')
+  const [nfShow, setNfShow] = useState(false) // 0.2.0 A-M15:webhook URL 可含加签 secret,默认遮蔽
   const [nfUrl, setNfUrl] = useState('')
   const [nfBusy, setNfBusy] = useState(false)
   // 推送通道(0.1.4 候选 1):Bark/ntfy/Pushover 预设 + 凭据两格(凭据框/附加框)——
@@ -693,7 +758,9 @@ function Panel(): ReturnType<typeof createElement> {
   const [schedSel, setSchedSel] = useState<Set<string>>(new Set())
   const [schedSrc, setSchedSrc] = useState<'all' | 'agent' | 'chat' | 'panel' | 'ctl'>('all')
   // 一键巡圈(0.1.7 社媒雷达):串行 try-run 默认清单,逐站落状态;结果就地渲染简报卡
-  const [sweep, setSweep] = useState<{ busy: boolean; done: number; total: number; rows: Array<{ line: string; ok: boolean; text: string }> }>({ busy: false, done: 0, total: 0, rows: [] })
+  const [sweep, setSweep] = useState<{ busy: boolean; done: number; total: number; rows: Array<{ line: string; ok: boolean | null; text: string }> }>({ busy: false, done: 0, total: 0, rows: [] })
+  // 0.2.0 C-H12/M12:巡圈单站简报展开(默认截 420 字防瀑布,点击行展开全量)
+  const [sweepOpen, setSweepOpen] = useState<number | null>(null)
   const [schedBatchBusy, setSchedBatchBusy] = useState(false)
   const [recordings, setRecordings] = useState<Recording[]>(() => {
     try { return JSON.parse(localStorage.getItem('dsh-opencli-recordings') ?? '[]') as Recording[] } catch { return [] }
@@ -755,7 +822,7 @@ function Panel(): ReturnType<typeof createElement> {
     ])
     if (st.ok && st.value !== undefined) setStatus(st.value)
     if (se.ok && se.value !== undefined) setSettings(se.value)
-    if (ad.ok && ad.value !== undefined && ad.value.ok) setAdapters(ad.value.adapters)
+    if (ad.ok && ad.value !== undefined && ad.value.ok) { setAdapters(ad.value.adapters); setQuickSample(sampleQuick(ad.value.adapters)) }
     if (mode.ok && mode.value !== undefined) setAutoMode(mode.value.mode)
     if (sch.ok && sch.value !== undefined) setSchedules(sch.value.schedules)
     if (au.ok && au.value !== undefined) setAudit(au.value)
@@ -765,6 +832,8 @@ function Panel(): ReturnType<typeof createElement> {
   }
 
   useEffect(() => { swrHydrate(); void reload() }, [])
+  // 0.2.0 A-H5:面板卸载时清掉「立即跑」的刷新定时器(此前组件卸载后仍盲刷至 240s)
+  useEffect(() => () => { runTimersRef.current.forEach((t) => window.clearTimeout(t)) }, [])
   // watch 命中可见性:挂载时拉一次 ingest-events(总览健康区下 🔔 徽章行的数据源);
   // 拉取失败静默保持 null → 不渲染该行,绝不占错误位
   useEffect(() => {
@@ -797,11 +866,15 @@ function Panel(): ReturnType<typeof createElement> {
   const setApproval = async (enabled: boolean): Promise<void> => {
     const r = await rpc<ApprovalSetResult>('approval-set', { request: { enabled } })
     if (r.ok && r.value !== undefined && r.value.ok) setSettings((s) => (s === null ? null : { ...s, approvalOn: enabled }))
+    else showToast(r.error?.message ?? t2('errReq'), false) // 0.2.0 A-H14:失败不再静默保持旧值
   }
 
   const setMode = async (mode: string): Promise<void> => {
     const r = await rpc('automation-mode-set', { request: { mode } } as unknown as Record<string, unknown>)
-    if (r.ok) setAutoMode(mode)
+    const v = r.value as { ok?: boolean; error?: string } | undefined
+    // 0.2.0 A-M14:payload ok:false 与 transport 失败都如实提示,不更新视觉态(回滚由 React 重渲染完成)
+    if (r.ok && v?.ok !== false) setAutoMode(mode)
+    else showToast(v?.error ?? r.error?.message ?? t2('errReq'), false)
   }
 
   const a2includes = (guess: string, name: string): boolean => guess.length >= 3 && (name.includes(guess) || guess.includes(name))
@@ -866,15 +939,24 @@ function Panel(): ReturnType<typeof createElement> {
     if (r.ok && r.value?.ok !== false) {
       setNlDone(t2('nlApplied')); setNlPreview(null); setNlInput('')
     } else {
-      setNlErr(r.value?.error ?? r.error?.message ?? '执行失败')
+      setNlErr(r.value?.error ?? r.error?.message ?? t2('errReq'))
     }
   }
 
+  // 0.2.0 D-M1:禁用确认改面板内联两步(原生 window.confirm 与双语面板脱节)——首点武装(3s
+  // 自动还原+提示),再点才执行;启用方向无破坏性,直接执行
+  const [disArm, setDisArm] = useState<string | null>(null)
   const toggleDisable = async (name: string, disabled: boolean): Promise<void> => {
-    if (disabled === false || window.confirm(t2('confirmDisable')(name))) {
-      const r = await rpc<AdapterDisableResult>('adapter-disable', { request: { name, disabled } })
-      if (r.ok && r.value !== undefined && r.value.ok) setAdapters((prev) => (prev === null ? prev : prev.map((a) => (a.name === name ? { ...a, disabled } : a))))
+    if (disabled === true && disArm !== name) {
+      setDisArm(name)
+      showToast(t2('confirmDisable')(name) + ' ' + t2('disConfirm'), false)
+      window.setTimeout(() => setDisArm((cur) => (cur === name ? null : cur)), 3000)
+      return
     }
+    setDisArm(null)
+    const r = await rpc<AdapterDisableResult>('adapter-disable', { request: { name, disabled } })
+    if (r.ok && r.value !== undefined && r.value.ok) setAdapters((prev) => (prev === null ? prev : prev.map((a) => (a.name === name ? { ...a, disabled } : a))))
+    else showToast(r.error?.message ?? t2('errReq'), false)
   }
 
   const copyCmd = async (key: string, text: string): Promise<void> => {
@@ -914,7 +996,10 @@ function Panel(): ReturnType<typeof createElement> {
     if (nfBusy || nfUrl.trim().length === 0) return
     setNfBusy(true)
     const cfg = await rpc<{ config?: { channels: Array<Record<string, unknown>> } }>('notify-config')
-    const channels = (cfg.value?.config?.channels ?? []).filter((c) => c.type !== 'webhook')
+    // 0.2.0 A-H9(真 bug 修复):此前 filter(type !== 'webhook') 把飞书/钉钉/企微/TG/通用五个
+    // webhook 系平台全部静默清掉再写当前一条——配多平台的用户保存即丢配置。改为只替换同
+    // platform 的 webhook 通道,其余平台与非 webhook 系(Bark/ntfy/Pushover/dsh)原样保留。
+    const channels = (cfg.value?.config?.channels ?? []).filter((c) => !(c.type === 'webhook' && (c as { platform?: unknown }).platform === nfPlatform))
     const tpl = nfTpl.trim()
     channels.push({ type: 'webhook', url: nfUrl.trim(), enabled: true, platform: nfPlatform, ...(tpl.length > 0 ? { template: tpl } : {}) })
     const r = await rpc<{ ok: boolean; error?: string }>('notify-config', { request: { channels } } as unknown as Record<string, unknown>)
@@ -986,9 +1071,14 @@ function Panel(): ReturnType<typeof createElement> {
   const visSelect = (value: string, onChange: (v: string) => void, style: Record<string, string>): ReturnType<typeof createElement> =>
     createElement('select', { className: 'o4-in', style, title: t2('visTip'), value, onChange: (e: { target: { value: string } }) => onChange(e.target.value) },
       ...VIS_OPTIONS.map(([v, label]) => createElement('option', { key: v, value: v }, `${t2('visLabel')}:${label}`)))
+  // 0.2.0 A-H3:删除二次确认(点一次变「确认删?」,3s 不点自动还原;再点才真删)
+  const [delArm, setDelArm] = useState<string | null>(null)
+  // 0.2.0 A-H5:立即跑行内执行态 + 受控刷新定时器(卸载/换任务时清理,不再盲撒 9 个到 240s)
+  const [runNowId, setRunNowId] = useState<string | null>(null)
+  const runTimersRef = useRef<number[]>([])
   const removeSchedule = async (id: string): Promise<void> => {
     const r = await rpc('schedule-remove', { request: { id } } as unknown as Record<string, unknown>)
-    if (r.ok) void loadSchedules()
+    if (r.ok) { setDelArm(null); void loadSchedules() } else showToast(r.error?.message ?? t2('errReq'), false)
   }
   // 批量启停:循环既有 schedule-toggle,不新增 RPC;全部完成后一次刷新(单条 toggle 每次都刷,n 条会刷 n 遍)
   const batchToggle = async (enabled: boolean): Promise<void> => {
@@ -1022,12 +1112,17 @@ function Panel(): ReturnType<typeof createElement> {
   const toggleTimeline = (id: string): void => setTimelineFor(timelineFor === id ? null : id)
   const runScheduleNow = async (id: string): Promise<void> => {
     const r = await rpc('schedule-run-now', { p: { id } } as unknown as Record<string, unknown>)
-    showToast(r.ok ? 'run now ✓' : (r.error?.message ?? t2('errReq')), r.ok)
+    // 0.2.0 A-H5 + M4:文案如实化(schedule-run-now 只是入队,异步执行——此前 'run now ✓' 恒报成功)
+    showToast(r.ok ? t2('runOk') : (r.error?.message ?? t2('errReq')), r.ok)
     // 重试链路(默认 3 次 × 15s 退避,风控墙 2min)远长于单次刷新窗口——此前只在 +2.5s 刷一次,
     // 行内"上次/计数"整个周期停在旧值,与时间线的失败记录自相矛盾(GUI 走查 2026-10-08)。
-    // 分散刷新覆盖完整重试周期;schedule-list 是幂等轻量 RPC,多刷无副作用。
-    for (const ms of [2_500, 20_000, 40_000, 70_000, 100_000, 130_000, 160_000, 200_000, 240_000]) {
-      window.setTimeout(() => { void loadSchedules() }, ms)
+    // 0.2.0 A-H5:定时器收进 ref 受控(换任务/重触发先清旧),行内执行态徽章替代无感知盲刷。
+    runTimersRef.current.forEach((t) => window.clearTimeout(t))
+    runTimersRef.current = [2_500, 20_000, 40_000, 70_000, 100_000, 130_000, 160_000, 200_000, 240_000].map((ms) =>
+      window.setTimeout(() => { void loadSchedules() }, ms))
+    if (r.ok) {
+      setRunNowId(id)
+      runTimersRef.current.push(window.setTimeout(() => setRunNowId((cur) => (cur === id ? null : cur)), 242_000))
     }
   }
 
@@ -1035,18 +1130,30 @@ function Panel(): ReturnType<typeof createElement> {
     setRecordings(next)
     try { localStorage.setItem('dsh-opencli-recordings', JSON.stringify(next)) } catch { /* ignore */ }
   }
+  // 0.2.0 A-H4:回放带 n/m 进度、单步失败即停并如实汇报(此前跑完全部、失败不中断、结束恒报 ✓)
+  const [replayState, setReplayState] = useState<{ id: string; done: number; total: number } | null>(null)
   const replayRecording = async (id: string): Promise<void> => {
     const rec = recordings.find((x) => x.id === id)
     if (rec === undefined) return
-    for (const step of rec.steps) {
-      const s = step.trim()
-      if (s.length === 0) continue
+    const steps = rec.steps.map((s) => s.trim()).filter((s) => s.length > 0)
+    setReplayState({ id, done: 0, total: steps.length })
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]!
       // 命名空间迁移(2026-10):步骤头 opencli_* 是正主;browser_* 旧头继续收——localStorage
       // 里的历史录制不随迁移改写,旧步骤必须仍然可回放
-      if (s.startsWith('opencli_') || s.startsWith('browser_')) await rpc('replay', { request: { step: s, ...(skipDecor ? { skipDecorative: true } : {}) } } as unknown as Record<string, unknown>)
-      else await rpc('try-run', { request: { line: s } } as unknown as Record<string, unknown>)
+      const r = await (s.startsWith('opencli_') || s.startsWith('browser_')
+        ? rpc<{ ok?: boolean; error?: string }>('replay', { request: { step: s, ...(skipDecor ? { skipDecorative: true } : {}) } } as unknown as Record<string, unknown>)
+        : rpc<{ ok?: boolean; error?: string }>('try-run', { request: { line: s } } as unknown as Record<string, unknown>))
+      const v = r.value
+      if (!(r.ok && v?.ok !== false)) {
+        setReplayState(null)
+        showToast(`${(t2('replayFail') as unknown as (i: number, n: number) => string)(i + 1, steps.length)}:${v?.error ?? r.error?.message ?? s}`, false)
+        return
+      }
+      setReplayState({ id, done: i + 1, total: steps.length })
     }
-    showToast('replay ✓', true)
+    setReplayState(null)
+    showToast((t2('replayDone') as unknown as (n: number) => string)(steps.length), true)
   }
   const promoteRecording = async (id: string): Promise<void> => {
     const rec = recordings.find((x) => x.id === id)
@@ -1196,6 +1303,10 @@ function Panel(): ReturnType<typeof createElement> {
               createElement('div', { key: cmd, className: 'o4-qrow', onClick: () => fillInput(cmd) },
                 label, createElement('span', { className: 'mono' }, cmd), createElement('span', { className: 'o4arr', style: { color: '#5F6873', display: 'flex' } }, ic('chev-r', true)),
               )),
+            ...quickSample.map(({ label, cmd }) =>
+              createElement('div', { key: cmd, className: 'o4-qrow', onClick: () => fillInput(cmd) },
+                label, createElement('span', { className: 'mono' }, cmd), createElement('span', { className: 'o4arr', style: { color: '#5F6873', display: 'flex' } }, ic('chev-r', true)),
+              )),
           ),
         ),
         createElement('div', { className: 'o4-card' },
@@ -1228,11 +1339,13 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('button', { className: 'o4-btn ghost sm', style: { marginLeft: 'auto' }, disabled: starting, onClick: () => { void startDaemon() } },
             ic('refresh', true), starting ? '…' : t2('fix')),
         ),
-        createElement('div', { className: 'o4-cells' },
-          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, 'sites'), createElement('div', { className: 'v big' }, status === null ? '…' : String(adapters?.length ?? 0), createElement('small', null, '站'))),
-          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, 'Chrome 扩展'), createElement('div', { className: `v big${status?.daemon?.extension === 'connected' ? ' on' : ''}` , style: status?.daemon?.extension === 'connected' ? { fontSize: '15px' } : { fontSize: '13px', color: '#5F6873', fontWeight: 500 } }, status === null ? '…' : (status.daemon?.extension ?? t2('unknown')))),
-          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, '审计(7d)'), createElement('div', { className: 'v big' }, String(audit?.count7d ?? 0), createElement('small', null, '次拦截'))),
-          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, '自动化模式'), createElement('div', { className: 'v', style: { fontSize: '14px' } }, autoMode)),
+          createElement('div', { className: 'o4-cells' },
+          // 0.2.0 D-L2/M17:hero 单元标签入双语表;审计保留 7d 计数(明细列表落安全 tab,批次 3)
+          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroSites')), createElement('div', { className: 'v big' }, status === null ? '…' : String(adapters?.length ?? 0), createElement('small', null, t2('heroSiteUnit')))),
+          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroExt')), createElement('div', { className: `v big${status?.daemon?.extension === 'connected' ? ' on' : ''}` , style: status?.daemon?.extension === 'connected' ? { fontSize: '15px' } : { fontSize: '13px', color: '#5F6873', fontWeight: 500 } }, status === null ? '…' : (status.daemon?.extension === undefined ? t2('unknown') : (status.daemon.extension === 'connected' ? t2('bridgeOn') : t2('bridgeOff'))))),
+          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroAudit')), createElement('div', { className: 'v big' }, String(audit?.count7d ?? 0), createElement('small', null, t2('heroAuditUnit')))),
+          // 0.2.0 D-M9:档位本地化(此前显示英文原枚举)
+          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroMode')), createElement('div', { className: 'v', style: { fontSize: '14px' } }, MODE_LABEL_KEYS[autoMode] !== undefined ? t2(MODE_LABEL_KEYS[autoMode] as keyof typeof STR.zh) : autoMode)),
         ),
         status?.ok === false && status.error !== undefined
           ? createElement('div', { className: 'o4-tryout', style: { marginTop: '9px' } }, status.error)
@@ -1369,8 +1482,13 @@ function Panel(): ReturnType<typeof createElement> {
   /** 一键巡圈(0.1.7 社媒雷达):默认清单串行 try-run(同域/登录态互踩最小化),逐站落状态。
    *  清单依据勘察:避开已知坏点(xhs search #2786/#2791、reddit 封锁 #2798/#2801)、优先免登录
    *  兜底(v2ex/juejin)+ 登录态主力(bilibili/weibo/zhihu/xhs feed);改清单=改这一个数组。 */
+  // 0.2.0 C-H1+PF5:巡圈 2 泳道并行(同域必须串行:bilibili×2 在泳道 1、weibo×2 在泳道 2,
+  // 跨域并行;governor maxConcurrency=2 约束下收益上限 ~2×);行按清单顺序先挂占位(ok=null
+  // =跑中),完成就地回填;运行中按钮变「停止」,再点置取消标志——在途条完成即止,已完成部分保留
+  const sweepCancelRef = useRef(false)
   const runSweep = async (): Promise<void> => {
-    if (sweep.busy) return
+    if (sweep.busy) { sweepCancelRef.current = true; return }
+    sweepCancelRef.current = false
     const lines = [
       'site bilibili hot',
       'site bilibili feed',
@@ -1381,20 +1499,24 @@ function Panel(): ReturnType<typeof createElement> {
       'site v2ex hot',
       'site juejin hot',
     ]
-    setSweep({ busy: true, done: 0, total: lines.length, rows: [] })
-    const rows: Array<{ line: string; ok: boolean; text: string }> = []
-    for (const line of lines) {
+    const rows: Array<{ line: string; ok: boolean | null; text: string }> = lines.map((line) => ({ line, ok: null, text: '' }))
+    setSweep({ busy: true, done: 0, total: lines.length, rows: [...rows] })
+    const runOne = async (line: string): Promise<void> => {
+      if (sweepCancelRef.current) { const i = rows.findIndex((x) => x.line === line); if (i >= 0) rows[i] = { line, ok: false, text: t2('sweepStop') }; return }
       const r = await rpc<{ ok?: boolean; text?: string; error?: string }>('try-run', { request: { line } } as unknown as Record<string, unknown>)
-      // 信封解包(0.1.7 真机走查实抓):rpc 返回 {ok, value?} 信封——直接读 r.text 恒 undefined(成功行简报恒空),
-      // 且信封 ok 恒真会掩盖 payload ok:false(命令失败也画 ✓,违反诚实失败)。payload.ok 才是命令真伪;
-      // 仅 transport 失败(信封 ok:false)才看信封 error。其余 38 处调用均为正确的 value 解包,唯此一处是新写错的。
+      // 信封解包(0.1.7 真机走查实抓):rpc 返回 {ok, value?} 信封——payload.ok 才是命令真伪;
+      // 仅 transport 失败(信封 ok:false)才看信封 error。
       const v = r.value
       const ok = r.ok && v?.ok === true
-      rows.push({ line, ok, text: ok ? (v?.text ?? '').slice(0, 1200) : (v?.error ?? r.error?.message ?? '失败') })
-      setSweep({ busy: true, done: rows.length, total: lines.length, rows: [...rows] })
+      const i = rows.findIndex((x) => x.line === line)
+      if (i >= 0) rows[i] = { line, ok, text: ok ? (v?.text ?? '').slice(0, 1200) : (v?.error ?? r.error?.message ?? '失败') }
+      setSweep((prev) => ({ busy: true, done: prev.done + 1, total: lines.length, rows: [...rows] }))
     }
+    const lane = (items: string[]): Promise<void> => items.reduce((p, line) => p.then(() => runOne(line)), Promise.resolve())
+    await Promise.all([lane([lines[0]!, lines[1]!, lines[4]!, lines[6]!]), lane([lines[2]!, lines[3]!, lines[5]!, lines[7]!])])
+    const cancelled = sweepCancelRef.current
     setSweep({ busy: false, done: lines.length, total: lines.length, rows })
-    showToast(`${t2('sweepDone')(rows.filter((r) => r.ok).length, rows.length)}`, true)
+    showToast(cancelled ? t2('sweepStop') : `${t2('sweepDone')(rows.filter((r) => r.ok === true).length, rows.length)}`, !cancelled)
   }
 
   const renderAutomation = (): ReturnType<typeof createElement> => {
@@ -1436,16 +1558,16 @@ function Panel(): ReturnType<typeof createElement> {
       createElement('div', { className: 'o4-card', style: { marginBottom: '10px' } },
         createElement('div', { className: 'o4-h3' },
           createElement('span', { className: 'o4-miniico' }, ic('search', true)), t2('sweepT'),
-          createElement('span', { className: 'rt' }, createElement('button', { className: 'o4-btn sm', disabled: sweep.busy, onClick: () => { void runSweep() } }, sweep.busy ? `${t2('sweepRunning')} ${sweep.done}/${sweep.total}` : t2('sweepGo'))),
+          createElement('span', { className: 'rt' }, createElement('button', { className: 'o4-btn sm', onClick: () => { void runSweep() } }, sweep.busy ? `${t2('sweepStop')} ${sweep.done}/${sweep.total}` : t2('sweepGo'))),
         ),
         createElement('div', { className: 'o4-sub' }, t2('sweepSub')),
         sweep.rows.length > 0 ? createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } },
-          ...sweep.rows.map((row, i) => createElement('div', { key: i },
+          ...sweep.rows.map((row, i) => createElement('div', { key: i, onClick: () => setSweepOpen(sweepOpen === i ? null : i), style: { cursor: row.text.length > 0 ? 'pointer' : 'default' } },
             createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-              createElement('span', { className: `o4-bdg${row.ok ? ' b' : ' w'}` }, row.ok ? '✓' : '✗'),
+              createElement('span', { className: `o4-bdg${row.ok === null ? '' : (row.ok ? ' b' : ' w')}` }, row.ok === null ? '…' : (row.ok ? '✓' : '✗')),
               createElement('span', { style: { fontFamily: 'ui-monospace,Consolas,monospace', fontSize: '11px', color: '#79B7FF' } }, row.line),
             ),
-            createElement('div', { style: { fontFamily: 'ui-monospace,Consolas,monospace', fontSize: '10.5px', color: 'rgba(249,250,251,.65)', whiteSpace: 'pre-wrap', maxHeight: '110px', overflow: 'hidden', marginTop: '2px', padding: '4px 8px', background: '#14171C', borderRadius: '8px' } }, row.text.slice(0, 420)),
+            row.text.length > 0 ? createElement('div', { style: { fontFamily: 'ui-monospace,Consolas,monospace', fontSize: '10.5px', color: 'rgba(249,250,251,.65)', whiteSpace: 'pre-wrap', maxHeight: sweepOpen === i ? 'none' : '110px', overflow: 'hidden', marginTop: '2px', padding: '4px 8px', background: '#14171C', borderRadius: '8px' } }, row.text.slice(0, sweepOpen === i ? 1200 : 420)) : null,
           )),
           createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void copyText(sweep.rows.map((r) => `## ${r.line}\n${r.text}`).join('\n\n')).then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) } }, t2('copy')),
         ) : null,
@@ -1466,12 +1588,18 @@ function Panel(): ReturnType<typeof createElement> {
           visSelect(schedVis, (v) => setSchedVis(v), { maxWidth: '150px' }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
         ),
+        // 0.2.0 C-H7:cron 本地校验 + 下次执行实时预览(提交前提示,服务端仍是权威)
+        schedCron.trim().length > 0 && !cronValid(schedCron)
+          ? createElement('div', { className: 'o4-note', style: { color: '#FF6B63', marginTop: '4px' } }, t2('cronBad'))
+          : (schedCron.trim().length > 0 && (() => { const nf = nextCronFire(schedCron); return nf === null ? null : createElement('div', { className: 'o4-note', style: { marginTop: '4px' } }, `${t2('cronNext')} ${nf.toLocaleString(lang === 'en' ? 'en-US' : 'zh-CN')}`) })()),
         // 通知通道节(D):平台下拉+URL+保存+测试(与 ctl notify set/test 同链);模板输入
         // 仅通用平台生效(平台预设请求形状固定,模板被忽略——占位符值级 JSON 注入)
         createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' } },
           createElement('select', { className: 'o4-in', style: { maxWidth: '108px' }, value: nfPlatform, onChange: (e: { target: { value: string } }) => setNfPlatform(e.target.value) },
             ...([['feishu', '飞书'], ['dingtalk', '钉钉'], ['wecom', '企业微信'], ['telegram', 'Telegram'], ['generic', '通用']] as Array<[string, string]>).map(([v, label]) => createElement('option', { key: v, value: v }, label))),
-          createElement('input', { className: 'o4-in mono', style: { flex: '1', minWidth: '160px' }, placeholder: t2('nfUrlPh'), value: nfUrl, onChange: (e: { target: { value: string } }) => setNfUrl(e.target.value) }),
+          // 0.2.0 A-M15:URL 可含钉钉加签 secret 等凭据——password 型默认遮蔽,显隐切换
+          createElement('input', { className: 'o4-in mono', style: { flex: '1', minWidth: '160px' }, type: nfShow ? 'text' : 'password', placeholder: t2('nfUrlPh'), value: nfUrl, onChange: (e: { target: { value: string } }) => setNfUrl(e.target.value) }),
+          createElement('button', { className: 'o4-btn ghost sm', title: nfShow ? t2('nfHide') : t2('nfShow'), onClick: () => setNfShow(!nfShow) }, nfShow ? t2('nfHide') : t2('nfShow')),
           createElement('input', { className: 'o4-in mono', style: { flex: '1', minWidth: '180px' }, placeholder: t2('nfTplPh'), title: t2('nfTplTip'), value: nfTpl, onChange: (e: { target: { value: string } }) => setNfTpl(e.target.value) }),
           createElement('button', { className: 'o4-btn sm', disabled: nfBusy || nfUrl.trim().length === 0, onClick: () => { void saveNotify() } }, t2('nfSave')),
           createElement('button', { className: 'o4-btn ghost sm', disabled: nfBusy, onClick: () => { void testNotify() } }, t2('nfTest')),
@@ -1567,11 +1695,12 @@ function Panel(): ReturnType<typeof createElement> {
                 ...(s.source !== undefined ? [createElement('span', { className: 'o4-bdg', title: t2('nfSrcTip')(s.source) }, s.source)] : []),
                 ...(s.profile !== undefined ? [createElement('span', { className: 'o4-bdg b', title: t2('profTip')(s.profile) }, `👤 ${s.profile}`)] : []),
                 createElement('span', { style: { flex: '1' } }),
-                createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void runScheduleNow(s.id) } }, t2('runNow')),
+                createElement('button', { className: 'o4-btn ghost sm', disabled: runNowId === s.id, onClick: () => { void runScheduleNow(s.id) } }, runNowId === s.id ? t2('running2') : t2('runNow')),
                 createElement(DiffToggle, { id: s.id, lang, label: t2('diffT') }),
                 createElement(TimelineToggle, { id: s.id, lang, label: t2('timeline'), site: s.site }),
                 createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void exportSnapshotsUi(s.id) } }, t2('csvT')),
-                createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void removeSchedule(s.id) } }, t2('del')),
+                // 0.2.0 A-H3:两步删除——首点武装(3s 自动还原),再点才执行
+                createElement('button', { className: 'o4-btn ghost sm', style: delArm === s.id ? { borderColor: '#FF6B63', color: '#FF6B63' } : undefined, onClick: () => { if (delArm === s.id) { void removeSchedule(s.id) } else { setDelArm(s.id); window.setTimeout(() => setDelArm((cur) => (cur === s.id ? null : cur)), 3000) } } }, delArm === s.id ? t2('delConfirm') : t2('del')),
               ),
                           )
           }),
@@ -1592,11 +1721,11 @@ function Panel(): ReturnType<typeof createElement> {
             recordings.map((rec) => createElement('div', { key: rec.id, className: 'o4-row' },
               createElement('div', { className: 'grow' },
                 createElement('div', { className: 'o4-tt' }, rec.name),
-                createElement('div', { className: 'o4-dd' }, `${rec.steps.length} 步 · ${rec.steps[0] ?? ''}`),
+                createElement('div', { className: 'o4-dd' }, (t2('recSteps') as unknown as (n: number) => string)(rec.steps.length) + ' · ' + (rec.steps[0] ?? '')),
               ),
               createElement('label', { title: t2('skipDecorTip'), style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#5F6873', flex: 'none', cursor: 'pointer' } },
                 createElement('input', { type: 'checkbox', checked: skipDecor, onChange: () => setSkipDecor(!skipDecor), style: { accentColor: '#4A9EFF', margin: '0' } }), t2('skipDecor')),
-              createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void replayRecording(rec.id) } }, t2('replay')),
+              createElement('button', { className: 'o4-btn ghost sm', disabled: replayState?.id === rec.id, onClick: () => { void replayRecording(rec.id) } }, replayState?.id === rec.id ? `${t2('replay')} ${replayState.done}/${replayState.total}` : t2('replay')),
               createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void promoteRecording(rec.id) } }, '→'),
             )),
           ),
@@ -1778,8 +1907,8 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
         ),
         createElement('div', { className: 'o4-hr' },
           createElement('div', { className: 'o4-seg' },
-            createElement('button', { className: lang === 'zh' ? 'on' : '', onClick: () => setLang('zh') }, '中文'),
-            createElement('button', { className: lang === 'en' ? 'on' : '', onClick: () => setLang('en') }, 'EN'),
+            createElement('button', { className: lang === 'zh' ? 'on' : '', onClick: () => switchLang('zh') }, '中文'),
+            createElement('button', { className: lang === 'en' ? 'on' : '', onClick: () => switchLang('en') }, 'EN'),
           ),
         ),
       ),
@@ -1796,7 +1925,8 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
         createElement('span', { className: 'o4-sep' }),
         ...(loginResults.length > 0
           ? loginResults.map((r) => chip(null, r.site, r.ok ? 'g' : (r.timedOut ? 'y' : 'r'), `${r.site}: ${r.ok ? t2('online') : (r.timedOut ? t2('timeout') : t2('expired'))}${r.detail !== null ? ` · ${r.detail}` : ''}`))
-          : [chip(null, 'zhihu', 'n'), chip(null, 'bilibili', 'n'), chip(null, 'github', 'n')]),
+          // 0.2.0 A-M6:此前无巡检结果时硬编码 zhihu/bilibili/github 三个灰 chip,易误读为默认监控面——改单个「未巡检」可点 chip
+          : [createElement('span', { className: 'o4-chip', style: { cursor: 'pointer' }, onClick: () => { void runLoginCheck() }, title: t2('notCheckedTip') }, `○ ${t2('notChecked')}`)]),
         createElement('span', { className: 'o4-chip', style: { marginLeft: 'auto', cursor: 'pointer', boxSizing: 'border-box', height: '23px', justifyContent: 'center' }, onClick: () => { void runLoginCheck() }, title: t2('recheck') }, ic('refresh', true)),
       ),
       // 诊断条

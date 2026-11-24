@@ -17,7 +17,7 @@ import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
 import { Buffer } from 'node:buffer'
 import { homedir } from 'node:os'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, rmdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1493,7 +1493,9 @@ export class OpencliService extends TypertRemoteService {
       return
     }
     const active = list.filter((a) => !this.state.disabled.includes(a.name))
-    const daemon = await this.daemonStatus()
+    // 0.2.0:updateDirectory 是 fire-and-forget(void 调用 ×3),探测爆炸会成 unhandled
+    // rejection(init 期在途链可能滑进后续测试/运行窗口)——探测故障按 fail-open 归 null(未运行文案)
+    const daemon = await this.daemonStatus().catch(() => null)
     const state = daemon !== null && daemon.running
       ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
       : 'daemon 未运行——opencli_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
@@ -2238,8 +2240,11 @@ export class OpencliService extends TypertRemoteService {
         // 文件名=ISO 全 [:.] 换 '-':2026-10-05T15-36-53-123.json → 还原时日期分隔符不能再全量替换(修复 2026:10:05 错乱)
         const stem = f.slice(0, f.length - 5)
         const at = stem.length >= 19 ? `${stem.slice(0, 10)}T${stem.slice(11, 13)}:${stem.slice(14, 16)}:${stem.slice(17, 19)}` : stem
+        // 0.2.0 PF1:此前每份快照全文 readFileSync+JSON.parse 只为取 .bytes(满载 20 任务×50 份
+        // ≈ 1000 次同步解析,画布页卡住全部 RPC/调度 tick);statSync 取落盘大小,趋势形态等价
+        // (内容大小单调 → 落盘大小单调 + 恒定信封开销),口径文案同步改为「快照落盘大小」
         let bytes = 0
-        try { bytes = JSON.parse(readFileSync(join(dir, f), 'utf8')).bytes ?? 0 } catch { /* ignore */ }
+        try { bytes = statSync(join(dir, f)).size } catch { /* ignore */ }
         return { at, bytes, file: f }
       })
     } catch { /* 无快照目录 */ }
@@ -3918,6 +3923,30 @@ export class OpencliService extends TypertRemoteService {
    * force(证据包专用):写命令的 before/after 必拍——证据链完整性优先于截图频率,
    * 绕过"页面变化才拍"触发门限。
    */
+  /** 0.2.0 PF3:shots 是仓库唯一无清理增长点(轨迹/事件/快照均有轮转,唯截图永生,且
+   *  轨迹档滚动后 shot 成孤儿)——按日期目录名淘汰 N 天前(默认 14,DSH_OPENCLI_SHOT_KEEP_DAYS
+   *  可配;0=禁)。每个新日目录只扫一次,热路径零开销;清理失败不影响截图主链。 */
+  private shotsPrunedDay = ''
+  private pruneShotsOnce(todayKey: string): void {
+    if (this.shotsPrunedDay === todayKey) return
+    this.shotsPrunedDay = todayKey
+    try {
+      const keep = Number(process.env.DSH_OPENCLI_SHOT_KEEP_DAYS ?? '14')
+      if (!Number.isFinite(keep) || keep <= 0) return
+      const cutoff = Date.now() - keep * 86_400_000
+      for (const d of readdirSync(this.shotsDir)) {
+        if (!/^\d{8}$/.test(d)) continue
+        const day = new Date(Number(d.slice(0, 4)), Number(d.slice(4, 6)) - 1, Number(d.slice(6, 8))).getTime()
+        if (!Number.isFinite(day) || day >= cutoff) continue
+        for (const sid of readdirSync(join(this.shotsDir, d))) {
+          for (const f of readdirSync(join(this.shotsDir, d, sid))) { try { unlinkSync(join(this.shotsDir, d, sid, f)) } catch { /* 单文件失败不阻断 */ } }
+          try { rmdirSync(join(this.shotsDir, d, sid)) } catch { /* 非空:留下次再清 */ }
+        }
+        try { rmdirSync(join(this.shotsDir, d)) } catch { /* 同上 */ }
+      }
+    } catch { /* 无目录/权限:静默,截图主链不碰 */ }
+  }
+
   private async captureStepShot(session: string | undefined, argv: string[], out: { exitCode: number; stdout: string; stderr: string; unavailable?: string }, major: number, force = false): Promise<string | undefined> {
     if (!this.shotCapture) return undefined
     const sub = String(argv[0] ?? '')
@@ -3928,7 +3957,9 @@ export class OpencliService extends TypertRemoteService {
       // 会话名进目录段:剥离路径字符,防会话名本身成为穿越载体
       const sid = (session ?? 'dsh').replace(/[^\w.-]/g, '_')
       const now = new Date()
-      const dir = join(this.shotsDir, OpencliService.traceDateKey(now), sid)
+      const dayKey = OpencliService.traceDateKey(now)
+      this.pruneShotsOnce(dayKey)
+      const dir = join(this.shotsDir, dayKey, sid)
       mkdirSync(dir, { recursive: true })
       // 防碰撞:hhmmss + 进程内单调 idx;跨进程/重启序列归零由 existsSync 续拨
       const clock = OpencliService.shotClock(now)
@@ -3977,7 +4008,9 @@ export class OpencliService extends TypertRemoteService {
       if (buf.length > 8 * 1024 * 1024) return undefined
       const sid = (session ?? 'dsh').replace(/[^\w.-]/g, '_')
       const now = new Date()
-      const dir = join(this.shotsDir, OpencliService.traceDateKey(now), sid)
+      const dayKey = OpencliService.traceDateKey(now)
+      this.pruneShotsOnce(dayKey)
+      const dir = join(this.shotsDir, dayKey, sid)
       await mkdir(dir, { recursive: true })
       const clock = OpencliService.shotClock(now)
       let file = ''
@@ -4819,8 +4852,11 @@ export class OpencliService extends TypertRemoteService {
     } catch {
       return 'failed'
     }
-    // restart 输出是纯文本,恢复判定必须重探(与 ① 路径同口径;重探结果取代旧值走后续检查)
-    const after = await this.daemonStatus()
+    // restart 输出是纯文本,恢复判定必须重探(与 ① 路径同口径;重探结果取代旧值走后续检查)。
+    // 0.2.0:重探在 try 外,探测自身爆炸(桩抛错/沙箱异常)会以 unhandled rejection 逃逸——
+    // 预检 fail-open 纪律把探测故障归为 failed,不外抛
+    let after: Awaited<ReturnType<typeof this.daemonStatus>> = null
+    try { after = await this.daemonStatus() } catch { return 'failed' }
     return after !== null && after.running === true ? 'ok' : 'failed'
   }
 
@@ -5476,10 +5512,35 @@ ${r.stderr}`
     return out
   }
 
-  private async adapterList() {
+  // 0.2.0 PF2:在途 Promise 去重——TTL 过期窗口内 status 后台预热与前台 RPC 并发进入时,
+  // 此前会跑两份完整翻页(13 spawn×351ms 实测,~14.3s/份);现在第二路复用第一路的 Promise。
+  private adapterInFlight: Promise<AdapterInfo[] | null> | null = null
+
+  private async adapterList(): Promise<AdapterInfo[] | null> {
     if (this.adapterCache !== null && Date.now() - this.adapterCache.at < ADAPTER_TTL_MS) {
       return normalizeAdapterList(this.adapterCache.json)
     }
+    if (this.adapterInFlight !== null) return this.adapterInFlight
+    this.adapterInFlight = this.buildAdapterList().finally(() => { this.adapterInFlight = null })
+    return this.adapterInFlight
+  }
+
+  /** 0.2.0 PF2:`opencli list` 是本机 RPC(daemon/目录查询)而非站点命令——翻页不经 governor
+   *  (每页 750ms 礼貌间距是给站点风控的,本机通道白付,13 页≈10s 纯等待),但保留沙箱不可用
+   *  降级(家目录 ACL 场景整体报废语义与 runOpencliRaw 一致)。 */
+  private async runOpencliLocal(argv: string[], timeoutMs: number, stdoutMaxBytes: number): Promise<{ exitCode: number; stdout: string; stderr: string; unavailable?: string }> {
+    try {
+      return await this.runOpencliUngoverned(argv, timeoutMs, stdoutMaxBytes)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (/SandboxUnavailableError|no sandbox backend|ACL restricted-token/i.test(msg)) {
+        return { exitCode: -1, stdout: '', stderr: msg.slice(0, 500), unavailable: msg.slice(0, 300) }
+      }
+      throw e
+    }
+  }
+
+  private async buildAdapterList(): Promise<AdapterInfo[] | null> {
     // 写入守卫的基准时刻:本探测开跑后若有并发写(面板 refresh 期间的另一路结果、
     // 测试对 adapterCache 的直改),完成时不得盲写覆盖——init 期 fire-and-forget 的
     // updateDirectory 探测在途窗口原本 ~800ms(cliMajor 吃限流),探测改走不限流
@@ -5493,7 +5554,7 @@ ${r.stderr}`
       let offset = 0
       let total: number | null = null
       for (let page = 0; page < 40; page++) {
-        const r = await this.runOpencliRaw(['list', '--format', 'json', '--limit', '100', '--offset', String(offset)], 30000, 4 * 1024 * 1024)
+        const r = await this.runOpencliLocal(['list', '--format', 'json', '--limit', '100', '--offset', String(offset)], 30000, 4 * 1024 * 1024)
         if (r.exitCode !== 0) {
           this.lastShellError = `list(${r.exitCode})|out:${r.stdout.slice(0, 200)}|err:${r.stderr.slice(0, 200)}`
           return null
@@ -5526,7 +5587,7 @@ ${r.stderr}`
       }
       return normalizeAdapterList(collected)
     }
-    const r = await this.runOpencliRaw(['list', '--format', 'json'], 30000, 8 * 1024 * 1024)
+    const r = await this.runOpencliLocal(['list', '--format', 'json'], 30000, 8 * 1024 * 1024)
     if (r.exitCode !== 0) {
       // 诊断通道:把 shell 失败的原始输出带回面板(临时)
       this.lastShellError = `list(${r.exitCode})|out:${r.stdout.slice(0, 200)}|err:${r.stderr.slice(0, 200)}`

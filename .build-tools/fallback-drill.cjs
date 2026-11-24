@@ -31,7 +31,7 @@
 //   - 域名源复刻(resolveManifestFile/buildDomainMap/推测末级)与 src/index.ts:213-238/247-262/3283-3301
 //     同口径(0.1.5 C3 复核②:修前检查 #4 只镜像旧 adapterList 域名,CLI 2.0.x 下恒 null,
 //     演练因生产已修掉的同一根因假阴性)——生产域名判定若改,本复刻须同步,域名检查结论才继续作数;
-//   - 报告卫生不再复刻(0.1.5 C7,复核 L21):scrubReport 直接引 src/notify.ts 的
+//   - 报告卫生不再复刻(0.1.5 C7,复核 L21):scrubReport 直接引 src/scrub-rules.ts 的
 //     scrubLocalPaths(SCRUB_RULES 全量),修前此处内嵌四条真子集,演练报告可泄非 URL 形
 //     凭据(sk-/ghp_ 令牌、Bearer 头、长 hex 串);两端同步由 tests/fallback-drill-scrub.test.ts 钉住。
 //
@@ -125,20 +125,21 @@ function detectDrift(history) {
   return false
 }
 // 报告卫生:演练报告含登录态页面状态摘录,出报告前必须脱敏。0.1.5 C7(复核 L21):规则函数
-// 直接引真实源 src/notify.ts 的 scrubLocalPaths(SCRUB_RULES 全量九条:URL 参数/路径/键值令牌/
-// 裸 Bearer/具名密钥前缀/32+ hex/40+ base64)——修前此处内嵌前四条真子集,演练报告会泄
-// 非 URL 形凭据(sk-/ghp_ 令牌、Bearer 头、长 hex 串);「引函数不引子集」与规则行为两端由
-// tests/fallback-drill-scrub.test.ts 钉住。require 一个 TS 模块需 node 类型转换档
-// (--experimental-transform-types,require(esm-ts));环境不满足时如实退码 2,不静默降级回子集。
+// 直接引真实源(SCRUB_RULES 全量九条:URL 参数/路径/键值令牌/裸 Bearer/具名密钥前缀/
+// 32+ hex/40+ base64)——修前此处内嵌前四条真子集,演练报告会泄非 URL 形凭据(sk-/ghp_ 令牌、
+// Bearer 头、长 hex 串);「引函数不引子集」与规则行为两端由 tests/fallback-drill-scrub.test.ts
+// 钉住。0.2.0:require 源从 src/notify.ts 换 src/scrub-rules.ts——规则已抽出,scrub-rules.ts
+// 保持 strip-only 可加载(node ≥23.6 原生剥离,26.x 已移除 --experimental-transform-types 旗标);
+// 老 node(22.7-23.5)仍需类型转换档,环境不满足时如实退码 2,不静默降级回子集。
 let scrubReport
 try {
-  const notify = require(path.join(__dirname, '..', 'src', 'notify.ts'))
-  if (typeof notify.scrubLocalPaths !== 'function') throw new Error('scrubLocalPaths 未导出——src/notify.ts 导出面变化,同步测试会红')
-  scrubReport = notify.scrubLocalPaths
+  const scrub = require(path.join(__dirname, '..', 'src', 'scrub-rules.ts'))
+  if (typeof scrub.scrubLocalPaths !== 'function') throw new Error('scrubLocalPaths 未导出——src/scrub-rules.ts 导出面变化,同步测试会红')
+  scrubReport = scrub.scrubLocalPaths
 } catch (e) {
-  console.error('scrub 规则函数(src/notify.ts scrubLocalPaths)加载失败:' + String(e && e.message ? e.message : e))
+  console.error('scrub 规则函数(src/scrub-rules.ts scrubLocalPaths)加载失败:' + String(e && e.message ? e.message : e))
   console.error('本脚本自 0.1.5 C7(复核 L21)起不再内嵌规则子集复刻(防演练报告泄非 URL 形凭据);')
-  console.error('请以类型转换模式运行:node --experimental-transform-types .build-tools/fallback-drill.cjs "site <站点> <命令>"')
+  console.error('node ≥23.6 裸跑即可;老 node 请以类型转换模式运行:node --experimental-transform-types .build-tools/fallback-drill.cjs "site <站点> <命令>"')
   process.exit(2)
 }
 

@@ -16,7 +16,14 @@ import { join } from 'node:path'
 
 const ROOT = join(__dirname, '..')
 const DRILL = join(ROOT, '.build-tools', 'fallback-drill.cjs')
-const NOTIFY_TS = join(ROOT, 'src', 'notify.ts')
+const NOTIFY_TS = join(ROOT, 'src', 'scrub-rules.ts')
+// node 类型剥离分代:22.7-23.5 需要 --experimental-transform-types;≥23.6 原生剥离(26.x 已
+// 移除该旗标,本机 2026-11-24 起为 26.13.1)。探一次定代,两类 spawn 都自适应。
+const TYPE_STRIP_FLAGS = (() => {
+  const p = spawnSync(process.execPath, ['--experimental-transform-types', '-e', '1'], { encoding: 'utf8' })
+  return p.status === 0 ? ['--experimental-transform-types'] : []
+})()
+const TYPE_STRIP_NATIVE = TYPE_STRIP_FLAGS.length === 0
 
 describe('演练脚本源面(L21:引函数不引子集)', () => {
   const src = readFileSync(DRILL, 'utf8')
@@ -27,10 +34,10 @@ describe('演练脚本源面(L21:引函数不引子集)', () => {
     expect(src).not.toContain('[本地路径]')
     expect(src).not.toContain('[home路径]')
   })
-  it('改为引真实规则函数:require src/notify.ts 的 scrubLocalPaths + 环境不满足退码 2 的指引', () => {
-    expect(src).toContain("require(path.join(__dirname, '..', 'src', 'notify.ts'))")
+  it('改为引真实规则函数:require src/scrub-rules.ts 的 scrubLocalPaths + 环境不满足退码 2 的指引', () => {
+    expect(src).toContain("require(path.join(__dirname, '..', 'src', 'scrub-rules.ts'))")
     expect(src).toContain('scrubLocalPaths')
-    // 失败说真话:加载失败不静默降级,退码 2 并指路类型转换档运行方式
+    // 失败说真话:加载失败不静默降级,退码 2 并指路类型转换档运行方式(老 node)/裸跑(node ≥23.6)
     expect(src).toContain('--experimental-transform-types')
     expect(src).toContain('process.exit(2)')
   })
@@ -58,7 +65,7 @@ describe('真实规则函数行为(演练同款加载模式:node --experimental-
       'for (const [k, [input, marker]] of Object.entries(cases)) out[k] = s(input).includes(marker)',
       'console.log(JSON.stringify(out))',
     ].join('\n')
-    const r = spawnSync(process.execPath, ['--experimental-transform-types', '-e', probe], { encoding: 'utf8', timeout: 120_000 })
+    const r = spawnSync(process.execPath, [...TYPE_STRIP_FLAGS, '-e', probe], { encoding: 'utf8', timeout: 120_000 })
     expect(r.status).toBe(0)
     const out = JSON.parse(r.stdout) as Record<string, boolean>
     expect(out).toEqual(Object.fromEntries(Object.keys(cases).map((k) => [k, true])))
@@ -77,17 +84,24 @@ describe('演练脚本退码礼仪(哑 CLI 桩,零真实调用)', () => {
       env: { ...process.env, DSH_OPENCLI_BIN: stub },
     })
 
-  it('裸 node(无类型转换档):规则函数加载失败 → 退码 2 + 指引,不静默降级回子集复刻', () => {
+  it('裸 node(无类型转换档):老 node 拒跑并给指引;原生剥离代(node≥23.6)直接装载进入流程', () => {
     const r = runDrill(['--out', join(stubDir, 'r-noflag.json')])
-    expect(r.status).toBe(2)
-    expect(r.stderr).toContain('加载失败')
-    expect(r.stderr).toContain('--experimental-transform-types')
-    expect(r.stderr).not.toContain('PASS')
+    if (TYPE_STRIP_NATIVE) {
+      // node ≥23.6:裸 node 即可加载 TS 规则函数——进入流程,哑 CLI 检查退码 2(FAIL CLI 可用)
+      expect(r.stderr).not.toContain('加载失败')
+      expect(r.status).toBe(2)
+      expect(r.stdout).toContain('FAIL CLI 可用')
+    } else {
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('加载失败')
+      expect(r.stderr).toContain('--experimental-transform-types')
+      expect(r.stderr).not.toContain('PASS')
+    }
   })
 
-  it('类型转换档:规则函数装载成功进入流程;哑 CLI 退码 7 → CLI 可用检查不过退码 2(零真实调用)', () => {
+  it('类型转换档(或原生剥离等价):规则函数装载成功进入流程;哑 CLI 退码 7 → CLI 可用检查不过退码 2(零真实调用)', () => {
     const outPath = join(stubDir, 'r-flag.json')
-    const r = spawnSync(process.execPath, ['--experimental-transform-types', DRILL, 'site juejin hot', '--out', outPath], {
+    const r = spawnSync(process.execPath, [...TYPE_STRIP_FLAGS, DRILL, 'site juejin hot', '--out', outPath], {
       encoding: 'utf8', timeout: 120_000,
       env: { ...process.env, DSH_OPENCLI_BIN: stub },
     })
