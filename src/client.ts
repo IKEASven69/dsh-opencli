@@ -120,6 +120,7 @@ const STR = {
     ibStOk: '成功', ibStFail: '失败', ibStSkip: '跳过', ibStEmpty: '空产出',
     // 多账号登录态隔离:上游 OpenCLI 2.0.3 原生 --profile/contextId 路由(CLI 2.0.3 dist 读源与 doctor 探针核实)
     profPh: '👤 profile(可选)', profTitle: '浏览器 profile 别名或 contextId(opencli profile list 可查)——多账号登录态隔离:经上游 OpenCLI 原生 --profile 路由,不同 profile 即不同 Chrome 档案,cookie/存储各自独立;须先打开该 Chrome 档案并启用 OpenCLI 扩展,未连接时任务如实失败,不回落到别的账号', profTip: (p: string) => `本任务经 OPENCLI_PROFILE=${p} 路由到该浏览器 profile(上游原生隔离)`,
+    advT: '高级', advTip: 'watch 关键词 / 静默窗 / profile 多账号——不常用项收在这里', profShort: '多账号登录态隔离(可用 opencli profile list 查)', nlChBad: 'channels 需要合法 JSON(数组)', rateNote: '以上为默认配置值;运行时以服务端实际为准',
     // #59 补完:装饰步(只改视觉的 scroll/hover)回放可跳过
     skipDecor: '跳过装饰步', skipDecorTip: '回放时跳过只改视觉的 scroll/hover 步骤;数据读写步骤照常执行', decoTag: '装饰',
     assetT: '资产库', assetSub: '脚本 / 配方 / 规则包', assetSearch: '搜资产(如:arxiv)', assetSearchBtn: '搜索',
@@ -238,6 +239,7 @@ const STR = {
     ibStOk: 'ok', ibStFail: 'fail', ibStSkip: 'skip', ibStEmpty: 'empty',
     // Multi-account login isolation: native upstream OpenCLI 2.0.3 --profile/contextId routing
     profPh: '👤 profile (optional)', profTitle: 'Browser profile alias or contextId (see opencli profile list) — multi-account login isolation via native upstream OpenCLI --profile routing: each profile is a separate Chrome profile with its own cookies/storage; open that Chrome profile with the OpenCLI extension enabled first — if it is not connected the run fails honestly instead of falling back to another account', profTip: (p: string) => `Routed to browser profile via OPENCLI_PROFILE=${p} (native upstream isolation)`,
+    advT: 'Advanced', advTip: 'watch keywords / quiet window / profile isolation — less-common options live here', profShort: 'multi-account login isolation (see opencli profile list)', nlChBad: 'channels must be valid JSON (array)', rateNote: 'defaults shown; the server-side values apply at runtime',
     // #59 completion: decorative (visual-only scroll/hover) steps can be skipped on replay
     skipDecor: 'Skip decorative', skipDecorTip: 'Skip visual-only scroll/hover steps on replay; data read/write steps still run', decoTag: 'decorative',
     assetT: 'Assets', assetSub: 'scripts / recipes / rulepacks', assetSearch: 'search assets (e.g. arxiv)', assetSearchBtn: 'Search',
@@ -304,6 +306,11 @@ async function rpc<T>(method: string, args: Record<string, unknown> = {}): Promi
   } catch (e) {
     return { ok: false, error: { message: e instanceof Error ? e.message : String(e) } }
   }
+}
+
+// 0.2.0 D-H8:div 交互行的键盘可达——onClick div 处补 role='button'/tabIndex=0/onKeyDown=keyActivate
+function keyActivate(e: { key: string; preventDefault: () => void; currentTarget: EventTarget & Element }): void {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click() }
 }
 
 // 0.2.0 C-H7:cron 本地校验 + 下次触发预览(纯函数;与服务端 cronMatches 同款 5 段语义:
@@ -761,6 +768,8 @@ function Panel(): ReturnType<typeof createElement> {
   const [sweep, setSweep] = useState<{ busy: boolean; done: number; total: number; rows: Array<{ line: string; ok: boolean | null; text: string }> }>({ busy: false, done: 0, total: 0, rows: [] })
   // 0.2.0 C-H12/M12:巡圈单站简报展开(默认截 420 字防瀑布,点击行展开全量)
   const [sweepOpen, setSweepOpen] = useState<number | null>(null)
+  // 0.2.0 D-H6:建任务表单高级项(watch/静默/profile)默认收起,常用项单行
+  const [advOpen, setAdvOpen] = useState(false)
   const [schedBatchBusy, setSchedBatchBusy] = useState(false)
   const [recordings, setRecordings] = useState<Recording[]>(() => {
     try { return JSON.parse(localStorage.getItem('dsh-opencli-recordings') ?? '[]') as Recording[] } catch { return [] }
@@ -797,17 +806,20 @@ function Panel(): ReturnType<typeof createElement> {
     try {
       const raw = localStorage.getItem(SWR_KEY)
       if (raw === null) return
-      const j = JSON.parse(raw) as { status?: PanelStatus; adapters?: AdapterInfo[]; at?: number }
+      const j = JSON.parse(raw) as { status?: PanelStatus; adapters?: AdapterInfo[]; schedules?: SchedItem[]; auditCount?: number; at?: number }
       if (typeof j.at === 'number' && Date.now() - j.at < 12 * 3600_000) {
         if (j.status !== null && typeof j.status === 'object') setStatus(j.status)
         if (Array.isArray(j.adapters) && j.adapters.length > 0) setAdapters(j.adapters)
+        // 0.2.0 D-L16:首屏闪变收口——任务列表/审计计数也进 SWR(后台 RPC 刷新覆盖)
+        if (Array.isArray(j.schedules)) setSchedules(j.schedules)
+        if (typeof j.auditCount === 'number') setAudit({ ok: true, count7d: j.auditCount, items: [] })
       }
     } catch { /* 损坏缓存:丢弃 */ }
   }
   const swrPersist = (st: OpencliStatus | null, ad: AdapterInfo[] | null): void => {
     try {
       if (st === null || ad === null || ad.length === 0) return
-      localStorage.setItem(SWR_KEY, JSON.stringify({ status: st, adapters: ad, at: Date.now() }))
+      localStorage.setItem(SWR_KEY, JSON.stringify({ status: st, adapters: ad, schedules, auditCount: audit?.count7d, at: Date.now() }))
     } catch { /* 配额/隐私模式:忽略 */ }
   }
 
@@ -914,7 +926,7 @@ function Panel(): ReturnType<typeof createElement> {
       return createElement('div', { key: k, style: { display: 'flex', gap: '8px', alignItems: 'center' } },
         createElement('span', { style: { flex: 'none', width: '86px', fontSize: '11.5px', color: 'var(--c-fg-dim)' } }, label),
         typeof v === 'object' || text.length > 42
-          ? createElement('textarea', { className: 'o4-in mono', style: { flex: '1', minHeight: '30px', fontSize: '11.5px' }, value: text, onChange: (e: { target: { value: string } }) => { if (k === 'channels') { try { set(k, JSON.parse(e.target.value)) } catch { /* JSON 未写完,不更新 */ } } else set(k, e.target.value) } })
+          ? createElement('textarea', { className: 'o4-in mono', style: { flex: '1', minHeight: '30px', fontSize: '11.5px' }, value: text, onChange: (e: { target: { value: string } }) => set(k, e.target.value) })
           : createElement('input', { className: 'o4-in mono', style: { flex: '1' }, value: text, onChange: (e: { target: { value: string } }) => set(k, e.target.value) }),
       )
     })
@@ -933,8 +945,14 @@ function Panel(): ReturnType<typeof createElement> {
   }
   const applyNl = async (): Promise<void> => {
     if (nlPreview === null || nlBusy) return
+    // 0.2.0 D-M11:channels 文本框保持自由输入(此前 JSON 未写完时打字被静默吞,像输入框坏了)
+    // ——apply 时才解析:字符串→JSON,解析失败如实报错不发送
+    const intent = nlPreview.intent as { channels?: unknown } & Record<string, unknown>
+    if (typeof intent.channels === 'string') {
+      try { intent.channels = JSON.parse(intent.channels) } catch { setNlErr(t2('nlChBad')); return }
+    }
     setNlBusy(true); setNlErr('')
-    const r = await rpc<{ ok: boolean; error?: string }>('inbox-intent', { request: { intent: nlPreview.intent } } as unknown as Record<string, unknown>)
+    const r = await rpc<{ ok: boolean; error?: string }>('inbox-intent', { request: { intent } } as unknown as Record<string, unknown>)
     setNlBusy(false)
     if (r.ok && r.value?.ok !== false) {
       setNlDone(t2('nlApplied')); setNlPreview(null); setNlInput('')
@@ -976,6 +994,9 @@ function Panel(): ReturnType<typeof createElement> {
   }
   const addSchedule = async (): Promise<void> => {
     if (schedSite.trim().length === 0 || schedBusy) return
+    // 0.2.0 D-M10:静默窗本地校验(此前任意文本直接提交,服务端静默忽略坏格式,qhSetFail 文案已备未接线)
+    const qhProbe = schedQuiet.trim()
+    if (qhProbe.length > 0 && !/^\d{2}:\d{2}-\d{2}:\d{2}$/.test(qhProbe)) { showToast(t2('qhSetFail'), false); return }
     setSchedBusy(true)
     const watch = schedWatch.trim()
     const qh = schedQuiet.trim()
@@ -1356,7 +1377,7 @@ function Panel(): ReturnType<typeof createElement> {
       ),
       // watch 命中可见性:健康区下最近一条 🔔 徽章行(事件文本自带 🔔 前缀,点击跳自动化 tab)
       watchHit !== null
-        ? createElement('div', { className: 'o4-bdg w', style: { display: 'flex', width: 'fit-content', maxWidth: '100%', fontSize: '11px', padding: '5px 11px', borderRadius: '9px', cursor: 'pointer', gap: '6px' }, title: watchHit.text, onClick: () => setTab('auto') },
+        ? createElement('div', { className: 'o4-bdg w', style: { display: 'flex', width: 'fit-content', maxWidth: '100%', fontSize: '11px', padding: '5px 11px', borderRadius: '9px', cursor: 'pointer', gap: '6px' }, title: watchHit.text, onClick: () => setTab('auto'), role: 'button', tabIndex: 0, onKeyDown: keyActivate },
             createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
               `${traceClock(watchHit.at)} · ${watchHit.text.length > 96 ? `${watchHit.text.slice(0, 96)}…` : watchHit.text}`),
             createElement('span', { style: { display: 'flex', flex: 'none' } }, ic('chev-r', true)),
@@ -1443,7 +1464,7 @@ function Panel(): ReturnType<typeof createElement> {
               ? createElement('span', { className: 'o4-bdg', title: `${t2('healthIssueT')(h.updated)}\n${h.issues.join('\n')}` }, t2('healthNotice'))
               : null
           return createElement('div', { key: a.name },
-            createElement('div', { className: `o4-row${a.disabled === true ? ' o4-off' : ''}`, onClick: () => { void expandDetail(a.name) } },
+            createElement('div', { className: `o4-row${a.disabled === true ? ' o4-off' : ''}`, onClick: () => { void expandDetail(a.name) }, role: 'button', tabIndex: 0, onKeyDown: keyActivate },
               ava(a.name),
               createElement('div', { className: 'grow' },
                 createElement('div', { className: 'o4-tt' }, a.name, ' ', a.commands.slice(0, 3).map((c) => createElement('span', { key: c, className: 'o4-bdg b', title: `site ${a.name} ${c} — 点击复制`, onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); fillInput(`site ${a.name} ${c}`) } }, c))),
@@ -1562,7 +1583,7 @@ function Panel(): ReturnType<typeof createElement> {
         ),
         createElement('div', { className: 'o4-sub' }, t2('sweepSub')),
         sweep.rows.length > 0 ? createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } },
-          ...sweep.rows.map((row, i) => createElement('div', { key: i, onClick: () => setSweepOpen(sweepOpen === i ? null : i), style: { cursor: row.text.length > 0 ? 'pointer' : 'default' } },
+          ...sweep.rows.map((row, i) => createElement('div', { key: i, onClick: () => setSweepOpen(sweepOpen === i ? null : i), style: { cursor: row.text.length > 0 ? 'pointer' : 'default' }, role: row.text.length > 0 ? 'button' : undefined, tabIndex: row.text.length > 0 ? 0 : undefined, onKeyDown: row.text.length > 0 ? keyActivate : undefined },
             createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
               createElement('span', { className: `o4-bdg${row.ok === null ? '' : (row.ok ? ' b' : ' w')}` }, row.ok === null ? '…' : (row.ok ? '✓' : '✗')),
               createElement('span', { style: { fontFamily: 'ui-monospace,Consolas,monospace', fontSize: '11px', color: '#79B7FF' } }, row.line),
@@ -1579,15 +1600,20 @@ function Panel(): ReturnType<typeof createElement> {
         ),
         createElement('div', { className: 'o4-sub' }, t2('autoSub')),
         !daemonUp ? createElement('div', { className: 'o4-diag bad', style: { marginBottom: '9px' }, onClick: () => { void startDaemon() } }, ic('alert', true), t2('depDaemon'), createElement('span', { className: 'o4arr' }, t2('fix'), ic('chev-r', true))) : null,
-        createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' } },
+        // 0.2.0 D-H6:常用项单行(命令/cron/可见性/创建),高级项(watch/静默/profile)默认收起;
+        // profile 长说明改短文案(0.2.0 D-L7,原文 200+ 字塞 title 触屏不可见)
+        createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: advOpen ? '6px' : '10px', flexWrap: 'wrap' } },
           createElement('input', { className: 'o4-in', placeholder: 'site zhihu hot', value: schedSite, onChange: (e: { target: { value: string } }) => setSchedSite(e.target.value) }),
           createElement('input', { className: 'o4-in mono', style: { maxWidth: '110px' }, placeholder: 'cron', value: schedCron, onChange: (e: { target: { value: string } }) => setSchedCron(e.target.value) }),
-          createElement('input', { className: 'o4-in', style: { maxWidth: '172px' }, placeholder: '🔔 watch 关键词', title: '逗号分隔,命中即通知', value: schedWatch, onChange: (e: { target: { value: string } }) => setSchedWatch(e.target.value) }),
-          createElement('input', { className: 'o4-in mono', style: { maxWidth: '150px' }, placeholder: t2('qhPh'), title: t2('qhTitle'), value: schedQuiet, onChange: (e: { target: { value: string } }) => setSchedQuiet(e.target.value) }),
-          createElement('input', { className: 'o4-in mono', style: { maxWidth: '140px' }, placeholder: t2('profPh'), title: t2('profTitle'), value: schedProfile, onChange: (e: { target: { value: string } }) => setSchedProfile(e.target.value) }),
           visSelect(schedVis, (v) => setSchedVis(v), { maxWidth: '150px' }),
           createElement('button', { className: 'o4-btn sm', disabled: schedBusy, onClick: () => { void addSchedule() } }, t2('create')),
+          createElement('button', { className: 'o4-btn ghost sm', title: t2('advTip'), onClick: () => setAdvOpen(!advOpen) }, (advOpen ? '▾ ' : '▸ ') + t2('advT')),
         ),
+        advOpen ? createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' } },
+          createElement('input', { className: 'o4-in', style: { maxWidth: '172px' }, placeholder: '🔔 watch 关键词', title: '逗号分隔,命中即通知', value: schedWatch, onChange: (e: { target: { value: string } }) => setSchedWatch(e.target.value) }),
+          createElement('input', { className: 'o4-in mono', style: { maxWidth: '150px' }, placeholder: t2('qhPh'), title: t2('qhTitle'), value: schedQuiet, onChange: (e: { target: { value: string } }) => setSchedQuiet(e.target.value) }),
+          createElement('input', { className: 'o4-in mono', style: { maxWidth: '140px' }, placeholder: t2('profPh'), title: t2('profShort'), value: schedProfile, onChange: (e: { target: { value: string } }) => setSchedProfile(e.target.value) }),
+        ) : null,
         // 0.2.0 C-H7:cron 本地校验 + 下次执行实时预览(提交前提示,服务端仍是权威)
         schedCron.trim().length > 0 && !cronValid(schedCron)
           ? createElement('div', { className: 'o4-note', style: { color: '#FF6B63', marginTop: '4px' } }, t2('cronBad'))
@@ -1797,6 +1823,23 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
     const diagText = `bin: ${status?.bin ?? '—'} | version: ${status?.version ?? '—'} | mode: ${autoMode} | approval: ${settings?.approvalOn === true ? 'on' : 'off'} | daemon: ${daemonUp ? 'running' : 'down'}`
     return createElement('div', null,
       selfCheck !== null ? createElement(SelfCheckCard, { sc: selfCheck as unknown as SelfCheckResult4, lang }) : null,
+      // 0.2.0 D-L15+M17:审计明细落安全 tab(此前 auditT/auditEmpty/auditN 文案已备但从未渲染,
+      // hero 只有 7d 计数且安全侧「最近拦截」名不符实)——明细在此,名符其实
+      createElement('div', { className: 'o4-card' },
+        createElement('div', { className: 'o4-h3' }, ic('shield', true), t2('auditT')),
+        audit === null
+          ? createElement('div', { className: 'o4-sub' }, t2('loading'))
+          : (audit.items ?? []).length === 0
+            ? createElement('div', { className: 'o4-sub' }, t2('auditEmpty'))
+            : createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '5px' } },
+                ...(audit.items ?? []).slice(0, 20).map((it, i) => createElement('div', { key: `${it.at}-${i}`, style: { display: 'flex', gap: '8px', alignItems: 'baseline', fontSize: '11.5px', minWidth: 0 } },
+                  createElement('span', { className: 'mono', style: { color: '#5F6873', flex: 'none' } }, it.at.slice(5, 16).replace('T', ' ')),
+                  createElement('span', { className: 'mono', style: { color: '#79B7FF', flex: 'none' } }, it.command.length > 40 ? `${it.command.slice(0, 40)}…` : it.command),
+                  createElement('span', { style: { color: 'rgba(249,250,251,.65)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, it.reason),
+                )),
+                createElement('div', { className: 'o4-note' }, (t2('auditN') as unknown as (n: number) => string)(audit.count7d)),
+              ),
+      ),
       createElement('div', { className: 'o4-sec' },
         createElement('div', { style: { display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '12px' } },
           createElement('div', { className: 'o4-shield' }, ic('shield')),
@@ -1810,7 +1853,7 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
           ),
         ),
         createElement('div', { className: 'o4-modes' },
-          modes.map(([m, desc, icon]) => createElement('div', { key: m, className: `o4-mode${autoMode === m ? ' on' : ''}`, onClick: () => { void setMode(m) } },
+          modes.map(([m, desc, icon]) => createElement('div', { key: m, className: `o4-mode${autoMode === m ? ' on' : ''}`, onClick: () => { void setMode(m) }, role: 'button', tabIndex: 0, onKeyDown: keyActivate },
             createElement('span', { className: 'mi' }, ic(icon as IconName, true), createElement('b', null, m)),
             createElement('span', null, desc),
             createElement('span', { className: 'o4-mchk' }, ic('check-c', true)),
@@ -1826,6 +1869,8 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
           createElement('div', { className: 'o4-stat' }, createElement('span', null, 'burst / cooldown'), createElement('b', null, '3 / 30 s')),
           createElement('div', { className: 'o4-stat' }, createElement('span', null, 'maxPagesPerRun'), createElement('b', null, '20')),
           createElement('div', { className: 'o4-stat' }, createElement('span', null, 'authProfiles'), createElement('b', null, 'allowedDomains ✓')),
+          // 0.2.0 D-M7:如实标注这些是默认配置值(此前 UI 硬编码与服务端脱钩后 UI 撒谎)
+          createElement('div', { className: 'o4-note', style: { marginTop: '6px' } }, t2('rateNote')),
         ),
         createElement('div', { className: 'o4-card' },
           createElement('div', { className: 'o4-h3' }, createElement('span', { className: 'o4-miniico' }, ic('check-c', true)), t2('proofT')),
@@ -2142,12 +2187,14 @@ function TimelinePanel(props: { id: string; lang: Lang; site: string }): ReturnT
   // 卡片流:有本站卡(近 24h)→ 替代纯文本历史行;无 → 保留文本史兜底(轨迹轮转/为空时
   // 不空窗——快照可以比轨迹活得久,时间线不能因此断流)
   const flowCards = cardsForSite(flow, site).slice(0, 6)
+  // 0.2.0 D-M3:报告生成只把路径写剪贴板且无反馈——补按钮态反馈(✓ 已复制)
+  const [repDone, setRepDone] = useState(false)
   // flex:'1 1 100%' 独占整行——toggle 用 display:contents 把本卡塞进 .o4-row flex 行,
   // 不占满则被挤到行右侧溢出对话框裁切(GUI 走查 2026-10-08)
   return createElement('div', { className: 'o4-card', style: { padding: '10px 12px', margin: '4px 0 8px', borderRadius: '10px', flex: '1 1 100%' } },
     createElement('div', { className: 'o4-h3', style: { fontSize: '12px' } }, ic('activity', true), tt('tlT'),
       createElement('span', { style: { marginLeft: 'auto' } },
-        createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void (async () => { const r = await rpc<{ path?: string }>('report-build', { request: { id } } as unknown as Record<string, unknown>); window.setTimeout(() => {}, 0); void navigator.clipboard?.writeText(String(r.value?.path ?? '')).catch(() => {}) })() } }, tt('reportBtn')))),
+        createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void (async () => { const r = await rpc<{ path?: string }>('report-build', { request: { id } } as unknown as Record<string, unknown>); const ok = await navigator.clipboard?.writeText(String(r.value?.path ?? '')).then(() => true).catch(() => false); setRepDone(ok === true); if (ok === true) window.setTimeout(() => setRepDone(false), 1600) })() } }, tt('reportBtn') + (repDone ? ` · ${tt('copied')}` : '')))),
     createElement('div', { className: 'o4-sub', style: { margin: '3px 0 8px' } }, tt('tlSub')),
     createElement('div', { style: { display: 'flex', alignItems: 'flex-end', gap: '3px', height: '46px', marginBottom: '6px' } },
       bars.length === 0 ? createElement('div', { className: 'o4-load' }, tt('tlEmpty')) : null,
@@ -2336,6 +2383,17 @@ function InboxPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
     })()
     return () => { alive = false }
   }, [])
+  // 0.2.0 D-M5:tab 驻留期间 30s 轻刷新——此前仅挂载拉一次,新 run/未读数不自动更新,
+  // 必须手动刷新或重开面板
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      if (busy) return
+      void rpc<RunInboxListResult>('inbox-list').then((r) => {
+        if (r.ok && r.value !== undefined && r.value.ok) { setRows(r.value.entries); setUnread(r.value.unread) }
+      })
+    }, 30_000)
+    return () => window.clearInterval(t)
+  }, [busy])
   const markAll = async (): Promise<void> => {
     setBusy(true)
     await rpc<{ ok: boolean; marked: number }>('inbox-read', {})
@@ -2388,7 +2446,7 @@ function InboxPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
     const st = stBadge(e)
     const key = `${e.task}|${e.at}`
     return createElement('div', { key: `${key}-${i}`, style: { display: 'contents' } },
-      createElement('div', { className: 'o4-qrow', style: { alignItems: 'center', opacity: e.archived ? 0.72 : 1 }, title: `${e.site}\n${e.at}\n${e.summary}`, onClick: () => { void openEntry(e) } },
+      createElement('div', { className: 'o4-qrow', style: { alignItems: 'center', opacity: e.archived ? 0.72 : 1 }, title: `${e.site}\n${e.at}\n${e.summary}`, onClick: () => { void openEntry(e) }, role: 'button', tabIndex: 0, onKeyDown: keyActivate },
         createElement('span', { className: `o4-dot${e.status === 'ok' ? ' g' : e.status === 'fail' ? ' r' : ' y'}`, style: { flex: 'none' } }),
         e.read !== true && e.archived !== true ? createElement('span', { className: 'o4-bdg b', style: { flex: 'none' } }, tt('ibUnread')) : null,
         createElement('span', { className: `o4-bdg${st.cls}`, style: { flex: 'none' } }, st.label),
@@ -2632,6 +2690,7 @@ function CanvasPanel(props: { lang: Lang }): ReturnType<typeof createElement> {
       style: { width: `${zw}px`, borderColor: tone === 'ok' ? 'rgba(52,199,89,.5)' : (tone === 'fail' ? 'rgba(255,69,58,.55)' : 'rgba(255,159,10,.55)'), ...(open ? { zIndex: 3 } : {}) },
       title: `${c.command ?? c.id}\n${c.at}`,
       onClick: () => { if (movedRef.current) return; setOpenId(open ? null : c.id) },
+      role: 'button', tabIndex: 0, onKeyDown: keyActivate,
     },
       // 卡头:类型徽章 + 站点(有则)+ 本地时间
       createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '5px' } },
