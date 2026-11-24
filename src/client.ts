@@ -66,6 +66,7 @@ const STR = {
     okRate: '成功率', statsSince: '统计自 ', failStreak: '连败', failStreakTip: '最近几次连续失败(跳过不计)——打开浏览器/检查登录态,或考虑暂停这个任务',
     billT: '效率账单', billLine: (n: number, m: number, t: string) => `${n} 个定时任务 · 累计成功采集 ${m} 次 · 按人工逐一刷新约 3 分钟/次估算,已为你省下约 ${t}(估算口径)`, billFail: (n: number) => `失败 ${n} 次(失败行可查原因)`, billStuck: (n: number) => `${n} 个任务连败中(建议检查登录态或暂停)`,
     sweepT: '一键巡圈', sweepSub: '采一轮默认社媒面(B站/微博/知乎/小红书/V2EX/掘金:热榜+关注流,8 条只读命令,已避开已知坏点)——同域串行跨域并行,结果就地成简报,可复制给 agent 做交叉热点分析或沉淀进知识库', sweepGo: '🔍 一键巡圈', sweepRunning: '巡圈中', sweepStop: '停止', sweepDone: (ok: number, n: number) => `巡圈完成:${ok}/${n} 站成功`,
+    followT: '追更(关注流配方)', followSub: '一键填入下方创建表单——变化检测自动 diff:新增/消失/位移即推送;watch 关键词与可见性可在表单再调', followBili: 'B站关注流(免 id)', followWeibo: '微博关注流', followTwitter: 'Twitter 设备关注流',
     cronBad: 'cron 格式不对(5 段:分 时 日 月 周)', cronNext: '下次执行:',
     run: '运行', running: '跑这', copy: '复制', rerun: '重跑', copied: '已复制',
     hintT: '你是不是想用这些?点击直接跑:',
@@ -187,6 +188,7 @@ const STR = {
 
     billT: 'Efficiency ledger', billLine: (n: number, m: number, t: string) => `${n} schedules · ${m} successful collections so far · at ~3 min per manual sweep, that is roughly ${t} of your time saved (estimate)`, billFail: (n: number) => `${n} failures (see failure rows for causes)`, billStuck: (n: number) => `${n} task(s) on a losing streak (check login or pause)`,
     sweepT: 'One-tap sweep', sweepSub: 'Collect the default social surface (Bilibili/Weibo/Zhihu/XHS/V2EX/Juejin: hot lists + follow feeds, 8 read-only commands, known broken spots avoided) — same-site serial, cross-site parallel; results render in place, copy for agent-level analysis or sink into the knowledge base', sweepGo: '🔍 Sweep now', sweepRunning: 'Sweeping', sweepStop: 'Stop', sweepDone: (ok: number, n: number) => `Sweep done: ${ok}/${n} sites ok`,
+    followT: 'Follow recipes', followSub: 'One click fills the create form below — change detection diffs each run: additions/removals/moves push automatically; watch keywords and visibility adjustable in the form', followBili: 'Bilibili following feed (no id needed)', followWeibo: 'Weibo following feed', followTwitter: 'Twitter device-follow stream',
     cronBad: 'Bad cron (5 fields: min hour dom mon dow)', cronNext: 'Next run:',
     run: 'Run', running: 'Run', copy: 'Copy', rerun: 'Re-run', copied: 'Copied',
     hintT: 'Did you mean? Click to run:',
@@ -1600,6 +1602,25 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void copyText(sweep.rows.map((r) => `## ${r.line}\n${r.text}`).join('\n\n')).then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) } }, t2('copy')),
         ) : null,
       ),
+      // 追更一等公民(0.2.0 G):SKILL.md 追更配方的面板化——三条免参数关注流配方
+      // (manifest 实取核实:bilibili feed 不传 uid=关注时间线/weibo feed --type following/
+      // twitter device-follow),点击填入下方创建表单,watch/可见性/静默在表单再调;
+      // 知乎逐人拉参数形态逐站不同,保持 SKILL.md agent 配方路径(不对产品 UI 猜参数名)
+      createElement('div', { className: 'o4-card', style: { marginBottom: '10px' } },
+        createElement('div', { className: 'o4-h3' },
+          createElement('span', { className: 'o4-miniico' }, ic('alert', true)), t2('followT')),
+        createElement('div', { className: 'o4-sub' }, t2('followSub')),
+        createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' } },
+          ...([
+            [t2('followBili'), 'site bilibili feed'],
+            [t2('followWeibo'), 'site weibo feed --type following'],
+            [t2('followTwitter'), 'site twitter device-follow'],
+          ] as Array<[string, string]>).map(([label, cmd]) =>
+            createElement('div', { key: cmd, className: 'o4-qrow', role: 'button', tabIndex: 0, onKeyDown: keyActivate, onClick: () => { setSchedSite(cmd); setSchedCron('0 9,13,19 * * *'); showToast(t2('followSub'), true) } },
+              label, createElement('span', { className: 'mono' }, cmd), createElement('span', { className: 'o4arr', style: { color: '#5F6873', display: 'flex' } }, ic('chev-r', true)),
+            )),
+        ),
+      ),
       createElement('div', { className: 'o4-card' },
         createElement('div', { className: 'o4-h3' },
           createElement('span', { className: 'o4-miniico' }, ic('clock', true)), t2('autoT'),
@@ -2027,6 +2048,13 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
 export function apply(ctx: ClientContext): void {
   ctx.slots.inject('settings.section', () => ctx.slots.register(
     { name: 'settings.section', id: 'opencli-proxy', order: 41, label: '浏览器代理' },
+    () => createElement(Panel),
+  ))
+  // 0.2.0 H⑤:插件页 tab 槽(host settings 契约实有 settings.plugins.tab,list 槽,
+  // id/order/label 三键)——面板直达入口。此前四层深:账号菜单→设置→浏览器代理;
+  // 现在插件页顶部 tab 一击直达(同一 Panel 组件,两处挂载零新状态)
+  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
+    { name: 'settings.plugins.tab', id: 'opencli-proxy', order: 50, label: '浏览器代理' },
     () => createElement(Panel),
   ))
 }
