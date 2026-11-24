@@ -309,6 +309,7 @@ describe('§2.2 触发点文案(doctor / systemPrompt 目录 / 面板纯函数)'
 
   it('systemPrompt 目录:有扩展时不追加降级段(全绿不占上下文)', async () => {
     setExt(true)
+    ;(S() as unknown as { daemonStatusCache?: unknown }).daemonStatusCache = undefined // 0.2.0 PF4:场景翻转须真探
     await S().updateDirectory()
     expect(S().directoryText as string).not.toContain('当前无扩展')
     setExt(false)

@@ -73,6 +73,7 @@ const STR = {
     // 0.2.0 A 包:删除二次确认/异步触发如实文案/回放进度与失败即停/登录态未巡检/webhook 凭据显隐
     delConfirm: '确认删?', runOk: '已触发,后台执行中', replayDone: (n: number) => `回放完成:${n} 步`, replayFail: (i: number, n: number) => `第 ${i}/${n} 步失败,已停止`, notChecked: '未巡检', notCheckedTip: '尚未巡检登录态——点此发起', nfShow: '显示', nfHide: '隐藏',
     disConfirm: '再点一次确认禁用', heroSites: '站点', heroSiteUnit: '站', heroExt: 'Chrome 扩展', heroAudit: '拦截(7d)', heroAuditUnit: '次', heroMode: '自动化模式', recSteps: (n: number) => `${n} 步`,
+    selCleared: '已切换来源,勾选已清',
     loginT: '登录态巡检', loginSub: '绿=已登 黄=超时 红=未登 · 状态条只亮灯,操作在这里',
     online: '在线', expired: '失效', unknown: '未知', timeout: '超时', openLogin: '打开登录',
     secT: '安全中心', secSub: '写操作全部经过你批准', lastBlocked: '最近拦截',
@@ -87,7 +88,7 @@ const STR = {
     rateT: '限流与限域', rateSub: '保护你的账号不被风控',
     shaLine: 'sha256(本构建)', verT: '版本与更新', verNow: '当前', channel: '渠道 stable',
     checkUpd: '检查更新', upToDate: '已是最新', updAvail: '可更新到', updMarket: '经 dsh-market Update API',
-    updFallback: '未装市场插件 → GitHub Releases 检查', updating: '检查中…',
+    updFallback: '未装市场插件 → GitHub Releases 检查', updNoMarket: '未装 dsh-market 插件——无法经市场查更新', updNetFail: '网络不可达,更新检查失败', updating: '检查中…',
     cmdT: '命令', cmdSearch: '搜索站点或命令,如:热榜 / search / bilibili',
     cmdFmt: '点命令行 → 复制调用格式;禁用适配器会即时从 systemPrompt 收缩目录(需确认)',
     knowExp: '导出知识卡', knowExpDo: '导出中…',
@@ -192,6 +193,7 @@ const STR = {
     quickT: 'Quick picks', quickSub: 'Click → fill the input; Ctrl+Enter to run', quickMore: '↑ 6 picked from your catalog on each refresh — 170+ sites work like this',
     delConfirm: 'Sure?', runOk: 'Triggered — running in background', replayDone: (n: number) => `Replay done: ${n} steps`, replayFail: (i: number, n: number) => `Step ${i}/${n} failed — stopped`, notChecked: 'Not checked', notCheckedTip: 'Login state not checked yet — click to run', nfShow: 'Show', nfHide: 'Hide',
     disConfirm: 'Click again to disable', heroSites: 'sites', heroSiteUnit: 'adapters', heroExt: 'Chrome extension', heroAudit: 'Blocks (7d)', heroAuditUnit: '×', heroMode: 'Automation mode', recSteps: (n: number) => `${n} steps`,
+    selCleared: 'Source switched — selection cleared',
     loginT: 'Login check', loginSub: 'green=logged-in yellow=timeout red=expired · status bar shows dots, actions live here',
     online: 'online', expired: 'expired', unknown: 'unknown', timeout: 'timeout', openLogin: 'Open login',
     secT: 'Security center', secSub: 'Every write goes through your approval', lastBlocked: 'Blocked (7d)',
@@ -206,7 +208,7 @@ const STR = {
     rateT: 'Rate limit & domain fence', rateSub: 'Protects your accounts from bot controls',
     shaLine: 'sha256 (this build)', verT: 'Version & updates', verNow: 'current', channel: 'channel stable',
     checkUpd: 'Check updates', upToDate: 'up to date', updAvail: 'update available:', updMarket: 'via dsh-market Update API',
-    updFallback: 'market plugin absent → check GitHub Releases', updating: 'checking…',
+    updFallback: 'market plugin absent → check GitHub Releases', updNoMarket: 'dsh-market plugin absent — cannot check via market', updNetFail: 'network unreachable — update check failed', updating: 'checking…',
     cmdT: 'Commands', cmdSearch: 'Search sites or commands, e.g. trending / search / bilibili',
     cmdFmt: 'Click a command row → copy call format; disabling a adapter shrinks the systemPrompt catalog (confirm first)',
     knowExp: 'Export knowledge cards', knowExpDo: 'Exporting…',
@@ -781,6 +783,7 @@ function Panel(): ReturnType<typeof createElement> {
   const [skipDecor, setSkipDecor] = useState(false)
   const [assetHits, setAssetHits] = useState<AssetHit[] | null>(null)
   const [assetBusy, setAssetBusy] = useState(false)
+  const assetDebounceRef = useRef<number | undefined>(undefined) // 0.2.0 D-L11
   const [scripts, setScripts] = useState<BuiltinScript[] | null>(null)
   const [diagOpen, setDiagOpen] = useState(false)
   const [logTail, setLogTail] = useState<LogsTailResult | null>(null)
@@ -1196,9 +1199,13 @@ function Panel(): ReturnType<typeof createElement> {
     if (r.ok && r.value !== undefined) setScripts(r.value.scripts)
   }
 
+  // 0.2.0 D-L12:展开态用 ref 镜像(openDiag 此前读陈旧闭包 diagOpen 判断是否拉日志,时序错时漏拉/多拉)
+  const diagOpenRef = useRef(false)
   const openDiag = async (): Promise<void> => {
-    setDiagOpen((v) => !v)
-    if (!diagOpen && logTail === null) {
+    const next = !diagOpenRef.current
+    diagOpenRef.current = next
+    setDiagOpen(next)
+    if (next && logTail === null) {
       const r = await rpc<LogsTailResult>('logs-tail')
       if (r.ok && r.value !== undefined) setLogTail(r.value)
     }
@@ -1208,17 +1215,16 @@ function Panel(): ReturnType<typeof createElement> {
     setUpdState('checking')
     try {
       const cap = await fetch('/dsh-market/api/v1/capabilities')
-      if (cap.ok) {
-        const upd = await fetch('/dsh-market/api/v1/updates?name=dsh-opencli')
-        if (upd.ok) {
-          const j = JSON.parse(await upd.text()) as { result?: { value?: { targetVersion?: string; isForwardUpdate?: boolean } } }
-          const target = j.result?.value?.targetVersion
-          setUpdState(target !== undefined && target !== '' ? `${t2('updAvail')} ${target}` : t2('upToDate'))
-          return
-        }
-      }
-    } catch { /* 未装市场 → 降级 */ }
-    setUpdState(t2('updFallback'))
+      // 0.2.0 D-L4:两种失败如实区分(此前网络失败与「未装市场插件」共用同一降级文案)
+      if (!cap.ok) { setUpdState(t2('updNoMarket')); return }
+      const upd = await fetch('/dsh-market/api/v1/updates?name=dsh-opencli')
+      if (!upd.ok) { setUpdState(t2('updNoMarket')); return }
+      const j = JSON.parse(await upd.text()) as { result?: { value?: { targetVersion?: string; isForwardUpdate?: boolean } } }
+      const target = j.result?.value?.targetVersion
+      setUpdState(target !== undefined && target !== '' ? `${t2('updAvail')} ${target}` : t2('upToDate'))
+      return
+    } catch { /* 网络不可达(与「未装市场插件」不同因) */ }
+    setUpdState(t2('updNetFail'))
   }
 
   const loginResults = login?.results ?? []
@@ -1248,6 +1254,35 @@ function Panel(): ReturnType<typeof createElement> {
             onCopyCliInstall: () => { void copyText('npm i -g @jackwener/opencli').then((ok) => showToast(ok ? t2('copied') : t2('errReq'), ok)) },
           })
         : null,
+      // 0.2.0 D-L17:健康 hero 置顶——首屏先回答「现在能不能用」,指挥台随后(原顺序 hero 压第 5 位)
+      // 健康卡 → hero(daemon 离线时降级为修复态)
+      createElement('div', { className: 'o4-hero' },
+        createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '11px', marginBottom: '13px' } },
+          status === null
+            ? createElement('span', { className: 'o4-dot n' })
+            : (daemonUp ? createElement('span', { className: 'o4-pulse' }) : createElement('span', { className: 'o4-dot r', style: { width: '12px', height: '12px' } })),
+          createElement('div', { className: 'o4-big' },
+            status === null ? t2('loading') : (daemonUp ? 'daemon ' + t2('daemonRunning') : 'daemon ' + t2('daemonDown')),
+            status?.version ? createElement('span', { className: 'o4-vchip' }, 'v' + String(status.version).replace(/^v/, '')) : null,
+          ),
+          createElement('button', { className: 'o4-btn ghost sm', style: { marginLeft: 'auto' }, disabled: starting, onClick: () => { void startDaemon() } },
+            ic('refresh', true), starting ? '…' : t2('fix')),
+        ),
+          createElement('div', { className: 'o4-cells' },
+          // 0.2.0 D-L2/M17:hero 单元标签入双语表;审计保留 7d 计数(明细列表落安全 tab,批次 3)
+          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroSites')), createElement('div', { className: 'v big' }, status === null ? '…' : String(adapters?.length ?? 0), createElement('small', null, t2('heroSiteUnit')))),
+          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroExt')), createElement('div', { className: `v big${status?.daemon?.extension === 'connected' ? ' on' : ''}` , style: status?.daemon?.extension === 'connected' ? { fontSize: '15px' } : { fontSize: '13px', color: '#5F6873', fontWeight: 500 } }, status === null ? '…' : (status.daemon?.extension === undefined ? t2('unknown') : (status.daemon.extension === 'connected' ? t2('bridgeOn') : t2('bridgeOff'))))),
+          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroAudit')), createElement('div', { className: 'v big' }, String(audit?.count7d ?? 0), createElement('small', null, t2('heroAuditUnit')))),
+          // 0.2.0 D-M9:档位本地化(此前显示英文原枚举)
+          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroMode')), createElement('div', { className: 'v', style: { fontSize: '14px' } }, MODE_LABEL_KEYS[autoMode] !== undefined ? t2(MODE_LABEL_KEYS[autoMode] as keyof typeof STR.zh) : autoMode)),
+        ),
+        status?.ok === false && status.error !== undefined
+          ? createElement('div', { className: 'o4-tryout', style: { marginTop: '9px' } }, status.error)
+          : null,
+        daemonOff || !binOk
+          ? createElement('div', { style: { marginTop: '10px' } }, createElement('button', { className: 'o4-btn', disabled: starting, onClick: () => { void startDaemon() } }, ic('refresh', true), starting ? '…' : t2('fix')))
+          : null,
+      ),
       // NL 指挥台(0.4.6 B1,总览主行动):一句话 → 意图预览卡(逐字段可改)→ 确认执行
       createElement('div', { className: 'o4-card', 'data-anim': '' },
         createElement('div', { className: 'o4-h3' },
@@ -1346,34 +1381,6 @@ function Panel(): ReturnType<typeof createElement> {
             createElement('button', { className: 'o4-btn ghost sm', disabled: checking, onClick: () => { void runLoginCheck() } }, ic('refresh', true), checking ? t2('checking') : t2('recheck')),
           ),
         ),
-      ),
-      // 健康卡 → hero(daemon 离线时降级为修复态)
-      createElement('div', { className: 'o4-hero' },
-        createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '11px', marginBottom: '13px' } },
-          status === null
-            ? createElement('span', { className: 'o4-dot n' })
-            : (daemonUp ? createElement('span', { className: 'o4-pulse' }) : createElement('span', { className: 'o4-dot r', style: { width: '12px', height: '12px' } })),
-          createElement('div', { className: 'o4-big' },
-            status === null ? t2('loading') : (daemonUp ? 'daemon ' + t2('daemonRunning') : 'daemon ' + t2('daemonDown')),
-            status?.version ? createElement('span', { className: 'o4-vchip' }, 'v' + String(status.version).replace(/^v/, '')) : null,
-          ),
-          createElement('button', { className: 'o4-btn ghost sm', style: { marginLeft: 'auto' }, disabled: starting, onClick: () => { void startDaemon() } },
-            ic('refresh', true), starting ? '…' : t2('fix')),
-        ),
-          createElement('div', { className: 'o4-cells' },
-          // 0.2.0 D-L2/M17:hero 单元标签入双语表;审计保留 7d 计数(明细列表落安全 tab,批次 3)
-          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroSites')), createElement('div', { className: 'v big' }, status === null ? '…' : String(adapters?.length ?? 0), createElement('small', null, t2('heroSiteUnit')))),
-          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroExt')), createElement('div', { className: `v big${status?.daemon?.extension === 'connected' ? ' on' : ''}` , style: status?.daemon?.extension === 'connected' ? { fontSize: '15px' } : { fontSize: '13px', color: '#5F6873', fontWeight: 500 } }, status === null ? '…' : (status.daemon?.extension === undefined ? t2('unknown') : (status.daemon.extension === 'connected' ? t2('bridgeOn') : t2('bridgeOff'))))),
-          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroAudit')), createElement('div', { className: 'v big' }, String(audit?.count7d ?? 0), createElement('small', null, t2('heroAuditUnit')))),
-          // 0.2.0 D-M9:档位本地化(此前显示英文原枚举)
-          createElement('div', { className: 'o4-cell' }, createElement('div', { className: 'l' }, t2('heroMode')), createElement('div', { className: 'v', style: { fontSize: '14px' } }, MODE_LABEL_KEYS[autoMode] !== undefined ? t2(MODE_LABEL_KEYS[autoMode] as keyof typeof STR.zh) : autoMode)),
-        ),
-        status?.ok === false && status.error !== undefined
-          ? createElement('div', { className: 'o4-tryout', style: { marginTop: '9px' } }, status.error)
-          : null,
-        daemonOff || !binOk
-          ? createElement('div', { style: { marginTop: '10px' } }, createElement('button', { className: 'o4-btn', disabled: starting, onClick: () => { void startDaemon() } }, ic('refresh', true), starting ? '…' : t2('fix')))
-          : null,
       ),
       // watch 命中可见性:健康区下最近一条 🔔 徽章行(事件文本自带 🔔 前缀,点击跳自动化 tab)
       watchHit !== null
@@ -1651,12 +1658,13 @@ function Panel(): ReturnType<typeof createElement> {
         // 批量操作条:全选/反选 + 来源过滤常驻;批量启用/停用仅在有选中(>0)时出现
         createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', alignItems: 'center', flexWrap: 'wrap' } },
           createElement('input', { type: 'checkbox', title: t2('batchSelect'), checked: allSel, onChange: toggleSelAll, style: { accentColor: '#4A9EFF', cursor: 'pointer', margin: '0', flex: 'none' } }),
-          createElement('select', { className: 'o4-in', style: { maxWidth: '132px', flex: 'none', padding: '4px 8px', fontSize: '11.5px' }, title: t2('batchFilter'), value: schedSrc, onChange: (e: { target: { value: string } }) => { setSchedSrc(e.target.value as typeof schedSrc); setSchedSel(new Set()) } },
+          createElement('select', { className: 'o4-in', style: { maxWidth: '132px', flex: 'none', padding: '4px 8px', fontSize: '11.5px' }, title: t2('batchFilter'), value: schedSrc, onChange: (e: { target: { value: string } }) => { setSchedSrc(e.target.value as typeof schedSrc); if (schedSel.size > 0) { setSchedSel(new Set()); showToast(t2('selCleared'), true) } } },
             createElement('option', { value: 'all' }, `${t2('batchFilter')}:${t2('nfLevelAll')}`),
             ...(['agent', 'chat', 'panel', 'ctl'] as const).map((src) => createElement('option', { key: src, value: src }, `${t2('batchFilter')}:${src}`))),
           schedSel.size > 0 ? createElement('span', { className: 'o4-bdg b' }, String(schedSel.size)) : null,
-          schedSel.size > 0 ? createElement('button', { className: 'o4-btn ghost sm', disabled: schedBatchBusy, onClick: () => { void batchToggle(true) } }, t2('batchEnable')) : null,
-          schedSel.size > 0 ? createElement('button', { className: 'o4-btn ghost sm', disabled: schedBatchBusy, onClick: () => { void batchToggle(false) } }, t2('batchDisable')) : null,
+          // 0.2.0 D-L8:批量按钮常驻(选中为 0 时 disabled)——条件插入导致布局跳变
+          createElement('button', { className: 'o4-btn ghost sm', disabled: schedBatchBusy || schedSel.size === 0, onClick: () => { void batchToggle(true) } }, t2('batchEnable')),
+          createElement('button', { className: 'o4-btn ghost sm', disabled: schedBatchBusy || schedSel.size === 0, onClick: () => { void batchToggle(false) } }, t2('batchDisable')),
         ),
         createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
           filteredSchedules.length === 0 ? createElement('div', { className: 'o4-load' }, '—') : null,
@@ -1692,13 +1700,15 @@ function Panel(): ReturnType<typeof createElement> {
                   let streak: number
                   if (s.failRunStreak !== undefined) streak = s.failRunStreak
                   else { streak = 0; for (const r of hist) { if (r.ok === true) break; if (r.skip === true) continue; streak += 1 } }
-                  return streak >= 2 ? createElement('span', { className: 'o4-bdg w', title: t2('failStreakTip') }, `✗ ${t2('failStreak')} ${streak}`) : null
+                  // 0.2.0 D-M13:任务行诊断注记展开开关(徽章可点,注记行内可见——title 悬停触屏/键盘不可见)
+  const [noteId, setNoteId] = useState<string | null>(null)
+  return streak >= 2 ? createElement('span', { className: 'o4-bdg w', title: t2('failStreakTip'), style: { cursor: 'pointer' }, onClick: () => setNoteId(noteId === s.id ? null : s.id) }, `✗ ${t2('failStreak')} ${streak}`) : null
                 })(),
                 (() => {
                   const siteName = s.site.replace(/^\s*site\s+/i, '').trim().split(/\s+/)[0] ?? ''
                   const hh = healthOf(siteName)
                   return hh !== null && hh.status === 'degraded'
-                    ? createElement('span', { className: 'o4-bdg w', title: `${t2('healthIssueT')(hh.updated)}\n${hh.issues.join('\n')}` }, `⚠ ${t2('healthDegraded')}`)
+                    ? createElement('span', { className: 'o4-bdg w', title: `${t2('healthIssueT')(hh.updated)}\n${hh.issues.join('\n')}`, style: { cursor: 'pointer' }, onClick: () => setNoteId(noteId === s.id ? null : s.id) }, `⚠ ${t2('healthDegraded')}`)
                     : null
                 })(),
                 createElement('span', null, `${t2('last')} ${hist[0]?.at?.slice(5, 16) ?? '—'}`,
@@ -1728,6 +1738,15 @@ function Panel(): ReturnType<typeof createElement> {
                 // 0.2.0 A-H3:两步删除——首点武装(3s 自动还原),再点才执行
                 createElement('button', { className: 'o4-btn ghost sm', style: delArm === s.id ? { borderColor: '#FF6B63', color: '#FF6B63' } : undefined, onClick: () => { if (delArm === s.id) { void removeSchedule(s.id) } else { setDelArm(s.id); window.setTimeout(() => setDelArm((cur) => (cur === s.id ? null : cur)), 3000) } } }, delArm === s.id ? t2('delConfirm') : t2('del')),
               ),
+              // 0.2.0 D-M13:诊断从 title 悬停升级为可点开的行内注记(触屏/键盘不可见问题;
+              // 连败说明 + 受损原因两处 title 的内容在此展开,再点徽章收起)
+              noteId === s.id ? createElement('div', { className: 'o4-note', style: { marginTop: '2px', whiteSpace: 'pre-wrap' } }, (() => {
+                const siteName = s.site.replace(/^\s*site\s+/i, '').trim().split(/\s+/)[0] ?? ''
+                const hh = healthOf(siteName)
+                const parts: string[] = [t2('failStreakTip')]
+                if (hh !== null && hh.status === 'degraded') parts.unshift(`${t2('healthIssueT')(hh.updated)}\n${hh.issues.map((x) => `· ${x}`).join('\n')}`)
+                return parts.join('\n')
+              })()) : null,
                           )
           }),
         ),
@@ -1768,7 +1787,8 @@ function Panel(): ReturnType<typeof createElement> {
           createElement('div', { className: 'o4-h3' }, createElement('span', { className: 'o4-miniico' }, ic('layers', true)), t2('assetT')),
           createElement('div', { className: 'o4-sub' }, t2('assetSub')),
           createElement('div', { style: { display: 'flex', gap: '7px', marginBottom: '9px' } },
-            createElement('input', { className: 'o4-in', placeholder: t2('assetSearch'), onChange: (e: { target: { value: string } }) => { if (e.target.value.length >= 2) void searchAssets(e.target.value) } }),
+            // 0.2.0 D-L11:300ms 防抖(此前 ≥2 字符逐键发 RPC)
+            createElement('input', { className: 'o4-in', placeholder: t2('assetSearch'), onChange: (e: { target: { value: string } }) => { const q = e.target.value; if (assetDebounceRef.current !== undefined) window.clearTimeout(assetDebounceRef.current); assetDebounceRef.current = window.setTimeout(() => { if (q.length >= 2) void searchAssets(q) }, 300) } }),
             createElement('button', { className: 'o4-btn ghost sm', onClick: () => { void loadScripts() } }, t2('browse')),
           ),
           createElement('div', { className: 'o4-cells', style: { gridTemplateColumns: 'repeat(3,1fr)' } },
@@ -1789,6 +1809,8 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
   const entryLabel: Record<string, string> = { 'panel-rpc': tt('scPanel'), 'ctl-inbox': tt('scCtl'), daemon: tt('scDaemon') }
   const toolOk = sc.tools.filter((t) => t.registered).length
   const updColor = sc.updateAvailable === true ? '#FF9F0A' : '#34C759'
+  // 0.2.0 D-M2:复制升级命令此前 .then(() => {}) 零反馈(违背全面板「复制必有 copied」模式)
+  const [upCopied, setUpCopied] = useState(false)
   return createElement('div', { className: 'o4-card', style: { marginBottom: '12px' } },
     createElement('div', { className: 'o4-h3' },
       createElement('span', { className: 'o4-miniico' }, ic('shield', true)), tt('scTitle'),
@@ -1807,7 +1829,7 @@ function SelfCheckCard(props: { sc: SelfCheckResult4; lang: Lang }): ReturnType<
     sc.updateAvailable === true && sc.upgradeCmd !== undefined
       ? createElement('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' } },
           createElement('code', { style: { flex: '1', fontSize: '11px', color: '#8E8E93', wordBreak: 'break-all' } }, sc.upgradeCmd),
-          createElement('button', { className: 'o4-btn ghost sm', title: tt('scUpgradeTip'), onClick: () => { void navigator.clipboard.writeText(sc.upgradeCmd ?? '').then(() => {}) } }, ic('copy', true), tt('csvT')),
+          createElement('button', { className: 'o4-btn ghost sm', title: tt('scUpgradeTip'), onClick: () => { void navigator.clipboard.writeText(sc.upgradeCmd ?? '').then(() => { setUpCopied(true); window.setTimeout(() => setUpCopied(false), 1400) }).catch(() => {}) } }, ic('copy', true), upCopied ? tt('copied') : tt('csvT')),
         )
       : null,
   )
@@ -2049,16 +2071,28 @@ function ShotThumb(props: { path: string; px?: number }): ReturnType<typeof crea
   // undefined=加载中 / null=失败占位 / 对象=可渲染
   const [shot, setShot] = useState<{ data: string; mime: string } | null | undefined>(undefined)
   const [zoom, setZoom] = useState(false)
+  // 0.2.0 PF12:懒加载——占位 ref 进视口(IntersectionObserver)才开始拉 base64(单张
+  // 130-660KB,轨迹墙 50 行全可见时首屏可能拉几十 MB);不可用则一次性拉(行为零变化)
+  const holderRef = useRef<HTMLElement | null>(null)
+  const [visible, setVisible] = useState(false)
   useEffect(() => {
+    const el = holderRef.current
+    if (el === null || typeof IntersectionObserver !== 'function') { setVisible(true); return }
+    const io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) { setVisible(true); io.disconnect() } }, { rootMargin: '120px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+  useEffect(() => {
+    if (!visible) return
     let alive = true
     void fetchShot(path).then((s) => { if (alive) setShot(s) })
     return () => { alive = false }
-  }, [path])
+  }, [path, visible])
   if (shot === null) {
     return createElement('span', { title: '截图不可用', style: { width: `${px}px`, height: `${px}px`, borderRadius: '6px', background: 'rgba(255,255,255,.08)', flex: 'none' } })
   }
-  if (shot === undefined) {
-    return createElement('span', { style: { width: `${px}px`, height: `${px}px`, borderRadius: '6px', background: 'rgba(255,255,255,.05)', flex: 'none' } })
+  if (shot === undefined || !visible) {
+    return createElement('span', { ref: holderRef as never, style: { width: `${px}px`, height: `${px}px`, borderRadius: '6px', background: 'rgba(255,255,255,.05)', flex: 'none', display: 'inline-block' } })
   }
   return createElement('img', {
     src: `data:${shot.mime};base64,${shot.data}`,

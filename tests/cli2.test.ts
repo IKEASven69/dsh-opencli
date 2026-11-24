@@ -218,6 +218,7 @@ describe('opencli_doctor 2.0(标准化状态源,JSON 信封下工作)', () => {
   })
   it('profileRequired=true(多档案未选)→ ⚠ + profile use 指引', async () => {
     shell.daemonJson = `{"ok":true,"data":{"running":true,"daemonVersion":"2.0.0","extensionConnected":true,"profileRequired":true,"profiles":[{"contextId":"a","extensionConnected":true},{"contextId":"b","extensionConnected":true}],"port":19825}}`
+    ;(S() as unknown as { daemonStatusCache?: unknown }).daemonStatusCache = undefined // 0.2.0 PF4:场景翻转须真探
     const tool = S().ctx.tools.registered.get('opencli_doctor')!
     const r = await tool.execute({})
     expect(r.text).toContain('⚠ BrowserBridge')

@@ -140,6 +140,7 @@ describe('CLI 共存判定(0.1.6 C2:major 不一致/flip 统计/零噪音/status
       }
       P.daemonStatus = async () => ({ running: true, version: '1.8.6', extension: 'connected' })
       ;(S as unknown as { statusCache?: unknown }).statusCache = undefined // 防用例间渗透(0.1.8 ④)
+      ;(S as unknown as { daemonStatusCache?: unknown }).daemonStatusCache = undefined // 0.2.0 PF4 同款
       const r1 = await S.status()
       expect(r1.ok).toBe(true)
       expect(r1.coexist).toBeDefined()
@@ -154,6 +155,7 @@ describe('CLI 共存判定(0.1.6 C2:major 不一致/flip 统计/零噪音/status
       P.eventsFile = join(dir, 'empty2.jsonl')
       P.flipCountCache = undefined
       ;(S as unknown as { statusCache?: unknown }).statusCache = undefined
+      ;(S as unknown as { daemonStatusCache?: unknown }).daemonStatusCache = undefined // 0.2.0 PF4 同款
       try {
         writeFileSync(P.eventsFile, '', 'utf8')
         const r2 = await S.status()

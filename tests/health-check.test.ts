@@ -91,8 +91,9 @@ describe('任务健康预检+断线恢复+版本翻转(P0-3)', () => {
   const stubDs = (seq: Array<{ running: boolean; version: string; extension: string }>, opts: { failRestart?: boolean } = {}): void => {
     ShellStub.statusSeq = seq.map((x) => ({ ...x }))
     ShellStub.restartFails = opts.failRestart === true
-    const S = svc() as unknown as { lastDaemonVersion: string | undefined }
+    const S = svc() as unknown as { lastDaemonVersion: string | undefined; daemonStatusCache?: unknown }
     S.lastDaemonVersion = undefined
+    S.daemonStatusCache = undefined // 0.2.0 PF4 TTL 缓存:场景翻转必须真探(与 flipCountCache 同款清理)
   }
   /** 服务实例唯一引用(cordis Proxy 每次 ctx.opencli 访问返回新 wrapper——必须缓存同一份)。 */
   let svcRef: OpencliService

@@ -17,7 +17,7 @@ import type { ShellExecRequest } from '@deepseek-ai/dsh-shell'
 import { Buffer } from 'node:buffer'
 import { homedir } from 'node:os'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { appendFileSync, existsSync, mkdirSync, rmdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, rmdirSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -994,6 +994,7 @@ export class OpencliService extends TypertRemoteService {
           await mkdir(dir, { recursive: true })
           const file = join(dir, `batch-${Date.now()}.md`)
           await writeFile(file, md, 'utf8')
+          this.pruneByPrefix(dir, /^batch-\d+\.md$/, 30)
           reportTail = `\n\n📄 报告已生成:${file}`
         } catch { /* 报告失败不阻断采集输出 */ }
         return { text: pre + head + body + reportTail }
@@ -1495,7 +1496,7 @@ export class OpencliService extends TypertRemoteService {
     const active = list.filter((a) => !this.state.disabled.includes(a.name))
     // 0.2.0:updateDirectory 是 fire-and-forget(void 调用 ×3),探测爆炸会成 unhandled
     // rejection(init 期在途链可能滑进后续测试/运行窗口)——探测故障按 fail-open 归 null(未运行文案)
-    const daemon = await this.daemonStatus().catch(() => null)
+    const daemon = await this.daemonStatusCached().catch(() => null)
     const state = daemon !== null && daemon.running
       ? `daemon 运行中(扩展 ${daemon.extension ?? '?'})`
       : 'daemon 未运行——opencli_* 需要它:可在 dsh 设置→浏览器代理 一键启动,或 opencli daemon restart'
@@ -1544,7 +1545,7 @@ export class OpencliService extends TypertRemoteService {
         ...(this.toolConflicts.length > 0 ? { conflicts: [...this.toolConflicts] } : {}),
       }
     }
-    const daemon = await this.daemonStatus()
+    const daemon = await this.daemonStatusCached()
     // 目录(8MB)不阻塞健康区:有缓存给缓存,无缓存后台异步预热(adapters RPC 负责完整加载)
     const cached = this.adapterCache !== null && Date.now() - this.adapterCache.at < ADAPTER_TTL_MS ? normalizeAdapterList(this.adapterCache.json) : null
     void this.adapterList().catch(() => {})
@@ -1590,6 +1591,7 @@ export class OpencliService extends TypertRemoteService {
     const r = await this.runOpencli(['daemon', 'restart'], 30000)
     const after = await this.daemonStatus()
     this.statusCache = undefined // daemon 状态刚变,TTL 缓存(0.1.8 ④)立即失效让面板看到新态
+    this.daemonStatusCache = undefined // PF4 缓存同清
     if (r.exitCode !== 0 && after?.running !== true) {
       return { ok: false, started: false, message: `启动失败(退出码 ${r.exitCode}):${clip(r.stderr || r.stdout, 300)}` }
     }
@@ -1977,10 +1979,18 @@ export class OpencliService extends TypertRemoteService {
   async eventsGet(request?: { limit?: number }): Promise<EventsGetResult> {
     const limit = Math.max(1, Math.min(500, Math.floor(Number(request?.limit ?? 50)) || 50))
     const rows: IngestEvent[] = []
-    for (const file of [`${this.eventsFile}.1`, this.eventsFile]) { // 旧档在前:读侧统一倒序输出
-      let text = ''
-      try { text = readFileSync(file, 'utf8') } catch { continue /* 无档/无权限:跳过 */ }
-      for (const line of text.split('\n')) {
+    // 0.2.0 PF7:小 limit + 大主档(>256KB)→ 主档尾部字节倒读(此前整档同步读,5MB 档
+    // ~200-500ms 阻塞 RPC)。尾读只看主档(不读 .1 旧档——50 条限额通常够;更深历史传大
+    // limit 走全量);首行可能截断,丢弃不解析(与脏行跳过同口径)
+    let tailMode = false
+    try { tailMode = limit <= 50 && statSync(this.eventsFile).size > 262_144 } catch { /* 无主档:走全量 */ }
+    if (tailMode) {
+      const size = statSync(this.eventsFile).size
+      const len = Math.min(262_144, size)
+      const fh = openSync(this.eventsFile, 'r')
+      const buf = Buffer.alloc(len)
+      try { readSync(fh, buf, 0, len, size - len) } finally { closeSync(fh) }
+      for (const line of buf.toString('utf8').split('\n').slice(1)) {
         if (line.trim().length === 0) continue
         try {
           const v = JSON.parse(line) as unknown
@@ -1989,6 +1999,21 @@ export class OpencliService extends TypertRemoteService {
             || typeof (v as IngestEvent).text !== 'string') continue
           rows.push(v as IngestEvent)
         } catch { /* 脏行跳过 */ }
+      }
+    } else {
+      for (const file of [`${this.eventsFile}.1`, this.eventsFile]) { // 旧档在前:读侧统一倒序输出
+        let text = ''
+        try { text = readFileSync(file, 'utf8') } catch { continue /* 无档/无权限:跳过 */ }
+        for (const line of text.split('\n')) {
+          if (line.trim().length === 0) continue
+          try {
+            const v = JSON.parse(line) as unknown
+            if (v === null || typeof v !== 'object'
+              || typeof (v as IngestEvent).at !== 'string' || typeof (v as IngestEvent).kind !== 'string'
+              || typeof (v as IngestEvent).text !== 'string') continue
+            rows.push(v as IngestEvent)
+          } catch { /* 脏行跳过 */ }
+        }
       }
     }
     rows.reverse() // 文件是追加序(旧→新),历史面契约与 ingest-events 一致:最新在前
@@ -2428,6 +2453,7 @@ export class OpencliService extends TypertRemoteService {
     await mkdir(rdir, { recursive: true })
     const path = join(rdir, `sched-${id}-${Date.now()}.md`)
     await writeFile(path, md, 'utf8')
+    this.pruneByPrefix(rdir, /^sched-\d+-\d+\.md$/, 30)
     return { ok: true, path }
   }
 
@@ -2623,6 +2649,10 @@ export class OpencliService extends TypertRemoteService {
     this.schedules.splice(i, 1)
     const removedId = String(request.id ?? '')
     delete this.runHistory[removedId]
+    // 0.2.0 PF9:「任务删除即清」纪律补口——driftHistory 样本与 failStreaks 连败签名此前残留
+    // (量级微小但属孤儿状态;persist 纪律同款,删了就不留)
+    this.driftHistory.delete(removedId)
+    this.failStreaks.reset(removedId)
     // 运行级收件箱状态随任务删除清理(0.1.4 候选 5 ①):任务没了,read/archived 键不留孤儿
     purgeInboxFlags(this.state.inboxFlags, removedId)
     await this.saveState()
@@ -3060,30 +3090,44 @@ export class OpencliService extends TypertRemoteService {
     if (list === null) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], sites: [], error: this.lastShellError ?? '目录不可用' }
     const lines = pickCanaryCommands(list)
     if (lines.length === 0) return { ok: false, total: 0, passed: 0, newFailures: [], recovered: [], sites: [], error: '目录无只读命令' }
-    const results: BenchItem[] = []
-    for (let i = 0; i < lines.length; i++) {
-      const [site, command] = lines[i]!.split(/\s+/) as [string, string]
+    // 0.2.0 PF6:泳道并发(env DSH_OPENCLI_CANARY_CONCURRENCY,默认 1=串行现状;同 adapter
+    // 命令恒串行——登录态/标签页互踩,与 site_batch 约束同款)。归因窗占用 governor 全程的
+    // 隐性代价随并发下降;跑分对照语义=逐站 ok/ms 照记,跨轮对比时并发档位须一致(诚实口径)
+    const conc = Math.max(1, Math.min(6, Number(process.env.DSH_OPENCLI_CANARY_CONCURRENCY ?? '1') || 1))
+    const results: Array<BenchItem | undefined> = new Array(lines.length)
+    const pos = new Map<string, number>(lines.map((l, i) => [l, i]))
+    const runItem = async (line: string): Promise<void> => {
+      const i = pos.get(line)!
+      const [site, command] = line.split(/\s+/) as [string, string]
       // 防御性只读门(安全审查 MEDIUM):pickCanaryCommands 按热词名挑命令不查权限——
       // 若上游目录某条 hot 词命名命令实为 write,这里挡住,绝不无人值守执行写命令
       if ((await this.lookupAccess(site, command)) !== 'read') {
-        results.push({ site, command: lines[i]!, ok: false, p: null, ms: 0, error: '目录标记为非只读,防御性跳过' })
-        continue
+        results[i] = { site, command: line, ok: false, p: null, ms: 0, error: '目录标记为非只读,防御性跳过' }
+        return
       }
       const started = Date.now()
       try {
         const out = await this.runOpencli([site, command], 45_000)
         if (out.exitCode !== 0) {
-          results.push({ site, command: lines[i]!, ok: false, p: null, ms: Date.now() - started, error: clip((out.stderr || out.stdout).trim().slice(0, 120) || `退出码 ${out.exitCode}`, 120) })
+          results[i] = { site, command: line, ok: false, p: null, ms: Date.now() - started, error: clip((out.stderr || out.stdout).trim().slice(0, 120) || `退出码 ${out.exitCode}`, 120) }
         } else {
           const v = await this.verifyResult(site, command, out.stdout)
           const silent = v !== null && !v.verdict
-          results.push({ site, command: lines[i]!, ok: !silent, p: v === null ? null : v.p, ms: Date.now() - started, ...(silent ? { error: clip(`静默失败:${v.why ?? ''}`, 120) } : {}) })
+          results[i] = { site, command: line, ok: !silent, p: v === null ? null : v.p, ms: Date.now() - started, ...(silent ? { error: clip(`静默失败:${v.why ?? ''}`, 120) } : {}) }
         }
       } catch (e) {
-        results.push({ site, command: lines[i]!, ok: false, p: null, ms: Date.now() - started, error: clip(e instanceof Error ? e.message : String(e), 120) })
+        results[i] = { site, command: line, ok: false, p: null, ms: Date.now() - started, error: clip(e instanceof Error ? e.message : String(e), 120) }
       }
-      if (i < lines.length - 1 && this.benchGapMs > 0) await new Promise((res) => setTimeout(res, this.benchGapMs))
     }
+    const groups = new Map<string, string[]>()
+    for (const line of lines) { const [site] = line.split(/\s+/); const arr = groups.get(site!) ?? []; arr.push(line); groups.set(site!, arr) }
+    const lanes: string[][] = Array.from({ length: conc }, () => [])
+    Array.from(groups.values()).forEach((g, gi) => { lanes[gi % conc]!.push(...g) })
+    await Promise.all(lanes.map((lane) => lane.reduce((p, line) => p.then(async () => {
+      await runItem(line)
+      if (this.benchGapMs > 0) await new Promise((res) => setTimeout(res, this.benchGapMs))
+    }), Promise.resolve())))
+    const benchResults = results.filter((x): x is BenchItem => x !== undefined)
     const dir = process.env.DSH_OPENCLI_CANARY_DIR ?? join(homedir(), '.dsh', 'opencli-canary')
     let prevText: string | null = null
     try {
@@ -3092,7 +3136,7 @@ export class OpencliService extends TypertRemoteService {
       prevText = olds.length > 0 ? await readFile(join(dir, olds[olds.length - 1]!), 'utf8') : null
     } catch { /* 首跑或目录不可读:无基线 */ }
     const prev = parseCanarySnapshot(prevText)
-    const md = buildCanaryReport(results, prev, new Date().toISOString())
+    const md = buildCanaryReport(benchResults, prev, new Date().toISOString())
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const file = join(dir, `canary-${stamp}.md`)
     try {
@@ -3100,19 +3144,19 @@ export class OpencliService extends TypertRemoteService {
       const olds = readdirSync(dir).filter((f) => /^canary-.+\.md$/.test(f)).sort()
       if (olds.length > CANARY_KEEP) for (const f of olds.slice(0, olds.length - CANARY_KEEP)) { try { unlinkSync(join(dir, f)) } catch { /* 忽略 */ } }
     } catch { /* 落盘失败不改变结论 */ }
-    const failedCmds = new Set(results.filter((x) => !x.ok).map((x) => x.command))
+    const failedCmds = new Set(benchResults.filter((x) => !x.ok).map((x) => x.command))
     const prevMap = prev
-    const newFailures = results.filter((x) => !x.ok && prevMap.get(x.command) === true).map((x) => x.command)
-    const recovered = results.filter((x) => x.ok && prevMap.get(x.command) === false).map((x) => x.command)
-    const passed = results.filter((x) => x.ok).length
+    const newFailures = benchResults.filter((x) => !x.ok && prevMap.get(x.command) === true).map((x) => x.command)
+    const recovered = benchResults.filter((x) => x.ok && prevMap.get(x.command) === false).map((x) => x.command)
+    const passed = benchResults.filter((x) => x.ok).length
     // 逐站投票投影(0.1.5 C1):归因判定按站点基线归一(恒败站 prevOk=false 不投系统面票)、
     // 失败签名分类(env 45s 超时类靠 ms 识别——「退出码 1」零特征)都需要逐站数据
-    const sites: CanarySiteVote[] = results.map((x) => ({
+    const sites: CanarySiteVote[] = benchResults.map((x) => ({
       command: x.command, ok: x.ok, ms: x.ms,
       ...(x.error !== undefined ? { error: x.error } : {}),
       ...(prevMap.has(x.command) ? { prevOk: prevMap.get(x.command) === true } : {}),
     }))
-    return { ok: failedCmds.size === 0, total: results.length, passed, newFailures, recovered, sites, path: file }
+    return { ok: failedCmds.size === 0, total: benchResults.length, passed, newFailures, recovered, sites, path: file }
   }
 
   // ── 写操作证据包──────────────────────────────────
@@ -3947,6 +3991,15 @@ export class OpencliService extends TypertRemoteService {
     } catch { /* 无目录/权限:静默,截图主链不碰 */ }
   }
 
+  /** 0.2.0 PF10:报告/备份落盘轮转(此前 sched-/batch-/backup- 三类报告无上限;canary/bench/
+   *  digest 已有各自轮转)。按前缀正则匹配,保留最近 keep 份;失败不阻断主链。 */
+  private pruneByPrefix(dir: string, re: RegExp, keep: number): void {
+    try {
+      const olds = readdirSync(dir).filter((f) => re.test(f)).sort()
+      for (const f of olds.slice(0, Math.max(0, olds.length - keep))) { try { unlinkSync(join(dir, f)) } catch { /* 忽略 */ } }
+    } catch { /* 目录不可读:跳过 */ }
+  }
+
   private async captureStepShot(session: string | undefined, argv: string[], out: { exitCode: number; stdout: string; stderr: string; unavailable?: string }, major: number, force = false): Promise<string | undefined> {
     if (!this.shotCapture) return undefined
     const sub = String(argv[0] ?? '')
@@ -4123,6 +4176,22 @@ export class OpencliService extends TypertRemoteService {
     return out.join('\n').slice(0, 4000)
   }
 
+  /** 0.2.0 PF4:15s TTL 缓存(实测单次 spawn 中位 328ms)——同分钟到期的 N 个任务此前各付
+   *  一次全 spawn;status RPC 5s 缓存过期后的刷新也固定复用此缓存。仅 daemon-start/
+   *  selfHealDaemon 处主动清缓存(状态刚变);陈旧上限 15s,预检语义可接受。 */
+  private daemonStatusCache: { at: number; v: ReturnType<typeof parseDaemonStatus> | null } | undefined
+
+  /** 0.2.0 PF4:缓存包装——供 entry 型探测(status RPC/doctor/updateDirectory/预检入口)复用;
+   *  流程内重探(拉起后/翻转自愈后)必须走裸 daemonStatus 真探(审查 P1-4 语义),不可换此包装。 */
+  private async daemonStatusCached() {
+    if (this.daemonStatusCache !== undefined && Date.now() - this.daemonStatusCache.at < 15_000) return this.daemonStatusCache.v
+    const v = await this.daemonStatus()
+    this.daemonStatusCache = { at: Date.now(), v }
+    return v
+  }
+
+  /** 0.2.0 PF4:裸探测(无缓存)——daemonStatusCached 才是缓存入口;流程内重探必须走裸版
+   *  真探(拉起后/翻转自愈后的重探语义,审查 P1-4)。 */
   private async daemonStatus() {
     // 探测走 runOpencliUngoverned(extensionState/cliMajor 同款约定):本机 RPC 不吃 site
     // 限流,也不经会被覆写的 runOpencli;daemonStatus 挂在任务预检热路径上,走 governed 通道
@@ -4262,6 +4331,7 @@ export class OpencliService extends TypertRemoteService {
    *  可后落盘覆盖新状态(benchmark flake 根因,.qa/test-failures.jsonl 归档留痕);串行链后
    *  最后调用者必胜。链内单次写失败不外抛不阻断(权限等,仅本次会话生效,与旧口径一致)。 */
   private saveChain: Promise<void> = Promise.resolve()
+  private stateSizeWarnDay = '' // 0.2.0 PF11 体积观测:每日至多一条提醒
 
   private async saveState(): Promise<void> {
     let body: string
@@ -4271,6 +4341,12 @@ export class OpencliService extends TypertRemoteService {
     } catch { /* 序列化失败:与旧「try 包全函数」同口径,静默跳过本次落盘 */ return }
     const write = this.saveChain.then(() => this.writeStateFile(body))
     this.saveChain = write
+    // 0.2.0 PF11:体积观测——超 512KB 时每日一条 host console 提醒(任务数/pendingNotify 积压;
+    // 不走 pushIngestEvent,避免「事件→saveState」递归写放大)
+    if (body.length > 512_000) {
+      const day = localDateKey(new Date())
+      if (this.stateSizeWarnDay !== day) { this.stateSizeWarnDay = day; console.error(`[dsh-opencli] state.json 已 ${Math.round(body.length / 1024)} KB——任务/通知暂存积压时考虑清理`) }
+    }
     await write
   }
 
@@ -4363,6 +4439,7 @@ export class OpencliService extends TypertRemoteService {
         // ⑨:任务+通知配置打包 JSON(快照体积大不进备份,路径在任务里可按 id 重采)
         const file = join(homedir(), '.dsh', `dsh-opencli-backup-${Date.now()}.json`)
         await writeFile(file, JSON.stringify({ version: 1, at: new Date().toISOString(), schedules: this.schedules, notifyConfig: this.state.notifyConfig ?? { channels: [] } }, null, 2), 'utf8')
+        this.pruneByPrefix(homedir(), /^dsh-opencli-backup-\d+\.json$/, 10)
         return { ok: true, file }
       },
       status: async () => ({
@@ -4378,6 +4455,7 @@ export class OpencliService extends TypertRemoteService {
   /** drain 在途标记(重入守卫):3s 一拍,慢 drain(意图执行 60s 级 site 命令)期间
    *  在途拍会无上限叠加;忙碌拍直接跳过,出结果后下一拍自然接管。 */
   private inboxDraining = false
+  private inboxIdleStreak = 0 // 0.2.0 PF8 空闲退避计数
 
   /**
    * 收件箱消费:意图 → 既有服务方法(RPC 同源,一套逻辑两个入口)。轮询循环与专项
@@ -4386,9 +4464,14 @@ export class OpencliService extends TypertRemoteService {
    */
   private async drainInboxSafe(): Promise<void> {
     if (this.inboxDraining) return // 在途:跳过本拍(计时器照走,不叠加并发 drain)
+    // 0.2.0 PF8:空闲退避——连续 ≥6 拍(18s)无消费降为 1/4 拍频(≈12s 一读),有消费即回 3s。
+    // 空目录 readdir ~1-5ms 纯空转(28,800 次/天);ctl --timeout 45s 默认下最坏 +9s 消费延迟,无感
+    this.inboxIdleStreak += 1
+    if (this.inboxIdleStreak > 6 && this.inboxIdleStreak % 4 !== 1) return
     this.inboxDraining = true
     try {
-      await drainInbox(this.inboxExecutor())
+      const n = await drainInbox(this.inboxExecutor())
+      if (n > 0) this.inboxIdleStreak = 0
     } catch { /* 收件箱旁路:静默 */ } finally {
       this.inboxDraining = false
     }
@@ -4854,7 +4937,8 @@ export class OpencliService extends TypertRemoteService {
     }
     // restart 输出是纯文本,恢复判定必须重探(与 ① 路径同口径;重探结果取代旧值走后续检查)。
     // 0.2.0:重探在 try 外,探测自身爆炸(桩抛错/沙箱异常)会以 unhandled rejection 逃逸——
-    // 预检 fail-open 纪律把探测故障归为 failed,不外抛
+    // 预检 fail-open 纪律把探测故障归为 failed,不外抛;重探前清 PF4 缓存(重启后必须真探)
+    this.daemonStatusCache = undefined
     let after: Awaited<ReturnType<typeof this.daemonStatus>> = null
     try { after = await this.daemonStatus() } catch { return 'failed' }
     return after !== null && after.running === true ? 'ok' : 'failed'
@@ -4869,6 +4953,9 @@ export class OpencliService extends TypertRemoteService {
   private async taskHealthCheck(id: string): Promise<{ ok: boolean; note?: string }> {
     const notes: string[] = []
     const ds = await this.daemonStatus()
+    // 0.2.0 PF4 修订:入口探测保持真探——版本翻转检测(#2761)要求每次预检拿到真值,
+    // 缓存 15s 会漏检窗内翻转(测试实抓:翻转用例 0 事件)。缓存的收益面缩到
+    // status RPC/doctor/updateDirectory 三处非正确性路径(daemonStatusCached)。
     // ① daemon 未运行 → 尝试自动拉起(单次;失败即诚实跳过本 tick)。
     //    注意:exit≠0 与'未运行'不可分——仅当明确报告未运行(ds!==null&&!running)才动手 restart,
     //    ds=null(命令失败/输出变异)不碰 restart(fail-open 放行,让 attempt 循环自然失败并暴露)
