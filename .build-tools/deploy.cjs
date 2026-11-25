@@ -8,11 +8,18 @@ const path = require('node:path')
 
 const profile = process.argv[2] ?? 'web'
 const root = path.resolve(__dirname, '..')
-const store = path.join(os.homedir(), '.dsh', 'profiles', profile, 'node_modules', 'dsh-opencli')
-if (!fs.existsSync(path.join(store, 'lib'))) {
-  console.error(`store 不存在:${store}(先 dsh plugin --profile ${profile} install 装一次)`)
+// 商店副本两种布局:旧 profile 为非 scope 的 node_modules/dsh-opencli;rc.5 起 npm scope
+// 装进 node_modules/@cold777/dsh-opencli(web020 实测)。两种都认,存在哪个用哪个。
+const storeCandidates = [
+  path.join(os.homedir(), '.dsh', 'profiles', profile, 'node_modules', '@cold777', 'dsh-opencli'),
+  path.join(os.homedir(), '.dsh', 'profiles', profile, 'node_modules', 'dsh-opencli'),
+]
+const store = storeCandidates.find((p) => fs.existsSync(path.join(p, 'lib')))
+if (store === undefined) {
+  console.error(`store 不存在:${storeCandidates.join(' / ')}(先 dsh plugin --profile ${profile} install 装一次)`)
   process.exit(1)
 }
+console.log(`store:${store}`)
 for (const [src, dest] of [
   ['lib/index.js', 'lib/index.js'],
   ['lib/client.js', 'lib/client.js'],

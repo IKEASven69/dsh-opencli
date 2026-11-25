@@ -215,6 +215,16 @@ function shotNameOf(shot: string): string {
 }
 
 /**
+ * 耗时尾注:≥1s 显示秒(一位小数),否则整毫秒;非数/负数(形状不对)返回空串。
+ * render 是纯投影,只做展示格式化,不做任何真实性判断。
+ */
+function msTail(ms: unknown): string {
+  return typeof ms === 'number' && Number.isFinite(ms) && ms >= 0
+    ? ` · ${ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`}`
+    : ''
+}
+
+/**
  * opencli_do 预览卡:徽章头(子命令+状态色)→ 命令段 → 结果段,原文逐字保留。
  * 失败前缀/白名单拒绝按 site 同款规则分类;✗ 时末尾附人工接管提示(原文自带
  * 登录指引的除外,与 site 同款互斥)。
@@ -235,10 +245,40 @@ export function browserDoCardRender(args: unknown, value: unknown): TextCardBloc
   const st: SiteCardStatus = ex !== null
     ? { status: 'fail', label: `exit ${ex[1]}` }
     : /^不允许的子命令/.test(text) ? { status: 'fail', label: '子命令被拒' } : { status: 'ok', label: 'exit 0' }
-  const head = `▣ opencli_do · ${command}${session !== null ? ` · session ${session}` : ''} — ${GLYPH[st.status]} ${st.label}`
+  const head = `▣ opencli_do · ${command}${session !== null ? ` · session ${session}` : ''} — ${GLYPH[st.status]} ${st.label}${msTail(rec?.ms)}`
   const cmdSeg = `**命令**\n${fence(`$ ${shellJoin(['opencli_do', command, ...rest])}${shotHint}`, 'console')}`
   const payload = ex !== null ? text.slice(ex[0].length) : text
   const hint = st.status === 'fail' && !HAS_LOGIN_HINT.test(payload) ? [TAKEOVER_HINT] : []
   if (payload.trim().length === 0) return card(head, cmdSeg, ...hint)
   return card(head, cmdSeg, `**结果**\n${fence(payload)}`, ...hint)
+}
+
+// ── opencli_* 页面动作原语(0.2.1 对话侧 UX:原语执行卡) ──
+
+/**
+ * opencli_* 页面动作原语(open/state/click/type/fill/extract/screenshot/scroll/wait/close/read)
+ * 预览卡:徽章头(opencli · 动词 — 状态 · 耗时)→ 命令行围栏 → 原文围栏(逐字保留,信息不丢)。
+ * 与 site/opencli_do 同一视觉语言;此前这族工具是纯透传,对话里只有裸文本无状态无命令行。
+ * 命令行与耗时来自 execute 回传的 argv/ms(registerBrowserTools 的 run 包装单点计时回传,
+ * 展示与实际执行同源、不二次拼装——render 拿不到 shell 侧真相);老结果无 argv 时退化为
+ * 动词占位。失败分类与 opencli_do 同款(EXIT_FAIL 前缀 → ✗ exit N——renderOut 是唯一
+ * 格式化点,无扩展短路等一切失败路径都过它);✗ 且原文无登录指引时附人工接管提示。
+ * 截图提示与 opencli_do 同款:文件名尾注,完整路径在轨迹行(面板截图墙)。
+ */
+export function browserPrimitiveCardRender(verb: string, args: unknown, value: unknown): TextCardBlock[] {
+  const text = textOf(value)
+  if (text === null) return [{ type: 'text', text: '' }]
+  const a = asRecord(args)
+  const session = a !== null && typeof a.session === 'string' && a.session.length > 0 && a.session !== 'dsh' ? a.session : null
+  const rec = asRecord(value)
+  const argv = rec !== null && Array.isArray(rec.argv) && rec.argv.every((t) => typeof t === 'string') ? (rec.argv as string[]) : []
+  const shotHint = rec !== null && typeof rec.shot === 'string' && rec.shot.length > 0 ? ` (shot: ${shotNameOf(rec.shot)})` : ''
+  const ex = EXIT_FAIL.exec(text)
+  const st: SiteCardStatus = ex !== null ? { status: 'fail', label: `exit ${ex[1]}` } : { status: 'ok', label: 'exit 0' }
+  const head = `▣ opencli · ${verb}${session !== null ? ` · session ${session}` : ''} — ${GLYPH[st.status]} ${st.label}${msTail(rec?.ms)}`
+  const cmd = fence(`$ opencli ${shellJoin(argv.length > 0 ? argv : [verb])}${shotHint}`, 'console')
+  const payload = ex !== null ? text.slice(ex[0].length) : text
+  const hint = st.status === 'fail' && !HAS_LOGIN_HINT.test(payload) ? [TAKEOVER_HINT] : []
+  if (payload.trim().length === 0) return card(head, cmd, ...hint)
+  return card(head, cmd, fence(payload), ...hint)
 }

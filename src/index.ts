@@ -30,7 +30,7 @@ import { approvalDecision, buildAdapterDirectory, commandAccess, extractJsonObje
 import { SystemOne, noulYes } from './systemone.ts'
 import { buildKnowledge, renderKnowledgeMarkdown, handleMcpResourceRequest, knowledgeResourceUri, healthOf, PITFALLS, SITE_HEALTH, SITE_HEALTH_STATUS_LABELS, type RawEntry } from './knowledge.ts'
 import { buildReport, type ReportSource } from './reports.ts'
-import { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
+import { browserDoCardRender, browserPrimitiveCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 import { BENCH_KEEP, CANARY_KEEP, DEFAULT_BENCH, RESERVED_NAMESPACES, buildBenchmarkReport, buildCanaryReport, renderTransportBenchmark, parseCanarySnapshot, pickCanaryCommands, renderBenchmarkTable, type BenchItem } from './benchmark.ts'
 import { EVIDENCE_FILE_RE, EVIDENCE_KEEP, buildEvidence, parseEvidenceFileName, saveEvidence, type EvidenceRecord } from './evidence.ts'
 import { buildNotifyBody, buildNotifyChannels, sendViaChannels, normalizeNotifyConfig, saveNotifyConfig, inQuietHours, parseQuietHours, renderQuietDigest, scrubLocalPaths, scrubUrlParams, type NotifyConfig, type QuietPendingItem } from './notify.ts'
@@ -59,7 +59,7 @@ import { exportSnapshots } from './exportcsv.ts'
 import { nlToIntent, type NlContext, type LlmCaller } from './nl.ts'
 
 // 对话内预览卡(site/site_batch/opencli_do 的 output.render)再导出:纯函数,tests/cards.test.ts 直测
-export { browserDoCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
+export { browserDoCardRender, browserPrimitiveCardRender, siteBatchCardRender, siteCardRender } from './cards.ts'
 // 基准纯函数层再导出(与 cards 同款约定):tests/benchmark.test.ts 直测,免走服务装配
 export { BENCH_KEEP, DEFAULT_BENCH, buildBenchmarkReport, renderBenchmarkTable } from './benchmark.ts'
 // 证据包纯函数层再导出(同款约定):tests/evidence.test.ts 直测
@@ -749,11 +749,16 @@ export class OpencliService extends TypertRemoteService {
   }
 
   private registerBrowserTools(): void {
-    const run = async (session: string | undefined, argv: string[]): Promise<{ text: string; shot?: string }> => {
+    const run = async (session: string | undefined, argv: string[]): Promise<{ text: string; shot?: string; ms: number; argv: string[] }> => {
       // 轨迹回放(BrowserSkill #79 同款需求):opencli_* 全族与 replay/crawl 等 RPC 透传
-      // 统一走 runBrowserTraced 单点,每步 trace 落盘;shot(若有)随结果带给卡片渲染
+      // 统一走 runBrowserTraced 单点,每步 trace 落盘;shot(若有)随结果带给卡片渲染。
+      // 0.2.1 对话侧 UX:ms/argv 也随结果回传——原语执行卡的命令行与耗时同源于本次
+      // 实际执行(runBrowserTraced 含补拍截图的整段墙钟),卡片不二次拼装、不造假数据
+      const t0 = Date.now()
       const out = await this.runBrowserTraced(session, argv)
-      return out.shot !== undefined ? { text: this.renderOut(out), shot: out.shot } : { text: this.renderOut(out) }
+      const ms = Date.now() - t0
+      const base = { text: this.renderOut(out), ms, argv }
+      return out.shot !== undefined ? { ...base, shot: out.shot } : base
     }
     const s = '浏览器会话名(默认 dsh;bind 过的会话复用登录态)'
 
@@ -765,7 +770,7 @@ export class OpencliService extends TypertRemoteService {
         url: { type: 'string', description: '要打开的完整 URL' },
         session: { type: 'string', description: s },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('open', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['open', String(a.url)]),
     })
     this.registerToolWithLegacyAlias({
@@ -775,7 +780,7 @@ export class OpencliService extends TypertRemoteService {
         session: { type: 'string', description: s },
         source: { type: 'string', enum: ['dom', 'ax'], description: '快照后端,默认 dom;ax 为无障碍树' },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('state', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['state', ...(a.source !== undefined ? ['--source', a.source] : [])]),
     })
     this.registerToolWithLegacyAlias({
@@ -785,7 +790,7 @@ export class OpencliService extends TypertRemoteService {
         target: { type: 'string', description: '[N] 索引 / 文本 / CSS 选择器' },
         session: { type: 'string', description: s },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('click', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['click', String(a.target)]),
     })
     this.registerToolWithLegacyAlias({
@@ -796,7 +801,7 @@ export class OpencliService extends TypertRemoteService {
         text: { type: 'string', description: '要输入的内容' },
         session: { type: 'string', description: s },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('type', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['type', String(a.target), String(a.text)]),
     })
     this.registerToolWithLegacyAlias({
@@ -807,14 +812,14 @@ export class OpencliService extends TypertRemoteService {
         text: { type: 'string', description: '要设置的值' },
         session: { type: 'string', description: s },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('fill', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['fill', String(a.target), String(a.text)]),
     })
     this.registerToolWithLegacyAlias({
       name: 'opencli_extract',
       description: '把当前页正文提取为 Markdown(长页自动分段),适合读文章/帖子/文档',
       parameters: { session: { type: 'string', description: s } },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('extract', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['extract']),
     })
     this.registerToolWithLegacyAlias({
@@ -825,7 +830,7 @@ export class OpencliService extends TypertRemoteService {
         fullPage: { type: 'boolean', description: '截整个可滚动页面而非视口(上游 2.0 --full-page;1.x 忽略此参数)' },
         session: { type: 'string', description: s },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('screenshot', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['screenshot', ...(a.path !== undefined ? [a.path] : []), ...(a.fullPage === true ? ['--full-page'] : [])]),
     })
     this.registerToolWithLegacyAlias({
@@ -835,7 +840,7 @@ export class OpencliService extends TypertRemoteService {
         direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: '滚动方向,默认 down' },
         session: { type: 'string', description: s },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('scroll', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['scroll', a.direction ?? 'down']),
     })
     this.registerToolWithLegacyAlias({
@@ -846,7 +851,7 @@ export class OpencliService extends TypertRemoteService {
         value: { type: 'string', description: '对应的值' },
         session: { type: 'string', description: s },
       },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('wait', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['wait', String(a.type), ...(a.value !== undefined ? [a.value] : [])]),
     })
     this.registerToolWithLegacyAlias({
@@ -868,14 +873,14 @@ export class OpencliService extends TypertRemoteService {
       name: 'opencli_close',
       description: '释放当前浏览器会话的 tab 租约（对应 opencli browser <session> close）',
       parameters: { session: { type: 'string', description: s } },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('close', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['close']),
     })
     this.registerToolWithLegacyAlias({
       name: 'opencli_read',
       description: '读当前页 URL/标题/正文（opencli_extract 别名，适合公开网页快速读取）',
       parameters: { session: { type: 'string', description: s } },
-      output: { schema: { type: 'json' }, render: (_a: unknown, v: { text: string }) => [{ type: 'text', text: v.text }] },
+      output: { schema: { type: 'json' }, render: (a: unknown, v: { text: string }) => browserPrimitiveCardRender('read', a, v) },
       execute: async (a: ToolArgs) => run(a.session, ['extract']),
     })
     // 命名空间迁移的合并点:browser_status 与原 opencli_status 的 execute 本就同源(都 dump

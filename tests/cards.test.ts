@@ -8,7 +8,7 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis'
-import { OpencliService, siteCardRender, siteBatchCardRender, browserDoCardRender } from '../lib/index.js'
+import { OpencliService, siteCardRender, siteBatchCardRender, browserDoCardRender, browserPrimitiveCardRender } from '../lib/index.js'
 
 class StubShell extends Service {
   constructor(ctx: InstanceType<typeof Context>) { super(ctx, 'shell') }
@@ -380,5 +380,70 @@ describe('三工具接线(注册表的 output.render 即本卡)+ execute 契约�
     expect(card).toContain('▣ site_batch · hot × 2 站 — ✓ 2/2 站成功')
     expect(card).toContain('目录预检:以下站点不在适配器目录,请确认拼写:aaa, bbb')
     expect(card).toContain('== aaa ✓ ==')
+  })
+})
+
+describe('opencli_* 页面动作原语卡(0.2.1 对话侧 UX:原语执行不再裸文本)', () => {
+  it('成功卡:徽章头(动词/耗时)+命令行+原文逐字保留', () => {
+    const t = browserPrimitiveCardRender('click', { target: '12' }, { text: '已点击 [12] 登录按钮', ms: 137, argv: ['click', '12'] })[0]!.text
+    expect(t).toContain('▣ opencli · click — ✓ exit 0 · 137ms')
+    expect(t).toContain('$ opencli click 12')
+    expect(t).toContain('已点击 [12] 登录按钮') // 信息不丢:原文逐字进结果围栏
+  })
+
+  it('耗时格式化:≥1s 秒一位小数;session 非 dsh 入徽章头', () => {
+    const t = browserPrimitiveCardRender('open', { session: 'work' }, { text: 'opened', ms: 2345, argv: ['open', 'https://example.com'] })[0]!.text
+    expect(t).toContain('▣ opencli · open · session work — ✓ exit 0 · 2.3s')
+    expect(t).toContain('$ opencli open https://example.com')
+  })
+
+  it('失败卡:EXIT_FAIL 前缀→✗ exit N,前缀去重保留其余,附人工接管提示', () => {
+    const t = browserPrimitiveCardRender('fill', { target: '3' }, { text: '命令失败(退出码 1):\n元素未找到', ms: 900, argv: ['fill', '3', 'hi'] })[0]!.text
+    expect(t).toContain('▣ opencli · fill — ✗ exit 1 · 900ms')
+    expect(t).toContain('元素未找到')
+    expect(t).not.toContain('命令失败(退出码') // 前缀信息已入徽章头,结果段去重
+    expect(t).toContain('👉 状态异常')
+  })
+
+  it('失败但原文自带登录指引:不重复附接管提示(site 族同款互斥)', () => {
+    const t = browserPrimitiveCardRender('open', {}, { text: '命令失败(退出码 2):\n请先登录后再继续操作', ms: 50, argv: ['open', 'https://x.example'] })[0]!.text
+    expect(t).toContain('✗ exit 2')
+    expect(t).not.toContain('👉 状态异常')
+  })
+
+  it('shot 提示:文件名尾注附在命令行尾(base64 绝不内联,本机路径不进卡)', () => {
+    const t = browserPrimitiveCardRender('type', {}, { text: '已输入', ms: 80, argv: ['type', '5', 'hello'], shot: 'C:\\shots\\20261125\\dsh\\step-093000-1.png' })[0]!.text
+    expect(t).toContain('$ opencli type 5 hello (shot: step-093000-1.png)')
+    expect(t).not.toContain('C:\\shots')
+  })
+
+  it('老结果无 argv/ms 字段:命令行退化为动词占位、无耗时尾注(不造假数据)', () => {
+    const t = browserPrimitiveCardRender('wait', {}, { text: 'ok' })[0]!.text
+    expect(t).toContain('▣ opencli · wait — ✓ exit 0')
+    expect(t).toContain('$ opencli wait')
+    expect(t).not.toContain('ms ·')
+  })
+
+  it('text 缺失:空卡兜底(render 管线回调绝不抛)', () => {
+    expect(browserPrimitiveCardRender('click', {}, { nope: 1 })).toEqual([{ type: 'text', text: '' }])
+  })
+
+  it('接线回声:11 个页面动作原语注册的 output.render 即原语卡(参考型工具保持透传)', () => {
+    const verbs: Array<[string, string]> = [
+      ['opencli_open', 'open'], ['opencli_state', 'state'], ['opencli_click', 'click'], ['opencli_type', 'type'],
+      ['opencli_fill', 'fill'], ['opencli_extract', 'extract'], ['opencli_screenshot', 'screenshot'],
+      ['opencli_scroll', 'scroll'], ['opencli_wait', 'wait'], ['opencli_close', 'close'], ['opencli_read', 'read'],
+    ]
+    for (const [name, verb] of verbs) {
+      const def = ctx.tools.registered.get(name)
+      expect(typeof def?.output?.render, name).toBe('function')
+      const out = def!.output!.render!({}, { text: 'done', ms: 10, argv: [verb, '1'] })
+      expect(out[0]!.text, name).toContain(`▣ opencli · ${verb}`)
+    }
+    // 参考型/数据型工具不在卡改造范围(状态 JSON/安装指引/目录查询无页面动作语义)
+    for (const name of ['opencli_status', 'opencli_install', 'opencli_catalog']) {
+      const def = ctx.tools.registered.get(name)
+      expect(def!.output!.render!({}, { text: 'raw' })[0]!.text).toBe('raw')
+    }
   })
 })

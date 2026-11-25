@@ -1,3 +1,18 @@
+## 0.2.1 — 未发布
+
+### 对话侧 UX(浏览器原语执行卡)
+- **opencli_* 页面动作原语不再裸文本**:open/state/click/type/fill/extract/screenshot/scroll/wait/close/read 十一个原语的对话输出改为执行卡(与 site/site_batch/opencli_do 同一视觉语言)——徽章头 `▣ opencli · 动词 — ✓/✗ 状态 · 耗时`(session 非 dsh 时入头)→ 命令行围栏(与实际执行同源,execute 回传 argv,不二次拼装)→ 原文围栏(逐字保留,信息不丢);失败走 EXIT_FAIL 分类(✗ exit N)+ 人工接管提示(原文自带登录指引时不重复);页面变化类子命令的自动截图沿用 `(shot: 文件名)` 尾注,完整路径只在轨迹行(本机路径不进对话卡)
+- **耗时实测**:run 包装单点计时(含补拍截图的整段墙钟),<1s 显示毫秒、≥1s 显示秒;opencli_do 卡同步补耗时尾注
+- **参考型工具保持透传**:opencli_status/install/catalog/run、site_knowledge、chrome_*/画布族无页面动作语义,不套执行卡
+- tests/cards.test.ts 新增 8 例(成功/耗时格式/session/失败去重/接管互斥/shot 尾注/老结果兜底/11 工具接线回声+参考型透传钉住);全套 837/837
+
+### 真机与环境(如实记录,2026-11-25)
+- **rc.5 面板可用性反转**:0.2.0 报告记载的「rc.5 client bundle 不识别、面板 0 个 o4 节点」在 rc.5/web020 重启后实测**不复现**——插件页「浏览器代理」tab 完整渲染(截图在档:总览卡/五 tab/诚实 daemon 横幅/CLI 互抢提示/首启向导,o4 DOM 节点 180 个、样式生效)。「rc.5 client bundle 适配」原 0.2.1 头部项按实测关闭;差异成因(0.2.0 收尾 client 重写晚于走查 / 加载时机)无法完全归因,以今日可复现状态为准
+- **rc.1(web profile)对话栈宿主级受损**:dsh-sandbox-local / dsh-deepseek-account-platform / dsh-api-account-controller 三个宿主包 import 失败(~/.dsh/node_modules 解析上级补包方案下 rc.5 时代嵌套包与 rc.1 profile 包导出面偏斜)→ shell 服务无法启动 → agent-preset 判 invalid,新建会话被拒。发生链路先于本插件加载,与本插件无关;面板与 RPC 层不受影响。修复方向=该 profile 完成 rc.5 依赖刷新或迁回模板 profile(与 0.2.0 报告环境三选项一致)
+- **对话侧执行卡的实机对话走查待补**:dsh 当前两 profile 的模型面均只有 DeepSeek,账号配额自 2026-11-19 起耗尽(QUOTA),agent 轮次无法发起;卡片渲染契约已由 837 例测试钉住(含注册表 render 接线),待配额恢复后补真机对话截图
+
+
+
 ## 0.2.0 — 2026-11-24
 
 ### 追更(社媒关注流配方面板化)

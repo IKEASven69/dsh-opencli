@@ -54,5 +54,32 @@
 ### 新发现(如实,0.2.1 清单)
 
 1. **rc.1 + 0.2.0 部分 RPC 路由缺失**:schedule-list 网关返回 "not found"(路由未注册),events-get/status 正常——面板任务列表空(诚实空态,不崩)。0.1.8 无此现象,0.2.0 引入,疑与 typert 描述符注册相关;0.2.1 排查(对比 0.1.8/0.2.0 的 RPC 注册表)。
-2. **rc.1 菜单交互**:账号菜单 menuitem 的 textContent 带快捷键提示(如"设置Ctrl+Alt+,"),自动化匹配需前缀匹配——UI 自动化的环境注记。
+2. **rc.1 菜单交互**:账号菜单 menuitem 的 textContent 带快捷键提示(如"设置Ctrl+Alt,,"),自动化匹配需前缀匹配——UI 自动化的环境注记。
 3. **restoration 方案**:.dsh/node_modules 解析上级补包方案实测有效(587 包批量补入),已写入环境修复三选项之外的第 4 选项。
+
+## 0.2.1 追记(2026-11-25 傍晚,双实例重启后实测)
+
+> 背景:0.2.1 对话侧 UX(浏览器原语执行卡)部署后,双 profile 实例(rc.5/web020:3099 + rc.1/web:3080)重启走查。部署走 deploy.cjs(已修:rc.5 商店副本是 `@cold777/dsh-opencli` scope 布局,脚本此前只认非 scope 路径——web020 上 `dsh plugin add` 的 tgz 装法与开发仓直拷并存,直拷此前会静默落空)。
+
+### rc.5 面板可用性反转(重要)
+
+- 0.2.0 报告上述「rc.5 client bundle 不识别(0 o4 CSS/0 o4 DOM)」**今日不复现**:重启后的 rc.5/web020 上插件页「浏览器代理」tab 完整渲染——总览卡(站点 178/daemon 横幅/自然语言指挥台/登录态巡检/安全中心)、五 tab、首启向导、CLI 互抢提示卡全部在位;`[class*="o4-"]` DOM 节点 **180 个**,style 标签含 o4 规则,o4-head 计算样式生效(flex/浅色前景)。截图在档。
+- 原头部工作项「rc.5 client bundle 适配」按实测关闭。差异成因无法完全归因(0.2.0 收尾的 client 重写时点晚于当时走查 / 或加载时机),以今日可复现状态为准。
+- daemon 横幅诚实告警实测:页面加载时 opencli daemon 确实未运行(随旧宿主进程一起死了),横幅红字「daemon 未运行——定时任务暂停执行,恢复后自动补跑」+一键修复在位;`opencli daemon restart`(2.0.3)后扩展自动重连(extensionConnected:true)。**运维注记:宿主进程重启后 opencli daemon 不自动拉起**,面板横幅会如实示警,一键修复可拉起。
+
+### rc.1(web profile)对话栈宿主级受损(新发现,与本插件无关)
+
+- 重启后 rc.1 实例:面板与 RPC 层照常,但**新建会话被 agent-preset 拒绝**(`agent-preset/invalid: tool-pwsh waiting for shell …`)。
+- 归因链(启动日志留档):`dsh-sandbox-local` / `dsh-deepseek-account-platform` / `dsh-api-account-controller` 三个宿主包 import 失败(如 `@deepseek-ai/dsh-deepseek-account` 不提供 `isRunningAccountTask` 导出)→ sandbox/shell 服务无法实例化 → 依赖链上 permission/trust-list/opencli 全部 pending waiting for shell。
+- 即 0.2.0 报告「restoration 补包方案」的残留面:.dsh/node_modules 解析上级里 rc.5 时代(0.2.2-rc.x)的宿主包对 rc.1 profile 包的导出面偏斜。**发生链路先于本插件加载**(opencli 当时仍 pending)。修复方向=该 profile 完成 rc.5 依赖刷新或模板重建(环境三选项之内),不属于本插件修复范围。
+
+### 对话侧执行卡实机走查:待补(外部阻塞)
+
+- dsh 双 profile 的模型面均只有 DeepSeek(api.deepseek.com 两型号),账号配额自 **2026-11-19 起耗尽(QUOTA,本轮实测复现)**——agent 轮次无法发起,对话内触发原语→卡片可见→截图的实机链路暂不能跑。
+- 卡片渲染契约已由 837 例测试钉住(含注册表 output.render 接线回声:11 原语逐一断言卡片头、参考型工具透传钉住);render 值透传通道(extra 字段进 render)在 0.1.8 时代已由 opencli_do 卡的 shot 尾注实机验证过,ms/argv 走同一对象同一路径。
+- 待配额恢复后补:rc.5 对话触发 opencli_open/state → 执行卡截图(成功卡含耗时+shot 尾注)。
+
+### 部署脚本修正(顺带)
+
+- deploy.cjs 现按 `@cold777/dsh-opencli`(rc.5 scope 布局)/`dsh-opencli`(旧布局)双候选探测商店副本,两种 profile 都可直拷部署;本轮 web020/web 双副本部署均校验与开发仓产物一致。
+
