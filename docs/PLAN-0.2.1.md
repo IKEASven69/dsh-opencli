@@ -8,10 +8,10 @@
 | # | 项 | 状态 |
 |---|---|---|
 | 1 | **浏览器原语执行卡**:open/state/click/type/fill/extract/screenshot/scroll/wait/close/read 十一个原语对话输出卡化(徽章头+命令围栏+原文保留+耗时+shot 尾注;`browserPrimitiveCardRender`,run 包装回传 argv/ms 同源) | ✅ 实装,837/837(cards 新增 8 例) |
-| 2 | **调度结果回对话(完成卡)**:无 session 的定时 run 完成后,结果以卡面回对话 | ⏳ 设计中(无 session 路径的回话通道是关键点) |
-| 3 | **一键巡圈简报卡进对话**:巡圈完成后简报以卡面回对话 | ⏳ 排队(依赖 #2 的回话通道) |
+| 2 | **调度结果回对话(完成卡)**:无 session 的定时 run 完成后,结果以卡面回对话 | ⏸ 宿主能力面勘察结论(2026-11-25 实测 bundle):免模型轮次的对话注入通道**尚不存在**——①`sessionController.prompt`(takeover 同款)是真 agent 轮次,每次调度完成烧一次模型配额且高频噪音,不做默认;②`dsh-session.appendPluginRecord` 落会话档但 conversation 客户端不渲染 `plugin:` 记录(全 bundle 0 命中,无第三方记录渲染槽位);③宿主 jobs UI(0.2.0 H② 已落)已是调度运行的宿主面可见通道;④notify 通道(webhook/email)已覆盖推送需求。结论归入「宿主能力未提供」类:待宿主暴露会话记录渲染槽位或免轮次注入 API 后即建卡;期间调度完成可见性=jobs UI+面板+notify 三通道 |
+| 3 | **一键巡圈简报卡进对话** | ⏸ 同 #2 通道结论 |
 | 4 | rc.5 client bundle 适配(原头部项) | ✅ **实测关闭**——0.2.0 报告的「面板 0 o4 节点」今日不复现(180 节点+样式生效,截图 `.qa/screenshots-021/01`);成因无法完全归因,以可复现现状为准 |
-| 5 | schedule-list 路由 rc.1+0.2.0 "not found"(部分 RPC 注册缺失) | ⏳ 排查中(对比 0.1.8/0.2.0 注册表) |
+| 5 | schedule-list 路由 rc.1+0.2.0 "not found"(部分 RPC 注册缺失) | ⏸ 当前不可复现:rc.5 全路由注册正常(面板同款信封实测 schedule-list ok:true/status ok,新构建在役);rc.1 因宿主 shell 断链,插件服务 pending→全路由未注册,无从对比;维持 0.2.0 记录,待 rc.1 环境修复后复核 |
 | 6 | SKILL.md:103 微博配方修 + 配方门扩展 | ⏳ 排队 |
 | 7 | rpc-bench 满载复测构造(事件档 5MB/快照 20×50) | ⏳ 可选 |
 

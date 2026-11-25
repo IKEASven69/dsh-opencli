@@ -83,3 +83,10 @@
 
 - deploy.cjs 现按 `@cold777/dsh-opencli`(rc.5 scope 布局)/`dsh-opencli`(旧布局)双候选探测商店副本,两种 profile 都可直拷部署;本轮 web020/web 双副本部署均校验与开发仓产物一致。
 
+### RPC 路由复测(0.2.1,#5 项)
+
+- **rc.5/web020(面板同款 client-request 信封,同源 fetch)**:schedule-list ok:true(schedules 含 failRunStreak 持久字段——0.2.1 新部署构建在役)、status ok:true(daemon running:true,daemon restart 后自愈确认)、events-get ok:true。**0.2.0 时代「schedule-list not found」在 rc.5 不存在**(当时该发现本就只在 rc.1 出现)。
+- **rc.1/web(今日)**:全部 RPC 路由(含 status/events-get)一律网关 not found——根因即上文宿主 shell 断链:插件服务 pending 未实例化,路由全未注册,**0.2.0 时代的 schedule-list 特异性缺失被整体故障掩蔽,当前无从对比**;维持原记录,待 rc.1 环境修复后复核。
+- 调度结果回对话通道勘察结论(免轮次注入通道不存在/appendPluginRecord 客户端不渲染/三通道现状)见 docs/PLAN-0.2.1.md #2/#3。
+
+
