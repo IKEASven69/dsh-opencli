@@ -7,7 +7,7 @@
 
 | # | 项 | 状态 |
 |---|---|---|
-| 1 | **浏览器原语执行卡**:open/state/click/type/fill/extract/screenshot/scroll/wait/close/read 十一个原语对话输出卡化(徽章头+命令围栏+原文保留+耗时+shot 尾注;`browserPrimitiveCardRender`,run 包装回传 argv/ms 同源) | ✅ 实装,837/837(cards 新增 8 例) |
+| 1 | **浏览器原语执行卡**:open/state/click/type/fill/extract/screenshot/scroll/wait/close/read 十一个原语对话输出卡化(徽章头+命令围栏+原文保留+耗时+shot 尾注;`browserPrimitiveCardRender`,run 包装回传 argv/ms 同源) | ✅ 实装 + **真机点亮**(2026-11-27 rc.5 对话 E2E:GLM-5.3-Flash 轮次 open/state 全链,轨迹逐字存证 15.9s/1.6s 真实耗时+shot 尾注,截图 02);837/837 |
 | 2 | **调度结果回对话(完成卡)**:无 session 的定时 run 完成后,结果以卡面回对话 | ⏸ 宿主能力面勘察结论(2026-11-25 实测 bundle):免模型轮次的对话注入通道**尚不存在**——①`sessionController.prompt`(takeover 同款)是真 agent 轮次,每次调度完成烧一次模型配额且高频噪音,不做默认;②`dsh-session.appendPluginRecord` 落会话档但 conversation 客户端不渲染 `plugin:` 记录(全 bundle 0 命中,无第三方记录渲染槽位);③宿主 jobs UI(0.2.0 H② 已落)已是调度运行的宿主面可见通道;④notify 通道(webhook/email)已覆盖推送需求。结论归入「宿主能力未提供」类:待宿主暴露会话记录渲染槽位或免轮次注入 API 后即建卡;期间调度完成可见性=jobs UI+面板+notify 三通道 |
 | 3 | **一键巡圈简报卡进对话** | ⏸ 同 #2 通道结论 |
 | 4 | rc.5 client bundle 适配(原头部项) | ✅ **实测关闭**——0.2.0 报告的「面板 0 o4 节点」今日不复现(180 节点+样式生效,截图 `.qa/screenshots-021/01`);成因无法完全归因,以可复现现状为准 |

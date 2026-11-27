@@ -73,11 +73,15 @@
 - 归因链(启动日志留档):`dsh-sandbox-local` / `dsh-deepseek-account-platform` / `dsh-api-account-controller` 三个宿主包 import 失败(如 `@deepseek-ai/dsh-deepseek-account` 不提供 `isRunningAccountTask` 导出)→ sandbox/shell 服务无法实例化 → 依赖链上 permission/trust-list/opencli 全部 pending waiting for shell。
 - 即 0.2.0 报告「restoration 补包方案」的残留面:.dsh/node_modules 解析上级里 rc.5 时代(0.2.2-rc.x)的宿主包对 rc.1 profile 包的导出面偏斜。**发生链路先于本插件加载**(opencli 当时仍 pending)。修复方向=该 profile 完成 rc.5 依赖刷新或模板重建(环境三选项之内),不属于本插件修复范围。
 
-### 对话侧执行卡实机走查:待补(外部阻塞)
+### 对话侧执行卡实机走查(0.2.1 追记·已完成,2026-11-27)
 
-- dsh 双 profile 的模型面均只有 DeepSeek(api.deepseek.com 两型号),账号配额自 **2026-11-19 起耗尽(QUOTA,本轮实测复现)**——agent 轮次无法发起,对话内触发原语→卡片可见→截图的实机链路暂不能跑。
-- 卡片渲染契约已由 837 例测试钉住(含注册表 output.render 接线回声:11 原语逐一断言卡片头、参考型工具透传钉住);render 值透传通道(extra 字段进 render)在 0.1.8 时代已由 opencli_do 卡的 shot 尾注实机验证过,ms/argv 走同一对象同一路径。
-- 待配额恢复后补:rc.5 对话触发 opencli_open/state → 执行卡截图(成功卡含耗时+shot 尾注)。
+- **模型面解法**:DeepSeek key 实测余额为零(官方 API 逐字 `Insufficient Balance`);用户 credentials 另有三把 key。经设置→模型→添加模型提供商(宿主内置目录含 minimax/minimax-cn/kimi-coding/zai/zai-coding-cn 等 41 供应商,key 自动识别已保存凭据):minimax-cn 拉到模型清单但实发 429「Token Plan 用量上限(2067)」;**zai-coding-cn 拉到 GLM-4.6V/5.3/5.3-Flash/5.3 Highspeed,实发成功**。MiniMax 两供应商与 zai-coding-cn 已加入 web020(可逆,设置页可删)。
+- **E2E 全通**:GLM-5.3-Flash 轮次 30s 完成——opencli_open 打开 example.com(exit 0)→ opencli_state 读快照 → 回答「页面标题是 Example Domain」,4 轮 6 步,102 tok/s,323K tok(缓存命中 66%)。
+- **执行卡真机点亮**(轨迹视图逐字存证,截图 `.qa/screenshots-021/02`):
+  - `opencli_open {"url":"https://example.com"} → ▣ opencli · open — ✓ exit 0 · 15.9s $ opencli open https://example.com (shot: step-143709-1.png)`——徽章头/真实耗时(15.9s,含补拍)/argv 命令围栏/**shot 文件名尾注(完整路径不进卡)**全元素在位;
+  - `opencli_state {} → ▣ opencli · state — ✓ exit 0 · 1.6s $ opencli state {...原文逐字...}`——state 大输出进结果围栏,信息不丢。
+- render 值透传契约(ms/argv/shot extra 字段过 rc.5 网关进 render)由本次实机闭环,0.2.1 对话侧 UX 主件验证完毕。对话 tab 工具块为紧凑形态,卡全文在轨迹视图逐步可见(宿主 UI 形态,非插件控制面)。
+- 环境注记:会话系统提示词快照在 daemon 未运行期生成(「no extension: opencli_* unavailable」与实况不符),工具实调正常;daemon 状态类系统提示词的时效性属宿主行为,记录备查。
 
 ### 部署脚本修正(顺带)
 
